@@ -35,7 +35,8 @@ import {
   SavedMixFormula,
   DEFAULT_USERS,
   ConnectedDeviceRecord,
-  APP_SYSTEM_VERSION
+  APP_SYSTEM_VERSION,
+  OwnerStaffBroadcast
 } from '../types';
 
 // Initialize Firebase App
@@ -1245,6 +1246,68 @@ export const measureTurboSyncLatency = async (): Promise<number> => {
     return Math.max(8, Math.round(end - start));
   } catch {
     return 32;
+  }
+};
+
+/**
+ * Real-Time Owner Direct Directives & Staff Broadcasts
+ */
+export const subscribeToOwnerBroadcasts = (
+  onUpdate: (broadcasts: OwnerStaffBroadcast[]) => void
+) => {
+  const broadcastsCol = collection(db, 'owner_broadcasts');
+  return onSnapshot(
+    broadcastsCol,
+    (snapshot) => {
+      const list: OwnerStaffBroadcast[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as OwnerStaffBroadcast;
+        list.push({ ...data, id: docSnap.id });
+      });
+      list.sort(
+        (a, b) =>
+          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+      onUpdate(list);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.GET, 'owner_broadcasts');
+    }
+  );
+};
+
+export const sendOwnerBroadcastCloud = async (broadcast: OwnerStaffBroadcast) => {
+  await ensureAuth();
+  const docRef = doc(db, 'owner_broadcasts', broadcast.id);
+  await setDoc(
+    docRef,
+    cleanForFirestore({
+      ...broadcast,
+      updatedAt: new Date().toISOString(),
+    }),
+    { merge: true }
+  );
+};
+
+export const acknowledgeOwnerBroadcastCloud = async (
+  broadcastId: string,
+  employeeName: string
+) => {
+  await ensureAuth();
+  const docRef = doc(db, 'owner_broadcasts', broadcastId);
+  const snap = await getDoc(docRef);
+  if (snap.exists()) {
+    const data = snap.data() as OwnerStaffBroadcast;
+    const existing = data.acknowledgedBy || [];
+    if (!existing.some((a) => a.employeeName === employeeName)) {
+      existing.push({
+        employeeName,
+        timestamp: new Date().toISOString(),
+      });
+      await setDoc(docRef, cleanForFirestore({ acknowledgedBy: existing }), {
+        merge: true,
+      });
+    }
   }
 };
 

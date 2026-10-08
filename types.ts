@@ -1484,8 +1484,119 @@ export interface StoreSettings {
   dashboardLayout?: DashboardLayoutConfig;
   tieredCommissionBottleThreshold?: number; // Alias for tieredThresholdBottles
   bottleSizes?: BottleSize[]; // Global active bottle sizes list
-  lowStockThresholdGrams?: number; // Low stock alert threshold in grams
+  criticalStockThresholdGrams?: number; // خط الخطر الحرج للمخزون بالجرام (افتراضي 80 جم - يتلون بالأحمر)
+  lowStockThresholdGrams?: number; // عتبة اقتراب المخزون من النفاد بالجرام (افتراضي 200 جم - يتلون بالأصفر)
   updatedAt?: string;
+}
+
+// Owner Direct Broadcasts & Directives to Staff (نظام توجيهات وتنبيهات المالك المباشرة للموظفين)
+export interface OwnerStaffBroadcast {
+  id: string; // e.g. ob-1728384912
+  title: string;
+  message: string;
+  category: 'urgent' | 'target' | 'instruction' | 'reward';
+  senderName: string; // 'د. محمد (المالك)'
+  targetEmployee?: string; // 'all' or specific employee name e.g. 'طارق'
+  createdAt: string; // ISO
+  requiresAcknowledgement?: boolean;
+  acknowledgedBy?: Array<{ employeeName: string; timestamp: string }>;
+  isArchived?: boolean;
+}
+
+export type ProductStockHealthStatus = 'critical' | 'low' | 'healthy';
+
+export interface ProductStockHealth {
+  status: ProductStockHealthStatus;
+  criticalThreshold: number; // خط الخطر (Red line)
+  lowThreshold: number; // عتبة اقتراب النفاد (Yellow warning)
+  isCritical: boolean; // أحمر
+  isLow: boolean; // أصفر
+  isHealthy: boolean; // أخضر
+  statusLabel: string;
+  badgeLabel: string;
+  badgeColorClass: string;
+  cardBorderClass: string;
+  cardBgClass: string;
+  textColorClass: string;
+  dotPulseClass: string;
+  progressPercent: number;
+}
+
+export function getProductStockHealth(
+  product: Product,
+  settings?: StoreSettings
+): ProductStockHealth {
+  const criticalThreshold =
+    product.min_threshold_grams ??
+    settings?.criticalStockThresholdGrams ??
+    80;
+  const lowThreshold =
+    product.strategicThresholdGrams ??
+    settings?.lowStockThresholdGrams ??
+    200;
+
+  const stock = Number(product.stock_grams) || 0;
+  const isCritical = stock <= criticalThreshold;
+  const isLow = !isCritical && stock <= lowThreshold;
+  const isHealthy = !isCritical && !isLow;
+
+  const targetMax = Math.max(stock, lowThreshold * 2, 500);
+  const progressPercent = Math.min(100, Math.max(0, Math.round((stock / targetMax) * 100)));
+
+  if (isCritical) {
+    return {
+      status: 'critical',
+      criticalThreshold,
+      lowThreshold,
+      isCritical: true,
+      isLow: false,
+      isHealthy: false,
+      statusLabel: 'في خط الخطر الحرج (أحمر)',
+      badgeLabel: `🚨 خط الخطر (${stock} جم)`,
+      badgeColorClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/35',
+      cardBorderClass: 'border-rose-500/50 dark:border-rose-500/40 shadow-xs shadow-rose-500/10',
+      cardBgClass: 'bg-rose-500/[0.04] dark:bg-rose-950/20',
+      textColorClass: 'text-rose-600 dark:text-rose-400',
+      dotPulseClass: 'bg-rose-500 animate-pulse ring-2 ring-rose-400/40',
+      progressPercent,
+    };
+  }
+
+  if (isLow) {
+    return {
+      status: 'low',
+      criticalThreshold,
+      lowThreshold,
+      isCritical: false,
+      isLow: true,
+      isHealthy: false,
+      statusLabel: 'اقترب من النفاد (أصفر)',
+      badgeLabel: `⚠️ اقترب من النفاد (${stock} جم)`,
+      badgeColorClass: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/35',
+      cardBorderClass: 'border-amber-500/50 dark:border-amber-500/40 shadow-xs shadow-amber-500/10',
+      cardBgClass: 'bg-amber-500/[0.04] dark:bg-amber-950/20',
+      textColorClass: 'text-amber-600 dark:text-amber-400',
+      dotPulseClass: 'bg-amber-500 ring-2 ring-amber-400/30',
+      progressPercent,
+    };
+  }
+
+  return {
+    status: 'healthy',
+    criticalThreshold,
+    lowThreshold,
+    isCritical: false,
+    isLow: false,
+    isHealthy: true,
+    statusLabel: 'مخزون كافٍ وآمن (أخضر)',
+    badgeLabel: `✅ مخزون كافٍ (${stock} جم)`,
+    badgeColorClass: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+    cardBorderClass: 'border-black/[0.06] dark:border-white/[0.08]',
+    cardBgClass: '',
+    textColorClass: 'text-emerald-600 dark:text-emerald-400',
+    dotPulseClass: 'bg-emerald-500',
+    progressPercent,
+  };
 }
 
 // Staff Attendance & Shift Records (سجل دوام وحضور وفتح المتجر للموظف طارق)
@@ -1872,6 +1983,8 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   loyaltyWelcomeBonusPoints: 0,
   loyaltyStrategyMode: 'balanced',
   dashboardLayout: DEFAULT_DASHBOARD_LAYOUT_CONFIG,
+  criticalStockThresholdGrams: 80, // خط الخطر الحرج (أحمر) - 80 جم
+  lowStockThresholdGrams: 200, // اقتراب من النفاد (أصفر) - 200 جم
 };
 
 // Approved Official Bottle Sizes and Exact Price/Cost Matrices

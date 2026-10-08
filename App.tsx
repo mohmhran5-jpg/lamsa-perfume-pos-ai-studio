@@ -54,6 +54,7 @@ import {
   CustomCustomerRecord,
   SavedMixFormula,
   ConnectedDeviceRecord,
+  OwnerStaffBroadcast,
   DEFAULT_SETTINGS, 
   DEFAULT_BOTTLE_SIZES,
   DEFAULT_VAULTS,
@@ -146,7 +147,10 @@ import {
   markDeviceOfflineCloud,
   getLocalDeviceId,
   isVirtualDemoCustomer,
-  posRealtimeChannel
+  posRealtimeChannel,
+  subscribeToOwnerBroadcasts,
+  sendOwnerBroadcastCloud,
+  acknowledgeOwnerBroadcastCloud,
 } from './services/firebase';
 import { getSessionUser, saveSessionUser, canAccessView } from './services/authService';
 import { Lock } from 'lucide-react';
@@ -832,6 +836,10 @@ const App: React.FC = () => {
   const [isPWAInstallModalOpen, setIsPWAInstallModalOpen] = useState<boolean>(false);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDeviceRecord[]>([]);
   const [isConnectedDevicesModalOpen, setIsConnectedDevicesModalOpen] = useState<boolean>(false);
+  const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>(() => {
+    return loadDataSync<OwnerStaffBroadcast[]>('lamsa_owner_broadcasts', []);
+  });
+  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(new Set());
   const prevDeviceCountRef = useRef<number>(0);
 
   // Track known remote event IDs to trigger real-time sound & system notifications when new records arrive from other devices
@@ -1283,6 +1291,14 @@ const App: React.FC = () => {
       setIsCloudConnected(true);
     });
 
+    // Real-Time Owner Staff Directives & Broadcasts Listener
+    const unsubBroadcasts = subscribeToOwnerBroadcasts((cloudBroadcasts) => {
+      if (cloudBroadcasts) {
+        setOwnerBroadcasts(cloudBroadcasts);
+        persistDataDurable('lamsa_owner_broadcasts', cloudBroadcasts);
+      }
+    });
+
     const onRealtimeMessage = (e: MessageEvent) => {
       if (!e.data || !e.data.type) return;
 
@@ -1361,6 +1377,7 @@ const App: React.FC = () => {
       unsubCustomers();
       unsubSavedMixes();
       unsubDevices();
+      unsubBroadcasts();
     };
   }, []);
 

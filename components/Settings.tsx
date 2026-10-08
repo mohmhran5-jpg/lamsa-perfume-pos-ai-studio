@@ -3202,16 +3202,182 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-4 text-xs">
-                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-[#1D1D1F] block">حد التنبيه الحرج لنقص المخزون:</span>
-                      <span className="text-[10px] text-[#86868B]">يتم إظهار تنبيه وإدراج العطر في قائمة النواقص تلقائياً</span>
+              <div className="space-y-5 text-xs">
+                {/* 1. خط الخطر الحرج (Red Danger Line) */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-white border border-rose-200/80 dark:border-rose-900/40 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping shrink-0" />
+                      <div>
+                        <strong className="text-sm font-black text-rose-700 dark:text-rose-400 block">
+                          خط الخطر الحرج للمخزون (يلون باللون الأحمر 🚨):
+                        </strong>
+                        <span className="text-[11px] text-[#86868B]">
+                          عند وصول رصيد أي عطر لهذا الرقم أو أقل، يتلون العطر بالأحمر الحرج ويُدرج فوراً في تنبيهات النواقص القصوى.
+                        </span>
+                      </div>
                     </div>
-                    <span className="font-mono font-bold text-xs bg-black/[0.04] px-2.5 py-1 rounded-lg text-[#1D1D1F]">
-                      100 جرام
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="10"
+                        max="500"
+                        step="5"
+                        value={settings.criticalStockThresholdGrams ?? 80}
+                        onChange={(e) => {
+                          const val = Math.max(5, Number(e.target.value) || 80);
+                          setSettings((prev) => ({ ...prev, criticalStockThresholdGrams: val }));
+                        }}
+                        className="w-24 px-3 py-1.5 rounded-xl border border-rose-300 text-center font-mono font-bold text-base text-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-500 bg-rose-50/50"
+                      />
+                      <span className="font-bold text-[#86868B]">جم</span>
+                    </div>
+                  </div>
+
+                  {/* Slider & Quick Presets */}
+                  <div className="space-y-2 pt-2 border-t border-rose-100 dark:border-rose-950/40">
+                    <input
+                      type="range"
+                      min="20"
+                      max="300"
+                      step="5"
+                      value={settings.criticalStockThresholdGrams ?? 80}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setSettings((prev) => ({ ...prev, criticalStockThresholdGrams: val }));
+                      }}
+                      className="w-full accent-rose-600 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-[#86868B]">
+                      <span>اختيارات سريعة لخط الخطر:</span>
+                      <div className="flex items-center gap-1.5">
+                        {[50, 80, 100, 150].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setSettings((prev) => ({ ...prev, criticalStockThresholdGrams: preset }))}
+                            className={`px-2.5 py-0.5 rounded-lg font-bold font-mono transition-colors cursor-pointer ${
+                              (settings.criticalStockThresholdGrams ?? 80) === preset
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                            }`}
+                          >
+                            {preset} جم
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. عتبة اقتراب المخزون من النفاد (Yellow Warning Line) */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-white border border-amber-200/80 dark:border-amber-900/40 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full bg-amber-500 ring-2 ring-amber-400/50 shrink-0" />
+                      <div>
+                        <strong className="text-sm font-black text-amber-800 dark:text-amber-400 block">
+                          عتبة اقتراب المخزون من النفاد (يلون باللون الأصفر ⚠️):
+                        </strong>
+                        <span className="text-[11px] text-[#86868B]">
+                          عند هبوط رصيد العطر لما دون هذا الحد وحتى خط الخطر، يتلون بالأصفر التنبيهي لإشعار الكاشير والمالك بالطلب المبكر.
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="50"
+                        max="1000"
+                        step="10"
+                        value={settings.lowStockThresholdGrams ?? 200}
+                        onChange={(e) => {
+                          const val = Math.max(20, Number(e.target.value) || 200);
+                          setSettings((prev) => ({ ...prev, lowStockThresholdGrams: val }));
+                        }}
+                        className="w-24 px-3 py-1.5 rounded-xl border border-amber-300 text-center font-mono font-bold text-base text-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-amber-50/50"
+                      />
+                      <span className="font-bold text-[#86868B]">جم</span>
+                    </div>
+                  </div>
+
+                  {/* Slider & Quick Presets */}
+                  <div className="space-y-2 pt-2 border-t border-amber-100 dark:border-amber-950/40">
+                    <input
+                      type="range"
+                      min="80"
+                      max="600"
+                      step="10"
+                      value={settings.lowStockThresholdGrams ?? 200}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setSettings((prev) => ({ ...prev, lowStockThresholdGrams: val }));
+                      }}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-[#86868B]">
+                      <span>اختيارات سريعة للتحذير الأصفر:</span>
+                      <div className="flex items-center gap-1.5">
+                        {[150, 200, 250, 300].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setSettings((prev) => ({ ...prev, lowStockThresholdGrams: preset }))}
+                            className={`px-2.5 py-0.5 rounded-lg font-bold font-mono transition-colors cursor-pointer ${
+                              (settings.lowStockThresholdGrams ?? 200) === preset
+                                ? 'bg-amber-500 text-slate-950'
+                                : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                            }`}
+                          >
+                            {preset} جم
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Live Visual Indicator Preview Card */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200 space-y-2.5">
+                  <strong className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                    معاينة حية لشكل المنتجات في شاشة المخزون حسب الألوان:
+                  </strong>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {/* Sample Red */}
+                    <div className="p-3 rounded-xl border-2 border-rose-500/50 bg-rose-500/[0.06] space-y-1">
+                      <div className="flex items-center justify-between">
+                        <strong className="font-bold text-rose-700 text-xs">عطر توت بري نيش</strong>
+                        <span className="font-mono font-black text-rose-600 text-xs">{settings.criticalStockThresholdGrams ?? 80} جم</span>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-700 border border-rose-500/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                        <span>🚨 خط الخطر (أحمر)</span>
+                      </span>
+                    </div>
+
+                    {/* Sample Yellow */}
+                    <div className="p-3 rounded-xl border-2 border-amber-500/50 bg-amber-500/[0.06] space-y-1">
+                      <div className="flex items-center justify-between">
+                        <strong className="font-bold text-amber-900 text-xs">عطر سوفاج ديور</strong>
+                        <span className="font-mono font-black text-amber-600 text-xs">{settings.lowStockThresholdGrams ?? 200} جم</span>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-800 border border-amber-500/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 ring-1 ring-amber-400" />
+                        <span>⚠️ اقترب من النفاد (أصفر)</span>
+                      </span>
+                    </div>
+
+                    {/* Sample Green */}
+                    <div className="p-3 rounded-xl border border-black/[0.08] bg-white space-y-1">
+                      <div className="flex items-center justify-between">
+                        <strong className="font-bold text-[#1D1D1F] text-xs">عطر عود ملكي خاص</strong>
+                        <span className="font-mono font-black text-emerald-600 text-xs">850 جم</span>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-800 border border-emerald-500/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span>✅ مخزون كافٍ (أخضر)</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 

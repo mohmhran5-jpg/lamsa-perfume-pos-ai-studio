@@ -10,6 +10,8 @@ import {
   Sale,
   StoreSettings,
   DEFAULT_SETTINGS,
+  getProductStockHealth,
+  ProductStockHealth,
   getApprovedOilGramCost,
   isLiveProductionSale,
 } from '../types';
@@ -96,6 +98,7 @@ const Inventory: React.FC<InventoryProps> = ({
   const [filterType, setFilterType] = useState<PerfumeType | 'all'>('all');
   const [filterGender, setFilterGender] = useState<Gender | 'all'>('all');
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+  const [stockHealthFilter, setStockHealthFilter] = useState<'all' | 'critical' | 'low' | 'healthy'>('all');
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -161,6 +164,20 @@ const Inventory: React.FC<InventoryProps> = ({
     return dupGroups;
   }, [products]);
 
+  // Real-time Stock Health Metrics Breakdown (Red Danger vs Yellow Low vs Green Healthy)
+  const stockHealthMetrics = useMemo(() => {
+    let criticalCount = 0;
+    let lowCount = 0;
+    let healthyCount = 0;
+    products.forEach((p) => {
+      const h = getProductStockHealth(p, settings);
+      if (h.isCritical) criticalCount++;
+      else if (h.isLow) lowCount++;
+      else healthyCount++;
+    });
+    return { criticalCount, lowCount, healthyCount };
+  }, [products, settings]);
+
   // Filtered list
   const filteredProducts = products.filter((p) => {
     const q = searchTerm.trim().toLowerCase();
@@ -171,13 +188,23 @@ const Inventory: React.FC<InventoryProps> = ({
       p.origin.toLowerCase().includes(q);
     const matchesType = filterType === 'all' || p.type === filterType;
     const matchesGender = filterGender === 'all' || p.gender === filterGender;
-    const matchesLowStock = !showLowStockOnly || p.stock_grams < 100;
-    return matchesSearch && matchesType && matchesGender && matchesLowStock;
+    
+    const health = getProductStockHealth(p, settings);
+    const matchesStockFilter =
+      stockHealthFilter === 'all'
+        ? (!showLowStockOnly || health.isCritical || health.isLow)
+        : stockHealthFilter === 'critical'
+        ? health.isCritical
+        : stockHealthFilter === 'low'
+        ? health.isLow
+        : health.isHealthy;
+
+    return matchesSearch && matchesType && matchesGender && matchesStockFilter;
   });
 
   // Real-time Detailed KPI Metrics
   const totalStockGrams = products.reduce((acc, p) => acc + (p.stock_grams || 0), 0);
-  const lowStockCount = products.filter((p) => p.stock_grams < 100).length;
+  const lowStockCount = stockHealthMetrics.criticalCount + stockHealthMetrics.lowCount;
   const documentedInDbCount = useMemo(() => {
     return products.filter(
       (p) =>
@@ -1029,52 +1056,118 @@ const Inventory: React.FC<InventoryProps> = ({
         </div>
       )}
 
-      {/* Stats Summary Bar */}
+      {/* Stats Summary Bar & Visual Indicators */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-        <div className="apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
+        {/* Card 1: Total Perfumes */}
+        <div 
+          onClick={() => setStockHealthFilter('all')}
+          className={`apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between cursor-pointer transition-all hover:scale-[1.01] ${
+            stockHealthFilter === 'all' ? 'ring-2 ring-[#0071E3]/50' : ''
+          }`}
+        >
           <span className="text-xs font-medium text-[#86868B]">إجمالي الأصناف المدققة</span>
           <div className="text-2xl font-bold text-[#1D1D1F] mt-1 font-mono">
             {products.length} <span className="text-xs font-normal text-[#86868B]">عطر</span>
           </div>
+          <span className="text-[10px] text-[#86868B] mt-1">
+            {(totalStockGrams / 1000).toFixed(2)} كجم زيت
+          </span>
         </div>
 
-        <div className="apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
+        {/* Card 2: Red Critical Danger Line Indicator */}
+        <div 
+          onClick={() => setStockHealthFilter(stockHealthFilter === 'critical' ? 'all' : 'critical')}
+          className={`apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between cursor-pointer transition-all hover:scale-[1.01] border ${
+            stockHealthFilter === 'critical' 
+              ? 'ring-2 ring-rose-500 bg-rose-500/10 border-rose-500/40' 
+              : 'border-rose-500/25 bg-rose-500/[0.04]'
+          }`}
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-[#86868B]">نواقص المخزون</span>
-            {lowStockCount > 0 && (
-              <span className="w-2 h-2 rounded-full bg-[#FF3B30] animate-ping"></span>
-            )}
+            <span className="text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping inline-block" />
+              <span>خط الخطر (أحمر)</span>
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 font-bold">
+              حرج 🚨
+            </span>
           </div>
-          <div className="text-2xl font-bold text-[#FF3B30] mt-1 font-mono">
-            {lowStockCount} <span className="text-xs font-normal text-[#86868B]">أقل من 100 جم</span>
+          <div className="text-2xl font-bold text-rose-600 mt-1 font-mono">
+            {stockHealthMetrics.criticalCount}{' '}
+            <span className="text-xs font-normal text-rose-700/80">عطر حرج</span>
           </div>
+          <span className="text-[10px] text-rose-600/90 mt-1 font-semibold">
+            أقل من {settings.criticalStockThresholdGrams || 80} جم (تنبيه فوري)
+          </span>
         </div>
 
-        <div className="apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
-          <span className="text-xs font-medium text-[#86868B]">إجمالي الوزن بالكيلو</span>
-          <div className="text-2xl font-bold text-[#0071E3] mt-1 font-mono">
-            {(totalStockGrams / 1000).toFixed(2)}{' '}
-            <span className="text-xs font-normal text-[#86868B]">كجم</span>
+        {/* Card 3: Yellow Near Exhaustion Indicator */}
+        <div 
+          onClick={() => setStockHealthFilter(stockHealthFilter === 'low' ? 'all' : 'low')}
+          className={`apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between cursor-pointer transition-all hover:scale-[1.01] border ${
+            stockHealthFilter === 'low' 
+              ? 'ring-2 ring-amber-500 bg-amber-500/10 border-amber-500/40' 
+              : 'border-amber-500/25 bg-amber-500/[0.04]'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-amber-400/40 inline-block" />
+              <span>اقترب من النفاد (أصفر)</span>
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-800 font-bold">
+              تحذير ⚠️
+            </span>
           </div>
+          <div className="text-2xl font-bold text-amber-600 mt-1 font-mono">
+            {stockHealthMetrics.lowCount}{' '}
+            <span className="text-xs font-normal text-amber-800/80">عطر مقارب</span>
+          </div>
+          <span className="text-[10px] text-amber-700/90 mt-1 font-semibold">
+            بين {settings.criticalStockThresholdGrams || 80} و {settings.lowStockThresholdGrams || 200} جم
+          </span>
         </div>
 
-        <div className="apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
-          <span className="text-xs font-medium text-[#86868B]">أرصدة الزيت بالجرام</span>
-          <div className="text-2xl font-bold text-[#1D1D1F] mt-1 font-mono">
-            {totalStockGrams.toLocaleString('ar-EG')}{' '}
-            <span className="text-xs font-normal text-[#86868B]">جم</span>
+        {/* Card 4: Green Healthy Safe Stock Indicator */}
+        <div 
+          onClick={() => setStockHealthFilter(stockHealthFilter === 'healthy' ? 'all' : 'healthy')}
+          className={`apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between cursor-pointer transition-all hover:scale-[1.01] border ${
+            stockHealthFilter === 'healthy' 
+              ? 'ring-2 ring-emerald-500 bg-emerald-500/10 border-emerald-500/40' 
+              : 'border-emerald-500/20 bg-emerald-500/[0.03]'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+              <span>مخزون كافٍ (أخضر)</span>
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 font-bold">
+              آمن ✅
+            </span>
           </div>
+          <div className="text-2xl font-bold text-emerald-600 mt-1 font-mono">
+            {stockHealthMetrics.healthyCount}{' '}
+            <span className="text-xs font-normal text-emerald-700/80">عطر آمن</span>
+          </div>
+          <span className="text-[10px] text-emerald-700/90 mt-1 font-semibold">
+            أكثر من {settings.lowStockThresholdGrams || 200} جم
+          </span>
         </div>
 
+        {/* Card 5: Internal DB & Grams Total */}
         <div className="apple-glass-card rounded-2xl p-4 sm:p-5 flex flex-col justify-between col-span-2 lg:col-span-1 bg-gradient-to-br from-purple-50/70 to-blue-50/50 border border-purple-200/50">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-purple-900">موسوعة العطور الداخلية</span>
+            <span className="text-xs font-bold text-purple-900">موسوعة العطور والمخزون</span>
             <Database size={14} className="text-purple-600" />
           </div>
           <div className="text-xl font-black text-purple-950 mt-1 font-mono">
-            {documentedInDbCount} / {products.length}{' '}
-            <span className="text-[11px] font-bold text-purple-700">موثق بالـ AI</span>
+            {totalStockGrams.toLocaleString('ar-EG')}{' '}
+            <span className="text-[11px] font-bold text-purple-700">جم زيت</span>
           </div>
+          <span className="text-[10px] text-purple-800/80 font-medium">
+            {documentedInDbCount} / {products.length} موثق بالذكاء الاصطناعي
+          </span>
         </div>
       </div>
 
@@ -1522,6 +1615,58 @@ const Inventory: React.FC<InventoryProps> = ({
               </button>
             ))}
           </div>
+
+          {/* Stock Health Indicator Filter Chips */}
+          <div className="w-full flex items-center gap-1.5 pt-2 border-t border-black/[0.04] flex-wrap">
+            <span className="text-xs text-[#86868B] ml-1 font-bold">مؤشرات المخزون والتنبيهات:</span>
+            <button
+              type="button"
+              onClick={() => setStockHealthFilter('all')}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                stockHealthFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-black/[0.04] text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              الكل ({products.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockHealthFilter(stockHealthFilter === 'critical' ? 'all' : 'critical')}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                stockHealthFilter === 'critical'
+                  ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping inline-block" />
+              <span>🚨 خط الخطر (أحمر) · {stockHealthMetrics.criticalCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockHealthFilter(stockHealthFilter === 'low' ? 'all' : 'low')}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                stockHealthFilter === 'low'
+                  ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
+                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-500 ring-2 ring-amber-400 inline-block" />
+              <span>⚠️ اقترب من النفاد (أصفر) · {stockHealthMetrics.lowCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockHealthFilter(stockHealthFilter === 'healthy' ? 'all' : 'healthy')}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                stockHealthFilter === 'healthy'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+              <span>✅ مخزون كافٍ (أخضر) · {stockHealthMetrics.healthyCount}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1530,11 +1675,17 @@ const Inventory: React.FC<InventoryProps> = ({
       {/* ======================================================== */}
       <div className="md:hidden space-y-3">
         {filteredProducts.map((product) => {
-          const isLow = product.stock_grams < 100;
+          const health = getProductStockHealth(product, settings);
           return (
             <div
               key={product.id}
-              className="apple-glass-card rounded-2xl p-4 border border-black/[0.06] space-y-3"
+              className={`apple-glass-card rounded-2xl p-4 border transition-all space-y-3 ${
+                health.isCritical
+                  ? 'border-2 border-rose-500/50 bg-rose-500/[0.04] dark:bg-rose-950/25 shadow-xs shadow-rose-500/10'
+                  : health.isLow
+                  ? 'border-2 border-amber-500/50 bg-amber-500/[0.04] dark:bg-amber-950/25 shadow-xs shadow-amber-500/10'
+                  : 'border border-black/[0.06]'
+              }`}
             >
               <div className="flex items-start justify-between">
                 <div>
@@ -1555,6 +1706,13 @@ const Inventory: React.FC<InventoryProps> = ({
                     <span className="text-[10px] text-[#86868B]">
                       {product.gender} · {product.season}
                     </span>
+                    {/* Visual Status Indicator Badge */}
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${health.badgeColorClass}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${health.dotPulseClass}`} />
+                      <span>{health.status === 'critical' ? 'خط الخطر' : health.status === 'low' ? 'اقترب من النفاد' : 'آمن'}</span>
+                    </span>
                   </div>
                   <h3 className="font-bold text-base text-[#1D1D1F]">{product.name}</h3>
                   <p className="text-xs text-[#86868B]">
@@ -1565,9 +1723,7 @@ const Inventory: React.FC<InventoryProps> = ({
                 <div className="text-left">
                   <span className="text-[10px] text-[#86868B] block">المخزون</span>
                   <span
-                    className={`font-mono text-base font-bold ${
-                      isLow ? 'text-[#FF3B30]' : 'text-[#34C759]'
-                    }`}
+                    className={`font-mono text-base font-bold ${health.textColorClass}`}
                   >
                     {product.stock_grams} جم
                   </span>
@@ -1635,10 +1791,19 @@ const Inventory: React.FC<InventoryProps> = ({
           </thead>
           <tbody className="divide-y divide-black/[0.04]">
             {filteredProducts.map((product) => {
-              const isLow = product.stock_grams < 100;
+              const health = getProductStockHealth(product, settings);
               const enc = getProductEncyclopediaEntry(product);
               return (
-                <tr key={product.id} className="hover:bg-black/[0.02] transition-colors group">
+                <tr 
+                  key={product.id} 
+                  className={`transition-colors group ${
+                    health.isCritical 
+                      ? 'bg-rose-500/[0.05] hover:bg-rose-500/[0.09]' 
+                      : health.isLow 
+                      ? 'bg-amber-500/[0.04] hover:bg-amber-500/[0.08]' 
+                      : 'hover:bg-black/[0.02]'
+                  }`}
+                >
                   <td className="py-3.5 px-4">
                     <div className="font-bold text-[#1D1D1F] text-sm flex items-center gap-2">
                       <span>{product.name}</span>
@@ -1684,17 +1849,17 @@ const Inventory: React.FC<InventoryProps> = ({
                   <td className="py-3.5 px-4">
                     <div className="flex items-center gap-2">
                       <span
-                        className={`font-mono text-sm font-bold ${
-                          isLow ? 'text-[#FF3B30]' : 'text-[#34C759]'
-                        }`}
+                        className={`font-mono text-sm font-bold ${health.textColorClass}`}
                       >
                         {product.stock_grams} جم
                       </span>
-                      {isLow && (
-                        <span className="text-[10px] text-[#FF3B30] bg-red-50 px-2 py-0.5 rounded-md font-semibold">
-                          ناقص
-                        </span>
-                      )}
+                      {/* Visual Indicator Badge */}
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-md font-bold border inline-flex items-center gap-1 ${health.badgeColorClass}`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${health.dotPulseClass}`} />
+                        <span>{health.status === 'critical' ? 'خط الخطر' : health.status === 'low' ? 'اقترب من النفاد' : 'آمن'}</span>
+                      </span>
                     </div>
                   </td>
                   <td className="py-3.5 px-4 text-left">
