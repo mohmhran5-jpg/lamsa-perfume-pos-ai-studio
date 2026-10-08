@@ -49,6 +49,8 @@ jobs:
                   if root not in dest.resolve().parents:
                       raise SystemExit('Unsafe archive destination')
                   if dest.exists():
+                      if key == '.gitignore':
+                          continue
                       raise SystemExit('Refusing to overwrite existing repository file')
                   dest.parent.mkdir(parents=True, exist_ok=True)
                   with z.open(info) as source, dest.open('xb') as target:
