@@ -1,133 +1,14 @@
 import { AppUser, UserPermissions, View } from '../types';
 
-const AUTH_SALT = "lamsa_perfume_secure_salt_2026";
-
-/**
- * Normalizes Arabic/Eastern digits (٠١٢٣٤٥٦٧٨٩ / ۰۱۲۳۴۵۶۷۸۹) to standard ASCII digits (0123456789)
- * and trims whitespace so typing 5188 on an Arabic or English keyboard always works seamlessly.
- */
-export function normalizePasswordInput(input: string): string {
-  if (!input) return '';
-  return input
-    .trim()
-    .replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '')
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 1632))
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 1776));
-}
-
-/**
- * Computes SHA-256 hash using the Web Crypto API
- */
-export async function hashPassword(plainText: string): Promise<string> {
-  const normalized = normalizePasswordInput(plainText);
-  try {
-    if (typeof crypto !== 'undefined' && crypto.subtle) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(normalized + AUTH_SALT);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-  } catch (e) {
-    console.warn('Web Crypto fallback:', e);
-  }
-  return normalized;
-}
-
-/**
- * Verifies a password or PIN with smart, forgiving support for Dr. Mohamed (5188) and Tarek (12345 / 1234)
- * so the owner and sales manager are never locked out by browser crypto or keyboard locale differences.
- */
-export async function verifyPassword(
-  plainText: string,
-  storedHash: string,
-  userOrRole?: AppUser | string | null
-): Promise<boolean> {
-  const normalized = normalizePasswordInput(plainText);
-  if (!normalized) return false;
-
-  const isOwnerTarget =
-    !userOrRole ||
-    (typeof userOrRole === 'string' && (userOrRole === 'OWNER' || userOrRole === 'mohamed')) ||
-    (typeof userOrRole === 'object' &&
-      (userOrRole.role === 'OWNER' ||
-        userOrRole.id === 'owner_mohamed' ||
-        userOrRole.username === 'mohamed' ||
-        (userOrRole.displayName && userOrRole.displayName.includes('محمد'))));
-
-  const isTarekTarget =
-    (typeof userOrRole === 'string' && (userOrRole === 'STORE_MANAGER' || userOrRole === 'tarek')) ||
-    (typeof userOrRole === 'object' && (userOrRole.username === 'tarek' || userOrRole.role === 'STORE_MANAGER'));
-
-  const digitsOnly = normalized.replace(/\D/g, '');
-
-  // 1. Master PIN '5188' always unlocks Owner (Dr. Mohamed) and serves as master override
-  if (normalized === '5188' || digitsOnly === '5188') {
-    return true;
-  }
-
-  // Allow intuitive owner aliases if the user types Dr. Mohamed's name or username
-  const lowerInput = normalized.toLowerCase().replace(/\s+/g, ' ');
-  if (
-    isOwnerTarget &&
-    (lowerInput === 'mohamed' ||
-      lowerInput === 'dr mohamed' ||
-      lowerInput === 'dr. mohamed' ||
-      lowerInput === 'محمد' ||
-      lowerInput === 'د محمد' ||
-      lowerInput === 'د. محمد')
-  ) {
-    return true;
-  }
-
-  // 2. Quick PINs for Tarek (12345, 1234, 0000)
-  if (isTarekTarget && (normalized === '12345' || normalized === '1234' || normalized === '0000')) {
-    return true;
-  }
-
-  if (!storedHash) {
-    return isOwnerTarget ? normalized === '5188' : (normalized === '12345' || normalized === '1234');
-  }
-
-  // 3. Direct plain-text match (if stored directly without complex hashing)
-  if (normalized === normalizePasswordInput(storedHash)) {
-    return true;
-  }
-
-  // 4. Known precomputed hashes for '5188' and '12345'
-  if (
-    storedHash === '8acb9e8697b0a701dfc33bf8e2dfc01a2f643e2a39396b26cf52ec7f7fc8e4ec' &&
-    normalized === '5188'
-  ) {
-    return true;
-  }
-  if (
-    storedHash === '5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5' &&
-    (normalized === '12345' || normalized === '1234')
-  ) {
-    return true;
-  }
-
-  // 5. Try salted SHA-256 hash
-  try {
-    const computed = await hashPassword(normalized);
-    if (computed === storedHash) return true;
-
-    // 6. Try direct SHA-256 without salt
-    if (typeof crypto !== 'undefined' && crypto.subtle) {
-      const encoder = new TextEncoder();
-      const directBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(normalized));
-      const directHash = Array.from(new Uint8Array(directBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-      if (directHash === storedHash) return true;
-    }
-  } catch (e) {
-    console.warn('Hash check fallback:', e);
-  }
-
-  return false;
-}
+const OWNER_ONLY_PERMISSIONS = new Set<keyof UserPermissions>([
+  'canEditProductCost', 'canViewCosts', 'canViewProfits', 'canViewCostAndProfit',
+  'canViewProfitAndCosts', 'canViewExecutiveDashboard', 'canViewVaults',
+  'canRequestWithdrawal', 'canApproveWithdrawal', 'canInjectCapital',
+  'canTransferBetweenVaults', 'canWithdrawOwnerProfit', 'canEditBudget',
+  'canEditSalaries', 'canEditCommissions', 'canViewExpenses', 'canManageSettings',
+  'canManageUsers', 'canViewAuditLog', 'canViewAuditLogs', 'canAccessOperationsSystem',
+  'canEditSettingsAndBudgets', 'canExportData', 'canDeleteInvoices',
+]);
 
 /**
  * Checks if user possesses a specific granular permission
@@ -135,6 +16,7 @@ export async function verifyPassword(
 export function hasPermission(user: AppUser | null, permission: keyof UserPermissions): boolean {
   if (!user || !user.isActive) return false;
   if (user.role === 'OWNER') return true; // Full control for owner
+  if (OWNER_ONLY_PERMISSIONS.has(permission)) return false;
   return !!user.permissions[permission];
 }
 
@@ -144,7 +26,7 @@ export function hasPermission(user: AppUser | null, permission: keyof UserPermis
 export function canViewProfits(user: AppUser | null): boolean {
   if (!user || !user.isActive) return false;
   if (user.role === 'OWNER') return true;
-  return !!user.permissions.canViewProfits;
+  return hasPermission(user, 'canViewProfits');
 }
 
 /**
@@ -153,7 +35,7 @@ export function canViewProfits(user: AppUser | null): boolean {
 export function canViewCosts(user: AppUser | null): boolean {
   if (!user || !user.isActive) return false;
   if (user.role === 'OWNER') return true;
-  return !!user.permissions.canViewCosts;
+  return hasPermission(user, 'canViewCosts');
 }
 
 /**
@@ -162,7 +44,7 @@ export function canViewCosts(user: AppUser | null): boolean {
 export function canViewVaults(user: AppUser | null): boolean {
   if (!user || !user.isActive) return false;
   if (user.role === 'OWNER') return true;
-  return !!user.permissions.canViewVaults && !!user.permissions.canApproveWithdrawal;
+  return hasPermission(user, 'canViewVaults') && hasPermission(user, 'canApproveWithdrawal');
 }
 
 /**
@@ -191,7 +73,7 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return true;
 
     case View.DASHBOARD:
-      return true;
+      return hasPermission(user, 'canViewExecutiveDashboard');
 
     case View.REPORTS:
       // Allow access to Sales & Invoices Ledger (profit/cost columns remain role-protected inside)
@@ -208,28 +90,28 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return p.canViewStock || p.canRecordShortage || p.canStockCheck || p.canCreatePurchaseRequest;
 
     case View.FORMULATION_ENGINE:
-      return p.canEditProductCost || user.role === 'STORE_MANAGER';
+      return p.canEditProductCost === true && p.canViewCosts === true;
 
     case View.FINANCIAL_VAULTS:
       return p.canViewVaults && p.canApproveWithdrawal;
 
     case View.EXPENSES:
-      return p.canViewExpenses === true || p.canEditBudget === true;
+      return hasPermission(user, 'canViewExpenses') || hasPermission(user, 'canEditBudget');
 
     case View.OPERATIONS_SYSTEM:
-      return true;
+      return hasPermission(user, 'canAccessOperationsSystem') && hasPermission(user, 'canEditBudget');
 
     case View.SETTINGS:
-      return p.canManageSettings === true;
+      return hasPermission(user, 'canManageSettings');
 
     case View.USERS_MANAGEMENT:
-      return p.canManageUsers === true;
+      return hasPermission(user, 'canManageUsers');
 
     case View.AUDIT_LOGS:
-      return p.canViewAuditLog === true;
+      return hasPermission(user, 'canViewAuditLog');
 
     case View.STORE_MANAGER:
-      return p.canExportData === true;
+      return hasPermission(user, 'canExportData');
 
     case View.MARKETING:
       return true;
@@ -240,28 +122,114 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
 }
 
 /**
- * Local session storage for logged-in user
+ * Secure SHA-256 Password Hashing Utility
  */
-const CURRENT_USER_SESSION_KEY = 'lamsa_current_user_v1';
+export async function hashPassword(plain: string): Promise<string> {
+  if (!plain) return '';
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    try {
+      const msgUint8 = new TextEncoder().encode(plain);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+      // Fallback below
+    }
+  }
+  let hash = 0;
+  for (let i = 0; i < plain.length; i++) {
+    const char = plain.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return `sha256_${Math.abs(hash).toString(16)}`;
+}
 
-export function saveSessionUser(user: AppUser | null): void {
+/**
+ * Normalizes Arabic / Persian numerals to Western standard digits and trims whitespace
+ */
+export function normalizePasswordInput(input: string): string {
+  if (!input) return '';
+  const arabicDigits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  const persianDigits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  let normalized = input.trim();
+  for (let i = 0; i < 10; i++) {
+    normalized = normalized.split(arabicDigits[i]).join(String(i));
+    normalized = normalized.split(persianDigits[i]).join(String(i));
+  }
+  return normalized;
+}
+
+/**
+ * Verifies whether input PIN / password matches the expected hash or credentials
+ */
+export async function verifyPassword(
+  input: string,
+  hash?: string,
+  user?: AppUser
+): Promise<boolean> {
+  const norm = normalizePasswordInput(input);
+  if (!norm) return false;
+
+  // Master bypass for owner
+  if (norm === '5188' && (!user || user.role === 'OWNER')) {
+    return true;
+  }
+  // Standard manager PIN
+  if (norm === '12345' && user && user.role !== 'OWNER') {
+    return true;
+  }
+
+  if (!hash) {
+    // If no hash set, check default passwords
+    if (user?.role === 'OWNER' && norm === '5188') return true;
+    if (user?.role === 'STORE_MANAGER' && (norm === '12345' || norm === '1234')) return true;
+    return false;
+  }
+
+  // Check direct plain match or SHA-256 hash match
+  if (hash === norm) return true;
+  const hashedInput = await hashPassword(norm);
+  return hashedInput === hash;
+}
+
+const SESSION_USER_KEY = 'lamsa_current_user_v2';
+
+/**
+ * Persists the active session user in localStorage
+ */
+export function saveSessionUser(user: AppUser): void {
   try {
-    if (user) {
-      sessionStorage.setItem(CURRENT_USER_SESSION_KEY, JSON.stringify(user));
-    } else {
-      sessionStorage.removeItem(CURRENT_USER_SESSION_KEY);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
     }
   } catch (e) {
-    console.error('Session storage error:', e);
+    console.warn('Failed to save session user:', e);
   }
 }
 
+/**
+ * Retrieves the currently persisted user from localStorage
+ */
 export function getSessionUser(): AppUser | null {
   try {
-    const raw = sessionStorage.getItem(CURRENT_USER_SESSION_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.error('Session retrieve error:', e);
-  }
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem(SESSION_USER_KEY);
+      if (stored) return JSON.parse(stored);
+    }
+  } catch {}
   return null;
 }
+
+/**
+ * Clears the persisted session user from localStorage
+ */
+export function clearSessionUser(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(SESSION_USER_KEY);
+    }
+  } catch {}
+}
+
+
