@@ -1,0 +1,74 @@
+name: Build and deploy Lamsa AI Studio to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Type-check
+        run: bun run lint
+      - name: Build site for the project Pages path
+        run: bun run build --base=/lamsa-perfume-pos-ai-studio/
+      - name: Adapt generated PWA paths for the project Pages path
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const base = '/lamsa-perfume-pos-ai-studio/';
+          const manifestPath = 'dist/manifest.webmanifest';
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          manifest.start_url = base;
+          manifest.scope = base;
+          manifest.id = base;
+          manifest.icons = (manifest.icons || []).map((icon) => ({
+            ...icon,
+            src: icon.src?.startsWith('/') ? `${base}${icon.src.slice(1)}` : icon.src,
+          }));
+          fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+          const assetsDir = 'dist/assets';
+          for (const name of fs.readdirSync(assetsDir).filter((file) => file.endsWith('.js'))) {
+            const filePath = path.join(assetsDir, name);
+            const source = fs.readFileSync(filePath, 'utf8');
+            fs.writeFileSync(filePath, source.replaceAll('"/pwa-192x192.png"', `"${base}pwa-192x192.png"`));
+          }
+          NODE
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
