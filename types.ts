@@ -394,7 +394,8 @@ export type AppThemeId =
   | 'roja_haute_luxe'
   | 'imperial_sapphire_velvet'
   | 'frosted_lavender_clay'
-  | 'apple_win12_fluent_hybrid';
+  | 'apple_win12_fluent_hybrid'
+  | 'cyber_gold_matrix';
 
 export type SiteFontFamilyId =
   | 'readex'
@@ -1019,6 +1020,30 @@ export const APP_THEMES: AppThemeDefinition[] = [
       ambientOrb1: 'rgba(59, 130, 246, 0.18)',
       ambientOrb2: 'rgba(251, 191, 36, 0.12)',
       ambientOrb3: 'rgba(99, 102, 241, 0.13)',
+    },
+  },
+  {
+    id: 'cyber_gold_matrix',
+    nameAr: 'كوانتم جولد والسيان النيوني الفاخر (Cyber Gold & Neon Matrix)',
+    nameEn: 'Cyber Gold & Quantum Neon Pro',
+    badge: 'إلهام الصورة الحصري ⚡',
+    category: 'dark_pro',
+    isDark: true,
+    moodDescription: 'مستوحى بدقة فائقة من هوية النيون والذهب الكوانتي: خلفيات ليلية عميقة فائقة الفخامة، زجاج كوانتم مصفح ببريق السيان الكهربائي، وذهب عيار ٢٤ مصقول مع حواف نيون متوهجة وعالية التباين.',
+    fragranceInspiration: 'مستوحى من عطور النيش الكوانتية، أوركيد الذهب، سيلفر ماونتن نيون، وبلاك أفغانو سايبر',
+    colors: {
+      bgCanvas: '#060A12',
+      cardGlass: 'rgba(10, 18, 30, 0.88)',
+      cardSolid: '#0D1726',
+      textPrimary: '#F0FDFA',
+      textSecondary: '#38BDF8',
+      primaryAccent: '#06B6D4',
+      primaryAccentHover: '#22D3EE',
+      secondaryGold: '#F59E0B',
+      borderSubtle: 'rgba(6, 182, 212, 0.28)',
+      ambientOrb1: 'rgba(6, 182, 212, 0.22)',
+      ambientOrb2: 'rgba(245, 158, 11, 0.18)',
+      ambientOrb3: 'rgba(14, 165, 233, 0.14)',
     },
   },
 ];
@@ -2128,8 +2153,8 @@ export interface AuditLogRecord {
   id: string;
   timestamp: string;
   user: string; // e.g. 'د. محمد (المالك)' or 'طارق (المبيعات)'
-  action: 'تعديل سعر' | 'تعديل تكلفة' | 'تعديل وصفة' | 'تجاوز حد التكلفة' | 'اعتماد دفعة' | 'سحب مالي' | 'تعديل مخزون' | 'استثناء إداري' | 'قيد عكسي' | 'إلغاء بيع' | 'مرتجع' | 'فتح يوم' | 'إغلاق يوم' | 'إعادة فتح يوم' | 'تغيير كلمة مرور' | 'تعديل صلاحيات' | 'ضخ رأس مال' | 'تحويل محافظ';
-  entityType: 'product' | 'bottle_size' | 'sale' | 'batch' | 'vault' | 'recipe' | 'user' | 'closure' | 'inventory_check';
+  action: 'تعديل سعر' | 'تعديل تكلفة' | 'تعديل وصفة' | 'تجاوز حد التكلفة' | 'اعتماد دفعة' | 'سحب مالي' | 'تعديل مخزون' | 'استثناء إداري' | 'قيد عكسي' | 'إلغاء بيع' | 'مرتجع' | 'فتح يوم' | 'إغلاق يوم' | 'إعادة فتح يوم' | 'تغيير كلمة مرور' | 'تعديل صلاحيات' | 'ضخ رأس مال' | 'تحويل محافظ' | 'تعديل فاتورة' | 'تعديل منتج' | 'تعديل تسعير' | string;
+  entityType: 'product' | 'bottle_size' | 'sale' | 'batch' | 'vault' | 'recipe' | 'user' | 'closure' | 'inventory_check' | 'pricing' | string;
   entityId: string | number;
   entityName: string;
   oldValue: any;

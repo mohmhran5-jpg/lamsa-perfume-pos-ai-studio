@@ -12,7 +12,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 
-export type AppleNotificationType = 'sale' | 'auth' | 'stock' | 'invoice' | 'system' | 'warning' | 'goal' | 'info';
+export type AppleNotificationType = 'sale' | 'auth' | 'stock' | 'invoice' | 'system' | 'warning' | 'goal' | 'info' | 'success';
 
 export interface AppleNotificationItem {
   id: string;
@@ -75,6 +75,14 @@ export const AppleTopNotificationBanner: React.FC<AppleTopNotificationBannerProp
           borderAccent: 'border-amber-400/40',
           pillColor: 'text-amber-300 bg-amber-500/20 border-amber-400/30',
           barColor: 'from-[#FF9500] via-amber-400 to-yellow-400'
+        };
+      case 'success':
+        return {
+          icon: <CheckCircle2 size={17} className="text-white" />,
+          bgBadge: 'bg-gradient-to-tr from-[#34C759] to-emerald-400 shadow-lg shadow-emerald-500/30',
+          borderAccent: 'border-emerald-400/35',
+          pillColor: 'text-emerald-300 bg-emerald-500/20 border-emerald-400/30',
+          barColor: 'from-emerald-400 via-[#34C759] to-teal-400'
         };
       default:
         return {

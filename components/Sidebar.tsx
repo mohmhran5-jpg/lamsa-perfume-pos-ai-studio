@@ -531,6 +531,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 type="button"
+                data-active-button={isActive ? 'true' : undefined}
                 onClick={() => handleItemClick(item)}
                 className={`apple-btn relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap shrink-0 transition-all border ${
                   isActive
@@ -924,6 +925,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                         <button
                           key={item.id}
                           type="button"
+                          data-active-button={isActive ? 'true' : undefined}
                           onClick={() => handleItemClick(item)}
                           className={`apple-btn w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                             isActive

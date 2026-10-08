@@ -39,7 +39,13 @@ import {
   Crown,
   ShoppingBag,
   TrendingUp,
+  Volume2,
+  VolumeX,
+  Volume1,
+  Bell,
+  Radio,
 } from 'lucide-react';
+import { soundAlertService, SoundThemeProfile } from '../services/soundAlertService';
 
 const FONT_FAMILY_LIBRARY: Array<{
   id: SiteFontFamilyId;
@@ -280,9 +286,13 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
   onNotify,
   compact = false,
 }) => {
-  const [studioTab, setStudioTab] = useState<'all' | 'typography' | 'themes' | 'surfaces'>('all');
+  const [studioTab, setStudioTab] = useState<'all' | 'typography' | 'themes' | 'surfaces' | 'acoustics'>('all');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'bright' | 'luxury_warm' | 'dark_pro'>('all');
   const [liveTypingSample, setLiveTypingSample] = useState('');
+
+  const [soundEnabled, setSoundEnabled] = useState(soundAlertService.isEnabled());
+  const [soundVolume, setSoundVolume] = useState(Math.round(soundAlertService.getVolume() * 100));
+  const [soundProfile, setSoundProfile] = useState<SoundThemeProfile>(soundAlertService.getProfile());
 
   const activeTheme = useMemo(() => resolveActiveAppTheme(settings), [settings]);
   const ambientGlow = settings.themeAmbientGlow !== false;
@@ -424,6 +434,50 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
     }
   };
 
+  const handleToggleSound = () => {
+    const nextVal = !soundEnabled;
+    setSoundEnabled(nextVal);
+    soundAlertService.setEnabled(nextVal);
+    onUpdateSettings((prev) => ({
+      ...prev,
+      themeSoundEffects: nextVal,
+    }));
+    if (nextVal) {
+      soundAlertService.playActionChime();
+    }
+    if (onNotify) {
+      onNotify(
+        nextVal ? 'تم تفعيل الأصوات الذكية والمؤثرات الحديثة' : 'تم كتم الأصوات التفاعلية',
+        nextVal ? 'نغمات بوليفونية فاخرة للمبيعات، الإضافات، الإشعارات، ونجاح التسجيل' : 'يعمل النظام الآن في الوضع الصامت',
+        nextVal ? 'صوت مفعل 🔔' : 'صامت 🔕'
+      );
+    }
+  };
+
+  const handleVolumeChange = (volPercent: number) => {
+    setSoundVolume(volPercent);
+    soundAlertService.setVolume(volPercent / 100);
+  };
+
+  const handleProfileChange = (profile: SoundThemeProfile) => {
+    setSoundProfile(profile);
+    soundAlertService.setProfile(profile);
+    soundAlertService.playSaleChime();
+    if (onNotify) {
+      onNotify(
+        `تم تفعيل نمط: ${
+          profile === 'modern_luxury'
+            ? 'أصوات النيش والكريستال الفاخرة'
+            : profile === 'apple_acoustic'
+            ? 'نغمات أبل الصوتية الناعمة'
+            : 'نقرات الهابتيك الذكية للمحترفين'
+        }`,
+        'تم تطبيق التوليفة الصوتية الجديدة بنجاح',
+        'نمط صوتي'
+      );
+    }
+  };
+
   const activeFontMeta =
     FONT_FAMILY_LIBRARY.find((f) => f.id === siteFontFamily) || FONT_FAMILY_LIBRARY[0];
 
@@ -512,6 +566,7 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
             { id: 'typography', label: 'الخطوط والألوان والسمك ولغة الأرقام', icon: Type },
             { id: 'themes', label: `مكتبة الثيمات الفاخرة (${APP_THEMES.length})`, icon: Palette },
             { id: 'surfaces', label: 'الأنماط البصرية والخامات والتركيز', icon: Layers },
+            { id: 'acoustics', label: 'الأصوات الذكية الحديثة 🔔', icon: Volume2 },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = studioTab === tab.id;
@@ -519,6 +574,7 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
               <button
                 key={tab.id}
                 type="button"
+                data-active-button={isActive ? 'true' : undefined}
                 onClick={() => setStudioTab(tab.id as any)}
                 className={`apple-btn px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
                   isActive
@@ -1942,6 +1998,252 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* SECTION D: SMART MODERN ACOUSTICS & LUXURY SOUND STUDIO               */}
+      {/* ===================================================================== */}
+      {(studioTab === 'all' || studioTab === 'acoustics') && (
+        <div className="space-y-4 pt-1">
+          {/* Header Card */}
+          <div className="apple-glass rounded-2xl p-4 sm:p-5 border border-black/[0.08] bg-white/80 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all shadow-sm ${
+                    soundEnabled
+                      ? 'bg-gradient-to-tr from-[#0071E3] to-[#8E24AA] text-white shadow-[#0071E3]/25'
+                      : 'bg-black/[0.06] text-[#86868B]'
+                  }`}
+                >
+                  {soundEnabled ? <Volume2 size={22} /> : <VolumeX size={22} />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-black text-[#1D1D1F]">
+                      الأصوات الذكية الحديثة والمؤثرات الصوتية الفاخرة
+                    </h3>
+                    <span
+                      className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                        soundEnabled
+                          ? 'bg-emerald-500/12 text-emerald-700 border-emerald-500/25'
+                          : 'bg-black/[0.05] text-[#86868B] border-black/[0.08]'
+                      }`}
+                    >
+                      {soundEnabled ? 'مفعلة ولحظية ⚡' : 'صامت'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#86868B]">
+                    هندسة صوتية بوليفونية فائقة النقاء باستخدام Web Audio API — نغمات كريستالية راقية للمبيعات، الإضافات، التوثيق، والتنبيهات دون استدعاء ملفات خارجية.
+                  </p>
+                </div>
+              </div>
+
+              {/* Master Sound Switch */}
+              <button
+                type="button"
+                onClick={handleToggleSound}
+                className={`apple-btn px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 cursor-pointer transition-all ${
+                  soundEnabled
+                    ? 'bg-[#1D1D1F] text-white shadow-sm hover:bg-black'
+                    : 'bg-black/[0.06] text-[#1D1D1F] hover:bg-black/[0.1]'
+                }`}
+              >
+                {soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
+                <span>{soundEnabled ? 'تعطيل الأصوات (كتم)' : 'تفعيل الأصوات الذكية'}</span>
+              </button>
+            </div>
+
+            {/* Volume Control Slider */}
+            {soundEnabled && (
+              <div className="pt-2 border-t border-black/[0.06] space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-[#1D1D1F]">
+                  <span className="flex items-center gap-1.5">
+                    <Volume1 size={14} className="text-[#0071E3]" />
+                    <span>مستوى صوت المؤثرات التفاعلية</span>
+                  </span>
+                  <span className="font-mono text-[#0071E3] bg-[#0071E3]/10 px-2 py-0.5 rounded-md text-[11px]">
+                    {soundVolume}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-[#86868B]">0%</span>
+                  <input
+                    type="range"
+                    min="5"
+                    max="100"
+                    step="5"
+                    value={soundVolume}
+                    onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                    className="flex-1 accent-[#0071E3] cursor-pointer h-2 bg-black/[0.08] rounded-lg"
+                  />
+                  <span className="text-[11px] text-[#86868B]">100%</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sound Profiles Selector */}
+          {soundEnabled && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-black text-[#1D1D1F] flex items-center gap-1.5">
+                <Sparkles size={14} className="text-[#C49746]" />
+                <span>اختر النمط الصوتي للمتجر والكاشير (Sound Profile)</span>
+              </h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {[
+                  {
+                    id: 'modern_luxury' as SoundThemeProfile,
+                    name: 'أصوات النيش والكريستال الفاخرة',
+                    badge: 'الافتراضي الفاخر ✨',
+                    desc: 'نغمات كاشير بوليفونية متصاعدة (C5-E5-G5-C6) مع ارتداد ذهبي كريستالي راقٍ يمنح الكاشير شعوراً بالإنجاز والفخامة.',
+                    icon: '💎',
+                    color: '#C49746',
+                  },
+                  {
+                    id: 'apple_acoustic' as SoundThemeProfile,
+                    name: 'نغمات أبل الصوتية الناعمة',
+                    badge: 'macOS & visionOS 🍏',
+                    desc: 'نغمات نقية منسابة كالهواء بأسلوب منتجات أبل الحديثة، هادئة ومريحة للأذن حتى في ساعات العمل الطويلة والبيع المتواصل.',
+                    icon: '🍏',
+                    color: '#0071E3',
+                  },
+                  {
+                    id: 'minimal_haptic' as SoundThemeProfile,
+                    name: 'نقرات الهابتيك للمحترفين',
+                    badge: 'كاشير فائق السرعة ⚡',
+                    desc: 'مؤثرات مقتضبة ونقرات هابتيك فورية وموجزة جداً مصممة لأيام الذروة والمواسم لضمان أعلى سرعة دون أي تشويش.',
+                    icon: '⚡',
+                    color: '#10B981',
+                  },
+                ].map((item) => {
+                  const isSelected = soundProfile === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleProfileChange(item.id)}
+                      className={`apple-btn p-3.5 rounded-2xl border text-right transition-all flex flex-col justify-between cursor-pointer ${
+                        isSelected
+                          ? 'border-[#0071E3] bg-[#0071E3]/[0.04] ring-2 ring-[#0071E3]/20 shadow-sm'
+                          : 'border-black/[0.08] bg-white hover:bg-black/[0.02]'
+                      }`}
+                    >
+                      <div className="space-y-1.5 w-full">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xl">{item.icon}</span>
+                          <span
+                            className="text-[10px] font-black px-2 py-0.5 rounded-full border"
+                            style={{
+                              color: item.color,
+                              borderColor: `${item.color}40`,
+                              backgroundColor: `${item.color}12`,
+                            }}
+                          >
+                            {item.badge}
+                          </span>
+                        </div>
+                        <h5 className="text-xs font-black text-[#1D1D1F]">{item.name}</h5>
+                        <p className="text-[11px] text-[#86868B] leading-relaxed">{item.desc}</p>
+                      </div>
+
+                      <div className="pt-3 mt-2 border-t border-black/[0.06] flex items-center justify-between w-full">
+                        <span className="text-[10px] text-[#86868B]">انقر للتفعيل والتجربة</span>
+                        <span
+                          className={`text-xs font-black ${
+                            isSelected ? 'text-[#0071E3]' : 'text-slate-400'
+                          }`}
+                        >
+                          {isSelected ? 'مفعل حالياً ✓' : 'اختيار'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Interactive Sound Console Test Suite */}
+          <div className="apple-glass rounded-2xl p-4 sm:p-5 border border-black/[0.08] bg-white/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Radio size={16} className="text-[#0071E3]" />
+                <h4 className="text-xs font-black text-[#1D1D1F]">
+                  منصة تجربة واختبار النغمات التفاعلية (Live Audio Preview)
+                </h4>
+              </div>
+              <span className="text-[10px] text-[#86868B]">
+                اضغط على أي زر لسماع النغمة الذكية فوراً
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+              {[
+                {
+                  id: 'sale' as const,
+                  label: 'المبيعات والتحصيل',
+                  desc: 'كاشير ذهبي بوليفوني',
+                  icon: '💳',
+                  color: 'from-amber-500/20 to-amber-600/10 border-amber-500/30 text-amber-900',
+                  action: () => soundAlertService.playSaleChime(),
+                },
+                {
+                  id: 'register' as const,
+                  label: 'نجاح التسجيل والتوثيق',
+                  desc: 'وتر ترحيبي ملكي',
+                  icon: '🔐',
+                  color: 'from-purple-500/20 to-purple-600/10 border-purple-500/30 text-purple-900',
+                  action: () => soundAlertService.playRegisterSuccessChime(),
+                },
+                {
+                  id: 'add_item' as const,
+                  label: 'إضافة للسلة والمخزون',
+                  desc: 'فقاعة لمسية كريستالية',
+                  icon: '🛍️',
+                  color: 'from-sky-500/20 to-sky-600/10 border-sky-500/30 text-sky-900',
+                  action: () => soundAlertService.playItemAddedChime(),
+                },
+                {
+                  id: 'notification' as const,
+                  label: 'الإشعارات الذكية',
+                  desc: 'نقر مزدوج أبل أنيق',
+                  icon: '🔔',
+                  color: 'from-blue-500/20 to-blue-600/10 border-blue-500/30 text-blue-900',
+                  action: () => soundAlertService.playNotificationChime(),
+                },
+                {
+                  id: 'warning' as const,
+                  label: 'التحذيرات والحدود',
+                  desc: 'تنبيه توافقي وقائي',
+                  icon: '⚠️',
+                  color: 'from-rose-500/20 to-rose-600/10 border-rose-500/30 text-rose-900',
+                  action: () => soundAlertService.playAlertChime(),
+                },
+                {
+                  id: 'delete' as const,
+                  label: 'الحذف والتراجع',
+                  desc: 'نقر خشبي هادئ',
+                  icon: '🗑️',
+                  color: 'from-slate-500/20 to-slate-600/10 border-slate-500/30 text-slate-800',
+                  action: () => soundAlertService.playDeleteChime(),
+                },
+              ].map((btn) => (
+                <button
+                  key={btn.id}
+                  type="button"
+                  onClick={btn.action}
+                  className={`apple-btn p-3 rounded-xl border bg-gradient-to-b flex flex-col items-center justify-center text-center gap-1.5 transition-all cursor-pointer hover:scale-[1.03] active:scale-[0.98] ${btn.color}`}
+                >
+                  <span className="text-xl">{btn.icon}</span>
+                  <span className="text-[11px] font-black">{btn.label}</span>
+                  <span className="text-[9px] opacity-75">{btn.desc}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

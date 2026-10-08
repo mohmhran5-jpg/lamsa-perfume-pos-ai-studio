@@ -528,6 +528,22 @@ const App: React.FC = () => {
       createdAt: new Date().toISOString(),
     };
     setTopNotifications(prev => [newItem, ...prev.slice(0, 3)]);
+
+    // Smart modern intelligent audio cues
+    try {
+      if (type === 'sale' || type === 'invoice') {
+        soundAlertService.playSaleChime();
+      } else if (type === 'goal' || type === 'auth' || type === 'success') {
+        soundAlertService.playRegisterSuccessChime();
+      } else if (type === 'warning' || type === 'stock') {
+        soundAlertService.playAlertChime();
+      } else {
+        soundAlertService.playNotificationChime(type);
+      }
+    } catch {
+      // ignore
+    }
+
     setTimeout(() => {
       setTopNotifications(prev => prev.filter(n => n.id !== id));
     }, 4500);
@@ -2097,6 +2113,44 @@ const App: React.FC = () => {
       return next;
     });
 
+    // Immutable Audit Trail recording with deep old vs new values comparison (§41)
+    handleAddAuditLog({
+      id: `audit-sale-edit-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      user: currentUser?.displayName || 'د. محمد (المالك)',
+      action: 'تعديل فاتورة',
+      entityType: 'sale',
+      entityId: updatedSale.id,
+      entityName: `فاتورة #${updatedSale.id.slice(-6)}`,
+      oldValue: {
+        totalPrice: previousSale.totalPrice,
+        itemsCount: previousSale.items?.length || 0,
+        paymentMethod: previousSale.paymentMethod || 'نقدي',
+        discount: previousSale.discount || 0,
+        customerName: previousSale.customerName || 'عميل نقدي',
+        customerPhone: previousSale.customerPhone || '',
+        items: previousSale.items,
+        notes: previousSale.notes || ''
+      },
+      newValue: {
+        totalPrice: updatedSale.totalPrice,
+        itemsCount: updatedSale.items?.length || 0,
+        paymentMethod: updatedSale.paymentMethod || 'نقدي',
+        discount: updatedSale.discount || 0,
+        customerName: updatedSale.customerName || 'عميل نقدي',
+        customerPhone: updatedSale.customerPhone || '',
+        items: updatedSale.items,
+        notes: updatedSale.notes || '',
+        stockAdjusted: restoreOrAdjustStock
+      },
+      reason: updatedSale.notes && updatedSale.notes !== previousSale.notes
+        ? `تعديل بنود وتفاصيل الفاتورة: ${updatedSale.notes}`
+        : 'تعديل تفاصيل الفاتورة والمبالغ والأصناف وطريقة الدفع من الإدارة',
+      approvedBy: currentUser?.displayName || 'الإدارة',
+      category: 'مبيعات',
+      relatedTransactionId: updatedSale.transactionId || updatedSale.id
+    });
+
     pushTopNotification(
       'invoice',
       `تم تحديث الفاتورة #${updatedSale.id.slice(-6)} فورياً`,
@@ -2597,7 +2651,17 @@ const App: React.FC = () => {
         );
       case View.AUDIT_LOGS:
         return (
-          <AuditLogViewer logs={auditLogs} />
+          <AuditLogViewer
+            logs={auditLogs}
+            sales={sales}
+            products={products}
+            bottleSizes={bottleSizes}
+            settings={settings}
+            currentUser={currentUser}
+            onUpdateSale={handleUpdateSale}
+            onDeleteSale={handleDeleteSale}
+            onAddAuditLog={handleAddAuditLog}
+          />
         );
       case View.FORMULATION_ENGINE:
         return (
@@ -2830,7 +2894,7 @@ const App: React.FC = () => {
           onUpdateSettings={handleSetSettings}
         />
 
-        <div className="flex-1">
+        <div className="flex-1" data-active-section="true" data-current-view={currentView}>
           {renderView()}
         </div>
 

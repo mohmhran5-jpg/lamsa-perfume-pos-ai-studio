@@ -48,6 +48,7 @@ import {
   isLiveProductionSale
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
+import { soundAlertService } from '../services/soundAlertService';
 import SalesCoachingCard from './SalesCoachingCard';
 import POSQuickPerformanceBar from './POSQuickPerformanceBar';
 import SmartFragranceSearchModal from './SmartFragranceSearchModal';
@@ -1119,6 +1120,7 @@ const POS: React.FC<POSProps> = ({
     };
 
     setCart(prev => [newItem, ...prev]);
+    soundAlertService.playItemAddedChime();
     setAddedItemFlash(`${displayName} (${selectedBottle.sizeMl} مل × ${qty})`);
     setTimeout(() => setAddedItemFlash(null), 3200);
     setConfiguringProduct(null);
@@ -1163,6 +1165,7 @@ const POS: React.FC<POSProps> = ({
     };
 
     setCart(prev => [newItem, ...prev]);
+    soundAlertService.playItemAddedChime();
     setAddedItemFlash(`${product.name} (${targetBottle.sizeMl} مل)`);
     setTimeout(() => setAddedItemFlash(null), 3200);
 
@@ -1615,6 +1618,7 @@ const POS: React.FC<POSProps> = ({
     };
 
     setCart((prev) => [newMixItem, ...prev]);
+    soundAlertService.playItemAddedChime();
     setAddedItemFlash(
       `تم اعتماد وإضافة زجاجة الميكس (${mixBottle.sizeMl} مل · ${mixAccounting.totalEssenceGrams} جم زيت) إلى الفاتورة`
     );
@@ -1631,6 +1635,7 @@ const POS: React.FC<POSProps> = ({
       handleRemoveFromCart(cartItemId);
       return;
     }
+    soundAlertService.playHapticClick();
     setCart(prev => prev.map(item => 
       item.cartItemId === cartItemId ? { ...item, quantity: newQty } : item
     ));
@@ -1638,6 +1643,7 @@ const POS: React.FC<POSProps> = ({
 
   // Remove item from cart
   const handleRemoveFromCart = (cartItemId: string) => {
+    soundAlertService.playDeleteChime();
     setCart(prev => prev.filter(i => i.cartItemId !== cartItemId));
   };
 
@@ -1994,6 +2000,7 @@ const POS: React.FC<POSProps> = ({
           ].filter(Boolean).join(' · ') || undefined
     };
 
+    soundAlertService.playSaleChime();
     onCompleteSale(newSale);
 
     // If an owner override was granted, register in Audit Log
@@ -3581,6 +3588,8 @@ const POS: React.FC<POSProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <div className="relative flex-1">
                   <input
+                    id="pos-barcode-search-input"
+                    data-expected-input="true"
                     ref={searchInputRef}
                     type="text"
                     placeholder="اكتب اسم العطر أو الماركة مباشرة (مثال: سوفاج، بلو شانيل، Dior، Creed، توم فورد، عود)..."
@@ -3835,6 +3844,7 @@ const POS: React.FC<POSProps> = ({
                     <button
                       key={b.id}
                       type="button"
+                      data-active-button={isCurrent ? 'true' : undefined}
                       onClick={() => {
                         setIsSellerCustomSizeMode(false);
                         setSellerActiveBottleId(b.id);
@@ -4953,6 +4963,7 @@ const POS: React.FC<POSProps> = ({
                       <button
                         key={m}
                         type="button"
+                        data-active-button={paymentMethod === m ? 'true' : undefined}
                         onClick={() => setPaymentMethod(m)}
                         className={`py-1.5 rounded-lg text-[10px] font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer ${
                           paymentMethod === m

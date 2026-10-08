@@ -405,6 +405,8 @@ export const AppleWelcomeLockScreen: React.FC<AppleWelcomeLockScreenProps> = ({
 
               <div className="relative" dir="ltr" data-keep-numerals="true">
                 <input
+                  id="lock-screen-pin-input"
+                  data-expected-input="true"
                   ref={pinInputRef}
                   type={showPassword ? 'text' : 'password'}
                   inputMode="numeric"

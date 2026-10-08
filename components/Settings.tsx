@@ -985,6 +985,7 @@ export const Settings: React.FC<SettingsProps> = ({
               return (
                 <button
                   key={item.id}
+                  data-active-button={isActive ? 'true' : undefined}
                   onClick={() => setActiveSection(item.id)}
                   className={`apple-btn w-full p-3 rounded-2xl text-right transition-all flex items-start gap-3 ${
                     isActive 
@@ -1025,7 +1026,7 @@ export const Settings: React.FC<SettingsProps> = ({
         </div>
 
         {/* Right Column (Left in RTL): Active Settings Screen */}
-        <div className="lg:col-span-8 space-y-5">
+        <div className="lg:col-span-8 space-y-5" data-active-section="true">
 
           {/* ======================================================== */}
           {/* SECTION: OWNER DASHBOARD CARDS & REPORTS CUSTOMIZATION   */}
