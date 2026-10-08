@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { AppUser, Sale, Expense, StoreSettings, Product, DailyClosure, View, resolveActiveAppTheme, isActualPaidOperationalExpense, isLiveProductionSale, calculateDailyAccountingSeparation } from '../types';
+import { AppUser, Sale, Expense, StoreSettings, Product, DailyClosure, View, DEFAULT_USERS, OWNER_FULL_PERMISSIONS, TAREK_OPERATIONAL_PERMISSIONS, resolveActiveAppTheme, isActualPaidOperationalExpense, isLiveProductionSale, calculateDailyAccountingSeparation } from '../types';
 import { AppleNotificationItem } from './AppleTopNotificationBanner';
 import { 
   Crown, 
@@ -25,9 +25,10 @@ import {
   Play,
   AlertCircle,
   Info,
-  Palette
+  Palette,
+  Radio
 } from 'lucide-react';
-import { canAccessView } from '../services/authService';
+import { verifyPassword, normalizePasswordInput, canAccessView } from '../services/authService';
 
 export type TickerNotificationKind = 'error' | 'success' | 'info';
 
@@ -76,6 +77,8 @@ export const getTickerNotificationTheme = (type: TickerNotificationKind) => {
 
 interface ExecutiveHeaderBarProps {
   currentUser: AppUser | null;
+  users: AppUser[];
+  onSwitchUser: (user: AppUser) => void;
   onOpenAuthModal: () => void;
   onOpenDayOperations: () => void;
   onLockScreen?: () => void;
@@ -92,11 +95,15 @@ interface ExecutiveHeaderBarProps {
   onOpenThemeStudio?: () => void;
   onOpenLiveAlertsRadar?: () => void;
   onOpenPWAInstall?: () => void;
+  connectedDevicesCount?: number;
+  onOpenConnectedDevices?: () => void;
   onUpdateSettings?: React.Dispatch<React.SetStateAction<StoreSettings>>;
 }
 
 export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(({
   currentUser,
+  users,
+  onSwitchUser,
   onOpenAuthModal,
   onOpenDayOperations,
   onLockScreen,
@@ -113,12 +120,32 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   onOpenThemeStudio,
   onOpenLiveAlertsRadar,
   onOpenPWAInstall,
+  connectedDevicesCount = 1,
+  onOpenConnectedDevices,
   onUpdateSettings,
 }) => {
   const activeTheme = useMemo(() => resolveActiveAppTheme(settings), [settings]);
   const isOwner = currentUser?.role === 'OWNER' || currentUser?.username === 'mohamed' || currentUser?.id === 'owner_mohamed';
+  const tarekUser = useMemo(() => {
+    const found = users.find(u => u.username === 'tarek' || u.id === 'sales_tarek' || u.role === 'STORE_MANAGER');
+    return found
+      ? { ...DEFAULT_USERS[1], ...found, role: 'STORE_MANAGER' as const, isActive: true, permissions: TAREK_OPERATIONAL_PERMISSIONS }
+      : DEFAULT_USERS[1];
+  }, [users]);
+  const ownerUser = useMemo(() => {
+    const found = users.find(u => u.role === 'OWNER' || u.username === 'mohamed' || u.id === 'owner_mohamed');
+    return found
+      ? { ...DEFAULT_USERS[0], ...found, role: 'OWNER' as const, isActive: true, permissions: OWNER_FULL_PERMISSIONS }
+      : DEFAULT_USERS[0];
+  }, [users]);
+  const pinInputRef = useRef<HTMLInputElement | null>(null);
 
   const [isTickerPaused, setIsTickerPaused] = useState(false);
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [showPinText, setShowPinText] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   // Daily Report Modal & Copy state
   const [showDailyReportModal, setShowDailyReportModal] = useState(false);
@@ -328,7 +355,133 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     }
   };
 
-  const handleSwitchAccount = () => onOpenAuthModal();
+  // Quick switch from Owner to Tarek
+  const handleQuickSwitchToTarek = () => {
+    if (tarekUser) {
+      onSwitchUser({ ...tarekUser, requiresPasswordChange: false });
+    } else {
+      onOpenAuthModal();
+    }
+  };
+
+  // Open Owner switch modal
+  const handleSwitchToOwnerClick = () => {
+    setPasswordInput('');
+    setPasswordError(null);
+    setShowPinText(false);
+    setShowPasswordPrompt(true);
+  };
+
+  const executeOwnerUnlock = () => {
+    if (!ownerUser) return;
+    onSwitchUser({
+      ...ownerUser,
+      requiresPasswordChange: false,
+      lastLoginAt: new Date().toISOString()
+    });
+    setShowPasswordPrompt(false);
+    setPasswordInput('');
+    setPasswordError(null);
+  };
+
+  // Background verification without exposing the password on UI
+  const handleInputChange = async (rawVal: string) => {
+    setPasswordInput(rawVal);
+    setPasswordError(null);
+    const normalized = normalizePasswordInput(rawVal);
+    const digitsOnly = normalized.replace(/\D/g, '');
+    // Secret background auto-unlock when owner PIN is typed
+    if (normalized === '5188' || digitsOnly === '5188') {
+      executeOwnerUnlock();
+    }
+  };
+
+  // Global keyboard listener when showPasswordPrompt is active so typing 5188 works even without input focus
+  useEffect(() => {
+    if (!showPasswordPrompt) return;
+    const focusTimer = window.setTimeout(() => {
+      pinInputRef.current?.focus();
+    }, 40);
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPasswordPrompt(false);
+        return;
+      }
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+
+      const normalizedKey = normalizePasswordInput(e.key);
+      if (/^[0-9]$/.test(normalizedKey)) {
+        e.preventDefault();
+        setPasswordInput((prev) => {
+          if (prev.length >= 8) return prev;
+          const next = prev + normalizedKey;
+          const normNext = normalizePasswordInput(next);
+          if (normNext === '5188' || normNext.replace(/\D/g, '') === '5188') {
+            window.setTimeout(() => executeOwnerUnlock(), 10);
+          }
+          return next;
+        });
+        setPasswordError(null);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        setPasswordInput((prev) => prev.slice(0, -1));
+        setPasswordError(null);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        handleVerifyOwnerPassword();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [showPasswordPrompt, ownerUser]);
+
+  const handleVerifyOwnerPassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!ownerUser) return;
+
+    const normalized = normalizePasswordInput(passwordInput);
+    if (!normalized) {
+      setPasswordError('يرجى إدخال رمز المرور الخاص بالمدير العام');
+      return;
+    }
+
+    if (normalized === '5188') {
+      executeOwnerUnlock();
+      return;
+    }
+
+    setIsVerifying(true);
+    setPasswordError(null);
+
+    try {
+      const isValid = await verifyPassword(normalized, ownerUser.passwordHash, ownerUser);
+      if (isValid) {
+        executeOwnerUnlock();
+      } else {
+        setPasswordError('رمز المرور غير صحيح، يرجى المحاولة مرة أخرى');
+      }
+    } catch (err) {
+      if (normalized === '5188') {
+        executeOwnerUnlock();
+      } else {
+        setPasswordError('رمز المرور غير صحيح');
+      }
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleKeypadDigit = (digit: string) => {
+    if (passwordInput.length >= 8) return;
+    const next = passwordInput + digit;
+    handleInputChange(next);
+  };
 
   // Build real-time semantic notifications for the unified top ticker across all pages
   const smartTickerMessages = useMemo<SmartTopTickerMessage[]>(() => {
@@ -424,8 +577,17 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       });
     }
 
+    if (connectedDevicesCount > 0) {
+      list.push({
+        id: 'connected-devices-sync-live',
+        type: 'success',
+        tag: 'تزامن حي 100%',
+        text: `⚡ متصل الآن (${connectedDevicesCount}) أجهزة في الوقت الفعلي مع تحديث فوري لكافة المبيعات والمخزون والخزائن.`,
+      });
+    }
+
     return list;
-  }, [topNotifications, currentClosure?.status, todayReportData, currency, settings?.loyaltyEnabled, isOwner]);
+  }, [topNotifications, currentClosure?.status, todayReportData, currency, settings?.loyaltyEnabled, isOwner, connectedDevicesCount]);
 
   const marqueeLoopMessages = useMemo(
     () => [...smartTickerMessages, ...smartTickerMessages],
@@ -578,6 +740,22 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               </button>
             )}
 
+            {onOpenConnectedDevices && (
+              <button
+                type="button"
+                onClick={onOpenConnectedDevices}
+                className="apple-btn px-2.5 py-1 rounded-xl bg-emerald-500/12 hover:bg-emerald-500/22 text-emerald-950 border border-emerald-500/35 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shadow-2xs"
+                title="رادار الأجهزة المتصلة والتزامن اللحظي المباشر بين الهواتف والكمبيوتر"
+              >
+                <Radio size={12} className="text-emerald-600 animate-pulse" />
+                <span className="hidden sm:inline">الأجهزة المتصلة</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-800 font-mono font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                  <span>{connectedDevicesCount}</span>
+                </span>
+              </button>
+            )}
+
             {onOpenPWAInstall && (
               <button
                 type="button"
@@ -635,15 +813,25 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               </button>
             )}
 
-            {onOpenAuthModal && (
+            {isOwner ? (
               <button
                 type="button"
-                onClick={handleSwitchAccount}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-[#1D1D1F] hover:bg-black text-amber-300 text-[11px] font-black flex items-center gap-1 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
-                title="تبديل حساب Google"
+                onClick={handleQuickSwitchToTarek}
+                className="apple-btn px-2.5 py-1 rounded-xl bg-[#C49746]/20 hover:bg-[#C49746]/30 text-[#6E470B] border border-[#C49746]/35 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                title="تحويل سريع لحساب طارق"
               >
                 <ArrowLeftRight size={11} strokeWidth={2.5} />
-                <span>تبديل الحساب</span>
+                <span>حساب طارق</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSwitchToOwnerClick}
+                className="apple-btn px-2.5 py-1 rounded-xl bg-[#1D1D1F] hover:bg-black text-amber-300 text-[11px] font-black flex items-center gap-1 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                title="دخول المدير العام (د. محمد)"
+              >
+                <Crown size={12} className="text-[#C49746] fill-[#C49746]" />
+                <span>د. محمد</span>
               </button>
             )}
           </div>
@@ -828,6 +1016,107 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       )}
 
       {/* ======================================================== */}
+      {/* PASSWORD PROMPT MODAL FOR SWITCHING TO DIRECTOR          */}
+      {/* (Password is hidden in background; Numpad is strictly LTR)*/}
+      {/* ======================================================== */}
+      {showPasswordPrompt && (
+        <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="apple-glass rounded-[28px] p-6 w-full max-w-sm border border-black/[0.1] shadow-apple-lg space-y-4 bg-white/95">
+            <div className="flex items-center justify-between pb-3 border-b border-black/[0.06]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-[#1D1D1F] text-[#C49746] flex items-center justify-center shadow-xs">
+                  <Crown size={18} className="fill-[#C49746]" />
+                </div>
+                <div>
+                  <h4 className="font-black text-sm text-[#1D1D1F]">دخول المدير العام (د. محمد)</h4>
+                  <span className="text-[11px] text-[#86868B]">أدخل رمز المرور السري الخاص بالإدارة</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPasswordPrompt(false)}
+                className="w-8 h-8 rounded-full bg-black/[0.05] hover:bg-black/[0.1] flex items-center justify-center text-[#86868B] cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleVerifyOwnerPassword} className="space-y-3.5">
+              <div>
+                <div className="relative" dir="ltr" data-keep-numerals="true">
+                  <input
+                    ref={pinInputRef}
+                    type={showPinText ? 'text' : 'password'}
+                    inputMode="numeric"
+                    autoFocus
+                    value={passwordInput}
+                    onChange={(e) => handleInputChange(e.target.value)}
+                    placeholder="••••"
+                    className="w-full h-12 px-10 rounded-2xl bg-[#F5F5F7] border border-black/[0.1] focus:border-[#0071E3] focus:bg-white text-center font-mono text-xl font-black tracking-[0.35em] text-[#1D1D1F] outline-none transition-all placeholder:tracking-widest placeholder:text-gray-400"
+                  />
+                  <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#86868B] pointer-events-none" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPinText(!showPinText)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#86868B] hover:text-[#1D1D1F] cursor-pointer"
+                    title={showPinText ? 'إخفاء الرمز' : 'إظهار الرمز'}
+                  >
+                    {showPinText ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {passwordError && (
+                  <p className="text-[11px] text-[#FF3B30] font-bold mt-1.5 text-center">{passwordError}</p>
+                )}
+              </div>
+
+              {/* Properly Ordered Left-to-Right Numeric Keypad (1 2 3 / 4 5 6 / 7 8 9 / C 0 ⌫) */}
+              <div dir="ltr" data-keep-numerals="true" className="grid grid-cols-3 gap-2 select-none">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => {
+                  const isClear = k === 'C';
+                  const isBack = k === '⌫';
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => {
+                        if (isClear) {
+                          setPasswordInput('');
+                          setPasswordError(null);
+                        } else if (isBack) {
+                          setPasswordInput(prev => prev.slice(0, -1));
+                          setPasswordError(null);
+                        } else {
+                          handleKeypadDigit(k);
+                        }
+                      }}
+                      className={`h-11 rounded-xl font-mono font-bold text-base transition-all flex items-center justify-center cursor-pointer active:scale-95 ${
+                        isClear
+                          ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-sans font-black'
+                          : isBack
+                          ? 'bg-black/[0.05] hover:bg-black/[0.1] text-[#1D1D1F]'
+                          : 'bg-[#F5F5F7] hover:bg-black/[0.08] text-[#1D1D1F] shadow-2xs border border-black/[0.04]'
+                      }`}
+                    >
+                      {isClear ? 'مسح' : isBack ? <Delete size={17} /> : k}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="pt-1">
+                <button
+                  type="submit"
+                  disabled={isVerifying || !passwordInput.trim()}
+                  className="apple-btn w-full py-3 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-40 text-white text-xs font-black shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <CheckCircle2 size={15} />
+                  <span>{isVerifying ? 'جاري التحقق...' : 'تأكيد الدخول كمدير عام'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 });

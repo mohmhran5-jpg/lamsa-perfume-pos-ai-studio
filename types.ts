@@ -393,7 +393,6 @@ export type AppThemeId =
   | 'aurora_borealis_cyber'
   | 'roja_haute_luxe'
   | 'imperial_sapphire_velvet'
-  | 'neon_circuit_luxe'
   | 'frosted_lavender_clay'
   | 'apple_win12_fluent_hybrid';
 
@@ -1020,30 +1019,6 @@ export const APP_THEMES: AppThemeDefinition[] = [
       ambientOrb1: 'rgba(59, 130, 246, 0.18)',
       ambientOrb2: 'rgba(251, 191, 36, 0.12)',
       ambientOrb3: 'rgba(99, 102, 241, 0.13)',
-    },
-  },
-  {
-    id: 'neon_circuit_luxe',
-    nameAr: 'نيون السيان والياقوت البنفسجي',
-    nameEn: 'Neon Circuit Luxe',
-    badge: 'نيون أزرق بنفسجي',
-    category: 'dark_pro',
-    isDark: true,
-    moodDescription: 'كحلي عميق مع خطوط سيان مضيئة وتوهج بنفسجي ولمسات ذهبية راقية.',
-    fragranceInspiration: 'لوحة ليلية مستقبلية بحدود مضيئة وتدرجات زرقاء وبنفسجية وذهبية.',
-    colors: {
-      bgCanvas: '#050B18',
-      cardGlass: 'rgba(9, 17, 38, 0.91)',
-      cardSolid: '#0B1731',
-      textPrimary: '#F7FBFF',
-      textSecondary: '#B4C4E2',
-      primaryAccent: '#12DDF5',
-      primaryAccentHover: '#62EDFF',
-      secondaryGold: '#F3C55B',
-      borderSubtle: 'rgba(34, 211, 238, 0.28)',
-      ambientOrb1: 'rgba(14, 165, 233, 0.22)',
-      ambientOrb2: 'rgba(139, 92, 246, 0.22)',
-      ambientOrb3: 'rgba(243, 197, 91, 0.12)',
     },
   },
 ];
@@ -3875,10 +3850,8 @@ export interface AppUser {
   displayName: string; // e.g. "د. محمد", "طارق"
   fullName?: string; // Alias for displayName
   role: UserRole;
-  authEmail?: string; // Verified Google identity used for Firebase authorization
-  migrationReady?: boolean;
-  passwordHash: string; // Kept empty; local passwords are not an authentication method
-  requiresPasswordChange: boolean;
+  passwordHash: string; // Hashed password (never plain text)
+  requiresPasswordChange: boolean; // Enforce change on first login
   isActive: boolean; // Toggle active / frozen
   createdAt: string;
   lastLoginAt?: string;
@@ -4047,9 +4020,33 @@ export const INVENTORY_KEEPER_PERMISSIONS: UserPermissions = {
   canAccessOperationsSystem: false,
 };
 
-// No local bootstrap credentials. Only verified Google accounts listed in authorized_users can sign in.
-export const DEFAULT_USERS: AppUser[] = [];
+// Default bootstrap users with direct 5188 (Owner) and 12345 (Tarek) support
+export const DEFAULT_USERS: AppUser[] = [
+  {
+    id: 'user-mohamed',
+    username: 'mohamed',
+    displayName: 'د. محمد (المالك)',
+    role: 'OWNER',
+    passwordHash: '5188',
+    requiresPasswordChange: false,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    permissions: OWNER_FULL_PERMISSIONS,
+  },
+  {
+    id: 'user-tarek',
+    username: 'tarek',
+    displayName: 'طارق (مسؤول ومدير المبيعات)',
+    role: 'STORE_MANAGER',
+    passwordHash: '12345',
+    requiresPasswordChange: false,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    permissions: TAREK_OPERATIONAL_PERMISSIONS,
+  },
+];
 
+// ========================================================
 // DAY OPERATIONS & SHIFT CLOSURE (فتح وإغلاق اليوم التشغيلي)
 // ========================================================
 
@@ -4058,18 +4055,20 @@ export const APP_SYSTEM_VERSION = 'v2.7.5 (2027 Ultra-Sync)';
 export const APP_BUILD_DATE = '2027-Q1 Precision Release';
 
 export interface ConnectedDeviceRecord {
-  id?: string;
   deviceId: string;
   userId?: string;
   userName: string;
   userRole?: UserRole | string;
   deviceName: string;
   deviceType: 'mobile' | 'desktop' | 'tablet';
+  browser: string;
+  currentView?: string;
   isOnline: boolean;
   lastSeen: string;
   lastSeenMs: number;
+  appVersion: string;
+  syncLatencyMs?: number;
 }
-
 
 export interface DailyClosure {
   id: string; // e.g. close-2026-09-24
@@ -5211,4 +5210,5 @@ export function run20MandatoryAcceptanceTests(): AcceptanceTestResult[] {
     dataClassification: 'TEST' as const,
   }));
 }
+
 

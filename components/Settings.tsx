@@ -26,7 +26,7 @@ import {
 import { ThermalReceiptLiveView } from './ReceiptModal';
 import { AppleThemeStudioPanel } from './AppleThemeStudioModal';
 import { DashboardLayoutStudioPanel } from './DashboardLayoutStudioPanel';
-import { canViewProfits, canViewCosts } from '../services/authService';
+import { canViewProfits, canViewCosts, hashPassword } from '../services/authService';
 import { analyzeLoyaltyProgramWithAI } from '../services/geminiService';
 import { 
   Store, 
@@ -318,6 +318,12 @@ export const Settings: React.FC<SettingsProps> = ({
   const [withdrawAmount, setWithdrawAmount] = useState<number | ''>('');
   const [withdrawReason, setWithdrawReason] = useState('صرف جزء من مخصص راتب الإدارة المعتمد');
   const [withdrawRef, setWithdrawRef] = useState('');
+
+  // Password change in security tab
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
 
   // Financial calculations summary (Live Production Data only)
   const liveSalesList = useMemo(() => sales.filter(s => isLiveProductionSale(s)), [sales]);
@@ -817,6 +823,42 @@ export const Settings: React.FC<SettingsProps> = ({
     setToastMessage('تم تسجيل المعاملة المالية وترحيلها للخزائن بنجاح.');
     setIsSavedToast(true);
     setTimeout(() => setIsSavedToast(false), 2500);
+  };
+
+  // Change password for current logged-in user
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    if (newPassword.length < 4) {
+      setPasswordError('كلمة المرور يجب أن لا تقل عن 4 خانات.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('كلمتا المرور غير متطابقتين.');
+      return;
+    }
+
+    try {
+      const hash = await hashPassword(newPassword);
+      if (currentUser && onSaveAppUser) {
+        const updated: AppUser = {
+          ...currentUser,
+          passwordHash: hash,
+          requiresPasswordChange: false
+        };
+        onSaveAppUser(updated);
+        setPasswordSuccess('تم تحديث وتشفير كلمة المرور بنجاح.');
+        setNewPassword('');
+        setConfirmPassword('');
+      } else {
+        setPasswordSuccess('تم تشفير كلمة المرور بنجاح.');
+      }
+    } catch (err) {
+      setPasswordError('حدث خطأ أثناء تشفير كلمة المرور.');
+    }
   };
 
   // Export JSON Backup file
@@ -3203,22 +3245,67 @@ export const Settings: React.FC<SettingsProps> = ({
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-black text-[#1D1D1F]">الأمان والنسخ الاحتياطي</h2>
-                  <p className="text-xs text-[#86868B]">تسجيل الدخول عبر Google، وتصدير النسخ الاحتياطية بصيغة JSON.</p>
+                  <h2 className="text-lg font-black text-[#1D1D1F]">الأمان، كلمات المرور، والنسخ الاحتياطي</h2>
+                  <p className="text-xs text-[#86868B]">تشفير بيانات الدخول وتصدير نسخ احتياطية شاملة بصيغة JSON.</p>
                 </div>
                 <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
                   <KeyRound size={20} />
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-2">
+              {/* Password Change Form */}
+              <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-4">
                 <div className="flex items-center gap-2">
                   <KeyRound size={16} className="text-[#0071E3]" />
-                  <h3 className="font-bold text-xs text-[#1D1D1F]">تسجيل الدخول وإدارة الوصول</h3>
+                  <h3 className="font-bold text-xs text-[#1D1D1F]">تغيير كلمة المرور الخاصة بحسابك:</h3>
                 </div>
-                <p className="text-xs leading-6 text-[#5E5E63]">
-                  يعتمد الدخول على حساب Google موثّق وصلاحيات الموظفين التي يضبطها المالك من شاشة إدارة المستخدمين؛ لا تُستخدم كلمات مرور أو أرقام PIN محلية.
-                </p>
+
+                {passwordError && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
+                    {passwordError}
+                  </div>
+                )}
+
+                {passwordSuccess && (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
+                    {passwordSuccess}
+                  </div>
+                )}
+
+                <form onSubmit={handleChangePassword} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[#86868B] block text-right">كلمة المرور الجديدة:</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="أدخل كلمة مرور جديدة..."
+                      className="w-full h-10 px-3 rounded-xl bg-white border border-black/[0.08] font-mono text-xs outline-none focus:border-[#0071E3] text-right"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[#86868B] block text-right">تأكيد كلمة المرور:</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="أعد إدخال كلمة المرور..."
+                      className="w-full h-10 px-3 rounded-xl bg-white border border-black/[0.08] font-mono text-xs outline-none focus:border-[#0071E3] text-right"
+                      required
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 pt-1">
+                    <button
+                      type="submit"
+                      className="apple-btn px-4 py-2 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold"
+                    >
+                      تحديث كلمة المرور
+                    </button>
+                  </div>
+                </form>
               </div>
 
               {/* Backup & Export */}

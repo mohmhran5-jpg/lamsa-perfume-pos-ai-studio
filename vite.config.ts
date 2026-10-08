@@ -5,9 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
-    const basePath = env.VITE_BASE_PATH || (mode === 'production' ? '/lamsa-perfume-pos-ai-studio/' : '/');
     return {
-      base: basePath,
       server: {
         port: 3000,
         host: '0.0.0.0',
@@ -21,12 +19,12 @@ export default defineConfig(({ mode }) => {
           injectRegister: null,
           includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'icon.svg'],
           manifest: {
-            id: basePath,
+            id: '/',
             name: 'لمسة عطر | نظام إدارة ونقاط بيع العطور',
             short_name: 'لمسة عطر',
             description: 'نظام محاسبي وتشغيلي لإدارة متجر العطور، حساب التكاليف، وإدارة المخزون والتزامن السحابي الفوري 24/7',
-            start_url: basePath,
-            scope: basePath,
+            start_url: '/',
+            scope: '/',
             display: 'standalone',
             orientation: 'any',
             dir: 'rtl',
@@ -36,19 +34,19 @@ export default defineConfig(({ mode }) => {
             categories: ['business', 'finance', 'shopping'],
             icons: [
               {
-                src: `${basePath}pwa-192x192.png`,
+                src: '/pwa-192x192.png',
                 sizes: '192x192',
                 type: 'image/png',
                 purpose: 'any'
               },
               {
-                src: `${basePath}pwa-512x512.png`,
+                src: '/pwa-512x512.png',
                 sizes: '512x512',
                 type: 'image/png',
                 purpose: 'any'
               },
               {
-                src: `${basePath}pwa-maskable-512x512.png`,
+                src: '/pwa-maskable-512x512.png',
                 sizes: '512x512',
                 type: 'image/png',
                 purpose: 'maskable'
