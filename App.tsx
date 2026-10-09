@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Inventory from './components/Inventory';
@@ -153,7 +153,7 @@ import {
   acknowledgeOwnerBroadcastCloud,
 } from './services/firebase';
 import { getSessionUser, saveSessionUser, canAccessView } from './services/authService';
-import { Lock } from 'lucide-react';
+import { Lock, Radio, CheckCircle2, X } from 'lucide-react';
 
 // Seed Data
 const INITIAL_PRODUCTS: Product[] = [
@@ -1812,6 +1812,58 @@ const App: React.FC = () => {
     } catch {}
   };
 
+  // Real-time Owner Directives & Staff Broadcast Handlers
+  const handleSendOwnerBroadcast = async (broadcast: OwnerStaffBroadcast) => {
+    setOwnerBroadcasts(prev => [broadcast, ...prev.filter(b => b.id !== broadcast.id)]);
+    persistDataDurable('lamsa_owner_broadcasts', [broadcast, ...ownerBroadcasts]);
+    try {
+      await sendOwnerBroadcastCloud(broadcast);
+    } catch (e) {
+      console.error("Error sending owner broadcast to cloud:", e);
+    }
+    pushTopNotification(
+      'goal',
+      `📢 ${broadcast.title}`,
+      broadcast.message,
+      'توجيه المالك'
+    );
+  };
+
+  const handleAcknowledgeOwnerBroadcast = async (broadcastId: string) => {
+    const employee = currentUser?.name || 'طارق';
+    setOwnerBroadcasts(prev => prev.map(b => {
+      if (b.id === broadcastId) {
+        const acks = b.acknowledgedBy || [];
+        if (!acks.some(a => a.employeeName === employee)) {
+          return {
+            ...b,
+            acknowledgedBy: [...acks, { employeeName: employee, timestamp: new Date().toISOString() }]
+          };
+        }
+      }
+      return b;
+    }));
+    try {
+      await acknowledgeOwnerBroadcastCloud(broadcastId, employee);
+    } catch (e) {
+      console.error("Error acknowledging broadcast:", e);
+    }
+    soundAlertService.playActionChime();
+    pushTopNotification('info', 'تم تأكيد الاطلاع', 'تم توثيق قراءتك لتوجيه المالك بنجاح', 'تأكيد');
+  };
+
+  // Active broadcast to display in UI for current user
+  const activeBroadcastForDisplay = useMemo(() => {
+    return ownerBroadcasts.find(b => {
+      if (b.isArchived) return false;
+      if (dismissedBroadcastIds.has(b.id)) return false;
+      // Target matching: 'all' or specific employee name or role
+      const matchesTarget = !b.targetEmployee || b.targetEmployee === 'all' || b.targetEmployee === currentUser?.name;
+      if (!matchesTarget) return false;
+      return true;
+    });
+  }, [ownerBroadcasts, dismissedBroadcastIds, currentUser]);
+
   // Production batch save handler (سجل التشغيل والتعتيق)
   const handleSaveBatch = async (batch: ProductionBatch) => {
     setBatches(prev => [batch, ...prev.filter(b => b.id !== batch.id)]);
@@ -2737,6 +2789,7 @@ const App: React.FC = () => {
             settings={settings}
             onUpdateSettings={handleSetSettings}
             currentUser={currentUser}
+            users={users}
           />
         );
       case View.ANALYZER:
@@ -2911,6 +2964,87 @@ const App: React.FC = () => {
           onUpdateSettings={handleSetSettings}
         />
 
+        {/* Real-time Owner Directives & Staff Alert Banner (توجيهات وتنبيهات المالك المباشرة للموظفين في الواجهة) */}
+        {activeBroadcastForDisplay && (
+          <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 pt-3 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className={`p-4 rounded-3xl border shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+              activeBroadcastForDisplay.category === 'urgent'
+                ? 'bg-rose-500/10 border-rose-500/40 text-rose-950 dark:text-rose-100 shadow-rose-500/5'
+                : activeBroadcastForDisplay.category === 'target'
+                ? 'bg-amber-500/10 border-amber-500/40 text-amber-950 dark:text-amber-100 shadow-amber-500/5'
+                : activeBroadcastForDisplay.category === 'reward'
+                ? 'bg-purple-500/10 border-purple-500/40 text-purple-950 dark:text-purple-100 shadow-purple-500/5'
+                : 'bg-blue-500/10 border-blue-500/40 text-blue-950 dark:text-blue-100 shadow-blue-500/5'
+            }`}>
+              <div className="flex items-start gap-3 min-w-0">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                  activeBroadcastForDisplay.category === 'urgent'
+                    ? 'bg-rose-600 text-white animate-pulse'
+                    : activeBroadcastForDisplay.category === 'target'
+                    ? 'bg-amber-500 text-slate-950'
+                    : activeBroadcastForDisplay.category === 'reward'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-blue-600 text-white'
+                }`}>
+                  <Radio size={20} className="animate-spin" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-black/10 dark:bg-white/10">
+                      📢 توجيه رسمي مباشر من المالك ({activeBroadcastForDisplay.senderName})
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      activeBroadcastForDisplay.category === 'urgent'
+                        ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/40'
+                        : activeBroadcastForDisplay.category === 'target'
+                        ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300 border-amber-500/40'
+                        : activeBroadcastForDisplay.category === 'reward'
+                        ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40'
+                        : 'bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/40'
+                    }`}>
+                      {activeBroadcastForDisplay.category === 'urgent' ? '🚨 عاجل وهام' : activeBroadcastForDisplay.category === 'target' ? '🎯 تارجت ومبيعات' : activeBroadcastForDisplay.category === 'reward' ? '🎁 مكافأة وتقدير' : '📋 تعليمات'}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {activeBroadcastForDisplay.createdAt ? new Date(activeBroadcastForDisplay.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : 'الآن'}
+                    </span>
+                  </div>
+                  <h4 className="text-sm font-black truncate">{activeBroadcastForDisplay.title}</h4>
+                  <p className="text-xs opacity-90 leading-relaxed font-medium">{activeBroadcastForDisplay.message}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                {activeBroadcastForDisplay.requiresAcknowledgement && (
+                  !activeBroadcastForDisplay.acknowledgedBy?.some(a => a.employeeName === (currentUser?.name || 'طارق')) ? (
+                    <button
+                      type="button"
+                      onClick={() => handleAcknowledgeOwnerBroadcast(activeBroadcastForDisplay.id)}
+                      className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-black text-amber-300 font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer transition-transform active:scale-95"
+                    >
+                      <CheckCircle2 size={14} className="text-amber-400" />
+                      <span>تأكيد الاطلاع والاستلام ✓</span>
+                    </button>
+                  ) : (
+                    <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 px-3 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1">
+                      <CheckCircle2 size={13} />
+                      <span>تم تأكيد الاطلاع بنجاح</span>
+                    </span>
+                  )
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setDismissedBroadcastIds(prev => new Set([...prev, activeBroadcastForDisplay.id]))}
+                  className="p-2 rounded-xl text-slate-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                  title="إخفاء التنبيه"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex-1" data-active-section="true" data-current-view={currentView}>
           {renderView()}
         </div>
@@ -3028,6 +3162,11 @@ const App: React.FC = () => {
         recentSales={sales}
         currency={settings.currency}
         isCloudConnected={isCloudConnected}
+        isOwner={currentUser?.role === 'OWNER'}
+        broadcasts={ownerBroadcasts}
+        onSendBroadcast={handleSendOwnerBroadcast}
+        onAcknowledgeBroadcast={handleAcknowledgeOwnerBroadcast}
+        currentUser={currentUser}
         onTriggerTestAlert={() => {
           pushTopNotification(
             'goal',

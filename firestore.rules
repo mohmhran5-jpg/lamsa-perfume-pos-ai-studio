@@ -101,6 +101,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Real-Time Owner Directives & Staff Broadcasts
+    match /owner_broadcasts/{broadcastId} {
+      allow read, write: if true;
+    }
+
     // Diagnostics & Connection Check
     match /test/{docId} {
       allow read, write: if true;

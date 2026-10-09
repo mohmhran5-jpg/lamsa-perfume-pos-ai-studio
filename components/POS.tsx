@@ -1990,7 +1990,7 @@ const POS: React.FC<POSProps> = ({
             exceptionReason: `${ownerExceptionReason} - ${ownerExceptionNotes}`,
           }
         : {}),
-      employeeName: currentUser?.displayName || 'طارق',
+      employeeName: currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || currentUser?.displayName || 'طارق',
       source: 'المتجر',
       notes: ownerOverrideGranted 
         ? `[استثناء معتمد من المالك: ${ownerExceptionReason}] ${ownerExceptionNotes}` 

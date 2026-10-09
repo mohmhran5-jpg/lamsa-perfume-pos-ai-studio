@@ -41,9 +41,14 @@ import {
   Filter,
   ArrowUpDown,
   User,
+  Users,
   Phone,
   Eye,
-  EyeOff
+  EyeOff,
+  LayoutGrid,
+  Table,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import ReceiptModal from './ReceiptModal';
 
@@ -58,11 +63,12 @@ interface ReportsProps {
   settings?: StoreSettings;
   onUpdateSettings?: (settings: StoreSettings) => void;
   currentUser?: AppUser | null;
+  users?: AppUser[];
 }
 
 type TimeRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all';
 type PaymentFilter = 'all' | 'نقدي' | 'بطاقة' | 'محفظة إلكترونية';
-type SortBy = 'newest' | 'highest_price' | 'highest_profit' | 'highest_grams';
+type SortBy = 'newest' | 'highest_price' | 'highest_profit' | 'highest_grams' | 'oldest';
 
 const Reports: React.FC<ReportsProps> = ({
   sales,
@@ -74,11 +80,16 @@ const Reports: React.FC<ReportsProps> = ({
   onNavigateToPOS,
   settings = DEFAULT_SETTINGS,
   onUpdateSettings,
-  currentUser
+  currentUser,
+  users = [],
 }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [customDate, setCustomDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all');
+  const [employeeFilter, setEmployeeFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'valid' | 'reversed'>('all');
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [showEmployeeStats, setShowEmployeeStats] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [searchTerm, setSearchTerm] = useState('');
   const [hideProfits, setHideProfits] = useState(false);
@@ -94,6 +105,7 @@ const Reports: React.FC<ReportsProps> = ({
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerPhone, setEditCustomerPhone] = useState('');
+  const [editEmployeeName, setEditEmployeeName] = useState('');
   const [editPaymentMethod, setEditPaymentMethod] = useState<'نقدي' | 'بطاقة' | 'محفظة إلكترونية'>('نقدي');
   const [editDiscount, setEditDiscount] = useState<number>(0);
   const [editNotes, setEditNotes] = useState<string>('');
@@ -103,6 +115,26 @@ const Reports: React.FC<ReportsProps> = ({
 
   const showProfitMetrics = (canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && !hideProfits;
   const showCostMetrics = (canViewCosts(currentUser ?? null) || currentUser?.role === 'OWNER') && !hideProfits;
+
+  // Extract all distinct employees who have recorded sales or exist in system
+  const availableEmployees = useMemo(() => {
+    const set = new Set<string>();
+    sales.forEach((s) => {
+      const name = s.employeeName?.replace(/\(.*?\)/g, '').trim();
+      if (name) set.add(name);
+    });
+    if (users && users.length > 0) {
+      users.forEach((u) => {
+        const name = u.displayName?.replace(/\(.*?\)/g, '').trim() || u.username;
+        if (name) set.add(name);
+      });
+    }
+    if (currentUser?.displayName) {
+      set.add(currentUser.displayName.replace(/\(.*?\)/g, '').trim());
+    }
+    set.add('طارق');
+    return Array.from(set).filter(Boolean);
+  }, [sales, users, currentUser]);
 
   // Filter & Sort sales in real-time
   const filteredSales = useMemo(() => {
@@ -132,6 +164,16 @@ const Reports: React.FC<ReportsProps> = ({
       } else if (timeRange === 'custom' && customDate) {
         if (!sale.date.startsWith(customDate)) return false;
       }
+
+      // Employee filter
+      if (employeeFilter !== 'all') {
+        const saleEmp = sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق';
+        if (saleEmp !== employeeFilter) return false;
+      }
+
+      // Status filter (valid vs reversed)
+      if (statusFilter === 'valid' && sale.isReversed) return false;
+      if (statusFilter === 'reversed' && !sale.isReversed) return false;
 
       // Payment method filter
       if (paymentFilter !== 'all') {
@@ -166,9 +208,12 @@ const Reports: React.FC<ReportsProps> = ({
         const gB = (b.items || []).reduce((s, i) => s + (i.essenceGrams || 0), 0);
         return gB - gA;
       }
+      if (sortBy === 'oldest') {
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      }
       return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
-  }, [sales, timeRange, customDate, paymentFilter, sortBy, searchTerm]);
+  }, [sales, timeRange, customDate, employeeFilter, statusFilter, paymentFilter, sortBy, searchTerm]);
 
   // Financial aggregates (active non-reversed live production sales)
   const activeFilteredSales = useMemo(
@@ -241,11 +286,50 @@ const Reports: React.FC<ReportsProps> = ({
       .slice(0, 10);
   }, [activeFilteredSales]);
 
+  // Employee sales performance breakdown in the filtered time window
+  const employeePerformance = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        name: string;
+        invoicesCount: number;
+        revenue: number;
+        profit: number;
+        bottlesCount: number;
+        gramsCount: number;
+      }
+    > = {};
+
+    activeFilteredSales.forEach((s) => {
+      const emp = s.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق';
+      if (!map[emp]) {
+        map[emp] = {
+          name: emp,
+          invoicesCount: 0,
+          revenue: 0,
+          profit: 0,
+          bottlesCount: 0,
+          gramsCount: 0,
+        };
+      }
+      map[emp].invoicesCount += 1;
+      map[emp].revenue += s.totalPrice || 0;
+      map[emp].profit += s.totalProfit || 0;
+      map[emp].bottlesCount += (s.items || []).reduce((sum, it) => sum + (it.quantity || 1), 0);
+      map[emp].gramsCount += (s.items || []).reduce((sum, it) => sum + (it.essenceGrams || 0), 0);
+    });
+
+    return Object.values(map).sort((a, b) => b.revenue - a.revenue);
+  }, [activeFilteredSales]);
+
+  const topPerformerEmployee = employeePerformance[0] || null;
+
   // Open Edit Modal for a Sale
   const handleOpenEditModal = (sale: Sale) => {
     setEditingSale(sale);
     setEditCustomerName(sale.customerName || '');
     setEditCustomerPhone(sale.customerPhone || '');
+    setEditEmployeeName(sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق');
     setEditPaymentMethod(sale.paymentMethod || 'نقدي');
     setEditDiscount(sale.discount || 0);
     setEditNotes(sale.notes || '');
@@ -316,6 +400,7 @@ const Reports: React.FC<ReportsProps> = ({
       totalProfit: finalProfit,
       commissionAmount: finalComm,
       paymentMethod: editPaymentMethod,
+      employeeName: editEmployeeName.trim() || 'طارق',
       ...(editCustomerName.trim() ? { customerName: editCustomerName.trim() } : { customerName: undefined }),
       ...(editCustomerPhone.trim() ? { customerPhone: editCustomerPhone.trim() } : { customerPhone: undefined }),
       ...(editDiscount > 0 ? { discount: editDiscount } : { discount: undefined }),
@@ -373,8 +458,10 @@ const Reports: React.FC<ReportsProps> = ({
     const itemsLines = (sale.items || [])
       .map(i => `• ${i.productName} (${i.bottleSize} مل × ${i.quantity || 1}) - ${i.sellingPrice} ${settings.currency}`)
       .join('\n');
+    const employeeClean = sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق';
     const text = `🧾 فاتورة متجر ${settings.storeName}
 رقم الفاتورة: #${sale.id.slice(-6)}
+الموظف المسؤول (الكاشير): ${employeeClean}
 التاريخ: ${new Date(sale.date).toLocaleString('ar-EG')}
 العميل: ${sale.customerName || 'عميلنا العزيز'}
 -----------------------------
@@ -470,18 +557,295 @@ ${itemsLines}
       </header>
 
       {/* ======================================================== */}
-      {/* SMART FILTERING & TIME RANGE BAR                         */}
+      {/* FINANCIAL & PERFORMANCE KPI METRICS                      */}
       {/* ======================================================== */}
-      <div className="apple-glass rounded-2xl p-3.5 sm:p-4 border border-black/[0.06] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        {/* Time Range Segmented Filter */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-black/[0.04] overflow-x-auto">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+        {/* KPI 1: Total Revenue & Invoices Count */}
+        <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-[#86868B]">إجمالي المبيعات</span>
+            <div className="w-8 h-8 rounded-xl bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center">
+              <DollarSign size={16} />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
+              {totalRevenue.toLocaleString('ar-EG')}{' '}
+              <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
+            </div>
+            <p className="text-[11px] text-[#86868B] mt-1">
+              عدد الفواتير: <strong className="text-[#1D1D1F] font-mono">{activeFilteredSales.length}</strong> فاتورة ({totalBottlesSold} عبوة)
+            </p>
+          </div>
+        </div>
+
+        {/* KPI 2: Top Selling Employee */}
+        <div 
+          onClick={() => {
+            if (topPerformerEmployee) {
+              setEmployeeFilter(employeeFilter === topPerformerEmployee.name ? 'all' : topPerformerEmployee.name);
+            }
+          }}
+          className={`apple-glass-card rounded-3xl p-4 sm:p-5 border transition-all cursor-pointer flex flex-col justify-between ${
+            topPerformerEmployee && employeeFilter === topPerformerEmployee.name
+              ? 'ring-2 ring-[#0071E3] bg-blue-50/40 border-blue-200'
+              : 'border-black/[0.06] hover:border-black/[0.12]'
+          }`}
+          title="انقر لتصفية الفواتير حسب الموظف الأكثر مبيعاً"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-[#86868B]">الموظف الأكثر مبيعاً</span>
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center">
+              <Award size={16} />
+            </div>
+          </div>
+          <div>
+            {topPerformerEmployee ? (
+              <>
+                <div className="text-base sm:text-lg font-black text-[#1D1D1F] truncate flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-[#0071E3] text-white text-[10px] flex items-center justify-center font-bold shrink-0">
+                    {topPerformerEmployee.name.charAt(0)}
+                  </span>
+                  <span className="truncate">{topPerformerEmployee.name}</span>
+                </div>
+                <p className="text-[11px] text-[#86868B] mt-1 font-mono">
+                  <strong className="text-[#0071E3]">{topPerformerEmployee.invoicesCount}</strong> فاتورة ·{' '}
+                  <strong className="text-[#1D1D1F]">{topPerformerEmployee.revenue.toLocaleString('ar-EG')}</strong> ج
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-bold text-[#86868B]">لا توجد مبيعات</div>
+                <p className="text-[11px] text-[#86868B] mt-1">في هذه الفترة</p>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* KPI 3: Contribution or Average Basket */}
+        {showProfitMetrics ? (
+          <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-[#86868B]">المساهمة المحققة</span>
+              <div className="w-8 h-8 rounded-xl bg-[#34C759]/15 text-[#248A3D] flex items-center justify-center">
+                <TrendingUp size={16} />
+              </div>
+            </div>
+            <div>
+              <div className="text-2xl sm:text-3xl font-black font-mono text-[#248A3D]">
+                +{totalProfit.toLocaleString('ar-EG')}{' '}
+                <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
+              </div>
+              <p className="text-[11px] text-[#86868B] mt-1">
+                نسبة المساهمة: <strong className="text-[#248A3D] font-mono">{profitMarginPercent.toFixed(1)}%</strong>
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-[#86868B]">متوسط الفاتورة</span>
+              <div className="w-8 h-8 rounded-xl bg-[#34C759]/15 text-[#248A3D] flex items-center justify-center">
+                <Receipt size={16} />
+              </div>
+            </div>
+            <div>
+              <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
+                {averageTicket.toFixed(0)}{' '}
+                <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
+              </div>
+              <p className="text-[11px] text-[#86868B] mt-1">معدل سلة الشراء للعميل</p>
+            </div>
+          </div>
+        )}
+
+        {/* KPI 4: Payment Methods Distribution */}
+        <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-[#86868B]">توزيع السداد</span>
+            <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center">
+              <Wallet size={16} />
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold text-[#1D1D1F] flex items-center justify-between">
+              <span>نقدي: {paymentBreakdown['نقدي']?.toLocaleString('ar-EG') || 0} ج</span>
+            </div>
+            <div className="text-[11px] text-[#86868B] mt-1 flex items-center justify-between">
+              <span>إلكتروني/بطاقة:</span>
+              <strong className="text-[#1D1D1F] font-mono">
+                {((paymentBreakdown['بطاقة'] || 0) + (paymentBreakdown['محفظة إلكترونية'] || 0)).toLocaleString('ar-EG')} ج
+              </strong>
+            </div>
+            {/* Visual ratio bar */}
+            <div className="w-full h-1.5 bg-black/[0.06] rounded-full overflow-hidden mt-1.5 flex">
+              <div 
+                style={{ width: `${totalRevenue > 0 ? (paymentBreakdown['نقدي'] / totalRevenue) * 100 : 50}%` }}
+                className="bg-[#0071E3] h-full"
+                title="نسبة النقدي"
+              />
+              <div 
+                style={{ width: `${totalRevenue > 0 ? (((paymentBreakdown['بطاقة'] || 0) + (paymentBreakdown['محفظة إلكترونية'] || 0)) / totalRevenue) * 100 : 50}%` }}
+                className="bg-purple-600 h-full"
+                title="نسبة البطاقات والمحافظ"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 5: Total Raw Essence Consumed */}
+        <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-[#86868B]">الزيوت والعبوات</span>
+            <div className="w-8 h-8 rounded-xl bg-[#C49746]/15 text-[#9A6E23] flex items-center justify-center">
+              <Layers size={16} />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
+              {totalGramsConsumed.toLocaleString('ar-EG')}{' '}
+              <span className="text-xs font-normal text-[#86868B]">جم</span>
+            </div>
+            <p className="text-[11px] text-[#86868B] mt-1">
+              إجمالي العبوات: <strong className="text-[#1D1D1F]">{totalBottlesSold}</strong> عبوة
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Optional Employee Performance Widget Button & Section */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setShowEmployeeStats(!showEmployeeStats)}
+          className="inline-flex items-center gap-2 text-xs font-bold text-[#0071E3] hover:text-[#0077ED] bg-[#0071E3]/10 hover:bg-[#0071E3]/15 px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-2xs"
+        >
+          <Users size={14} />
+          <span>تحليل أداء الموظفين في المبيعات ({employeePerformance.length})</span>
+          {showEmployeeStats ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {employeeFilter !== 'all' && (
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-[#86868B]">تصفية فواتير:</span>
+            <span className="font-bold text-[#0071E3] bg-[#0071E3]/10 px-2.5 py-0.5 rounded-lg flex items-center gap-1 border border-[#0071E3]/20">
+              <User size={12} />
+              <span>{employeeFilter}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setEmployeeFilter('all')}
+              className="text-xs text-rose-600 hover:underline font-bold cursor-pointer"
+            >
+              (إلغاء التصفية ✕)
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showEmployeeStats && employeePerformance.length > 0 && (
+        <div className="apple-glass rounded-2xl p-4 border border-black/[0.07] animate-in fade-in duration-150 space-y-3">
+          <div className="flex items-center justify-between border-b border-black/[0.06] pb-2">
+            <div className="flex items-center gap-2">
+              <Award size={16} className="text-amber-600" />
+              <h3 className="text-xs font-black text-[#1D1D1F]">
+                سجل إنجازات ومبيعات كل موظف (الكاشير) في هذه الفترة
+              </h3>
+            </div>
+            <span className="text-[11px] text-[#86868B]">
+              انقر على بطاقة الموظف لتصفية فواتيره فوراً
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+            {employeePerformance.map((emp, idx) => {
+              const isSelected = employeeFilter === emp.name;
+              const percentOfTotal = totalRevenue > 0 ? (emp.revenue / totalRevenue) * 100 : 0;
+              const avgTicketForEmp = emp.invoicesCount > 0 ? emp.revenue / emp.invoicesCount : 0;
+              return (
+                <div
+                  key={emp.name}
+                  onClick={() => setEmployeeFilter(isSelected ? 'all' : emp.name)}
+                  className={`p-3 rounded-2xl border transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-blue-50/80 border-[#0071E3] shadow-xs ring-1 ring-[#0071E3]'
+                      : 'bg-white border-black/[0.06] hover:border-black/[0.12] hover:shadow-2xs'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-full bg-[#0071E3] text-white flex items-center justify-center font-black text-xs shrink-0 shadow-2xs">
+                        {emp.name.charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <strong className="text-xs font-black text-[#1D1D1F] block truncate">
+                          {emp.name}
+                        </strong>
+                        <span className="text-[10px] text-[#86868B] block">
+                          الترتيب #{idx + 1}
+                        </span>
+                      </div>
+                    </div>
+                    {idx === 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-black border border-amber-200 shrink-0">
+                        الأعلى 🏆
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5 text-[11px] pt-1 border-t border-black/[0.04]">
+                    <div>
+                      <span className="text-[9.5px] text-[#86868B] block">الفواتير</span>
+                      <strong className="font-mono text-[#1D1D1F]">{emp.invoicesCount} فاتورة</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] text-[#86868B] block">الإيراد</span>
+                      <strong className="font-mono text-[#0071E3]">{emp.revenue.toLocaleString('ar-EG')} ج</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] text-[#86868B] block">متوسط الفاتورة</span>
+                      <strong className="font-mono text-[#1D1D1F]">{avgTicketForEmp.toFixed(0)} ج</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] text-[#86868B] block">المساهمة</span>
+                      <strong className="font-mono text-[#248A3D]">{percentOfTotal.toFixed(1)}%</strong>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEmployeeFilter(isSelected ? 'all' : emp.name);
+                    }}
+                    className={`w-full mt-2 py-1 rounded-lg text-[10px] font-bold transition-all text-center cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#0071E3] text-white'
+                        : 'bg-black/[0.04] text-[#1D1D1F] hover:bg-black/[0.08]'
+                    }`}
+                  >
+                    {isSelected ? 'إلغاء التصفية ✕' : 'عرض فواتير هذا الموظف 🔍'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* SMART FILTERING, EMPLOYEE FILTER & SEARCH CONTROL BAR    */}
+      {/* ======================================================== */}
+      <div className="apple-glass rounded-2xl p-3.5 sm:p-4 border border-black/[0.06] space-y-3">
+        {/* Row 1: Time Range Segmented Selector + View Mode */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-black/[0.04] overflow-x-auto max-w-full">
             {([
               { id: 'today', label: 'اليوم' },
               { id: 'yesterday', label: 'أمس' },
               { id: 'week', label: 'آخر 7 أيام' },
               { id: 'month', label: 'هذا الشهر' },
-              { id: 'all', label: `الكل (${sales.length})` },
+              { id: 'all', label: `كل السجل (${sales.length})` },
               { id: 'custom', label: 'تاريخ محدد' },
             ] as const).map((t) => (
               <button
@@ -507,26 +871,92 @@ ${itemsLines}
               className="h-9 px-3 rounded-xl bg-white border border-black/[0.1] text-xs font-mono font-bold text-[#1D1D1F] outline-none focus:border-[#0071E3]"
             />
           )}
+
+          {/* View Mode Toggle: Table vs Smart Cards */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-black/[0.04] self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-white text-[#1D1D1F] shadow-2xs'
+                  : 'text-[#636366] hover:text-[#1D1D1F]'
+              }`}
+              title="عرض جدول تفصيلي"
+            >
+              <Table size={13} />
+              <span className="hidden sm:inline">جدول تفصيلي</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'cards'
+                  ? 'bg-white text-[#1D1D1F] shadow-2xs'
+                  : 'text-[#636366] hover:text-[#1D1D1F]'
+              }`}
+              title="عرض بطاقات ذكية"
+            >
+              <LayoutGrid size={13} />
+              <span className="hidden sm:inline">بطاقات ذكية</span>
+            </button>
+          </div>
         </div>
 
-        {/* Payment Method Filter + Sort By */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Payment Filter */}
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-black/[0.04]">
-            {(['all', 'نقدي', 'بطاقة', 'محفظة إلكترونية'] as const).map((pm) => (
-              <button
-                key={pm}
-                type="button"
-                onClick={() => setPaymentFilter(pm)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                  paymentFilter === pm
-                    ? 'bg-[#1D1D1F] text-white shadow-2xs'
-                    : 'text-[#636366] hover:text-[#1D1D1F]'
-                }`}
+        {/* Row 2: Deep Filters (Employee, Payment, Status, Sort) */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-black/[0.04]">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Filter by Employee */}
+            <div className="flex items-center gap-1.5 bg-white border border-black/[0.08] rounded-xl px-2.5 h-9">
+              <User size={13} className="text-[#0071E3]" />
+              <span className="text-[11px] font-bold text-[#86868B]">الموظف:</span>
+              <select
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+                className="text-xs font-bold text-[#1D1D1F] bg-transparent outline-none cursor-pointer"
               >
-                {pm === 'all' ? 'كل طرق الدفع' : pm === 'محفظة إلكترونية' ? 'محفظة' : pm}
-              </button>
-            ))}
+                <option value="all">جميع الموظفين ({sales.length})</option>
+                {availableEmployees.map((emp) => {
+                  const count = sales.filter(s => (s.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق') === emp).length;
+                  return (
+                    <option key={emp} value={emp}>
+                      {emp} ({count} فاتورة)
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* Filter by Payment Method */}
+            <div className="flex items-center gap-1.5 bg-white border border-black/[0.08] rounded-xl px-2.5 h-9">
+              <CreditCard size={13} className="text-[#86868B]" />
+              <span className="text-[11px] font-bold text-[#86868B]">السداد:</span>
+              <select
+                value={paymentFilter}
+                onChange={(e) => setPaymentFilter(e.target.value as PaymentFilter)}
+                className="text-xs font-bold text-[#1D1D1F] bg-transparent outline-none cursor-pointer"
+              >
+                <option value="all">كل طرق الدفع</option>
+                <option value="نقدي">نقدي (كاش)</option>
+                <option value="بطاقة">بطاقة (فيزا)</option>
+                <option value="محفظة إلكترونية">محفظة إلكترونية</option>
+              </select>
+            </div>
+
+            {/* Filter by Status */}
+            <div className="flex items-center gap-1.5 bg-white border border-black/[0.08] rounded-xl px-2.5 h-9">
+              <Filter size={13} className="text-[#86868B]" />
+              <span className="text-[11px] font-bold text-[#86868B]">الحالة:</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="text-xs font-bold text-[#1D1D1F] bg-transparent outline-none cursor-pointer"
+              >
+                <option value="all">جميع الحالات</option>
+                <option value="valid">المعتمدة فقط ✓</option>
+                <option value="reversed">الملغاة بقيد عكسي ⚠️</option>
+              </select>
+            </div>
           </div>
 
           {/* Sort Selector */}
@@ -541,147 +971,17 @@ ${itemsLines}
               <option value="highest_price">الأعلى قيمة (المبلغ)</option>
               <option value="highest_profit">الأعلى ربحاً</option>
               <option value="highest_grams">الأكثر استهلاكاً للزيت</option>
+              <option value="oldest">الأقدم أولاً</option>
             </select>
           </div>
         </div>
-      </div>
 
-      {/* ======================================================== */}
-      {/* FINANCIAL KPI STATS CARDS                                */}
-      {/* ======================================================== */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Total Revenue */}
-        <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-[#86868B]">إجمالي المبيعات والفواتير</span>
-            <div className="w-8 h-8 rounded-xl bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center">
-              <DollarSign size={16} />
-            </div>
-          </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
-              {totalRevenue.toLocaleString('ar-EG')}{' '}
-              <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
-            </div>
-            <p className="text-[11px] text-[#86868B] mt-1">
-              عدد الفواتير: <strong className="text-[#1D1D1F] font-mono">{activeFilteredSales.length}</strong> فاتورة ({totalBottlesSold} عبوة)
-            </p>
-          </div>
-        </div>
-
-        {/* Total Contribution */}
-        {showProfitMetrics ? (
-          <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-[#86868B]">المساهمة المحققة (المبيعات ← التكلفة ← العمولة)</span>
-              <div className="w-8 h-8 rounded-xl bg-[#34C759]/15 text-[#248A3D] flex items-center justify-center">
-                <TrendingUp size={16} />
-              </div>
-            </div>
-            <div>
-              <div className="text-2xl sm:text-3xl font-black font-mono text-[#248A3D]">
-                +{totalProfit.toLocaleString('ar-EG')}{' '}
-                <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
-              </div>
-              <p className="text-[11px] text-[#86868B] mt-1">
-                نسبة المساهمة: <strong className="text-[#248A3D] font-mono">{profitMarginPercent.toFixed(1)}%</strong> (تغطي أولاً المخصص الثابت)
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-[#86868B]">متوسط قيمة الفاتورة</span>
-              <div className="w-8 h-8 rounded-xl bg-[#34C759]/15 text-[#248A3D] flex items-center justify-center">
-                <Receipt size={16} />
-              </div>
-            </div>
-            <div>
-              <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
-                {averageTicket.toFixed(0)}{' '}
-                <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
-              </div>
-              <p className="text-[11px] text-[#86868B] mt-1">معدل سلة الشراء للعميل الواحد</p>
-            </div>
-          </div>
-        )}
-
-        {/* Cost of Goods Sold (COGS) */}
-        {showCostMetrics ? (
-          <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-[#86868B]">تكلفة الخامات المستردة</span>
-              <div className="w-8 h-8 rounded-xl bg-amber-500/12 text-[#9A6E23] flex items-center justify-center">
-                <Scale size={16} />
-              </div>
-            </div>
-            <div>
-              <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
-                {totalCost.toLocaleString('ar-EG')}{' '}
-                <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
-              </div>
-              <p className="text-[11px] text-[#86868B] mt-1">مخصص تعويض الزيوت والزجاجات</p>
-            </div>
-          </div>
-        ) : (
-          <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-[#86868B]">إجمالي العبوات المركبة</span>
-              <div className="w-8 h-8 rounded-xl bg-blue-50 text-[#0071E3] flex items-center justify-center">
-                <ShoppingBag size={16} />
-              </div>
-            </div>
-            <div>
-              <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
-                {totalBottlesSold}{' '}
-                <span className="text-xs font-normal text-[#86868B]">عبوة عطرية</span>
-              </div>
-              <p className="text-[11px] text-[#86868B] mt-1">منفذة ومعتمدة في السجل</p>
-            </div>
-          </div>
-        )}
-
-        {/* Total Raw Essence Consumed */}
-        <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-[#86868B]">استهلاك الزيوت الخام</span>
-            <div className="w-8 h-8 rounded-xl bg-[#C49746]/15 text-[#9A6E23] flex items-center justify-center">
-              <Layers size={16} />
-            </div>
-          </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-black font-mono text-[#1D1D1F]">
-              {totalGramsConsumed.toLocaleString('ar-EG')}{' '}
-              <span className="text-xs font-normal text-[#86868B]">جرام</span>
-            </div>
-            <p className="text-[11px] text-[#86868B] mt-1">
-              نقدي: {paymentBreakdown['نقدي']} ج · إلكتروني/بطاقة: {paymentBreakdown['بطاقة'] + paymentBreakdown['محفظة إلكترونية']} ج
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* ======================================================== */}
-      {/* INVOICES LOG TABLE WITH FULL INTERACTIVE CONTROL         */}
-      {/* ======================================================== */}
-      <div className="apple-glass-card rounded-[28px] p-4 sm:p-6 space-y-4 border border-black/[0.07] shadow-apple-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3.5 border-b border-black/[0.06]">
-          <div>
-            <h2 className="text-base sm:text-lg font-black text-[#1D1D1F] flex items-center gap-2">
-              <span>سجل الفواتير التفصيلي والتحكم الفوري</span>
-              <span className="text-xs font-mono font-bold text-[#0071E3] bg-[#0071E3]/10 px-2.5 py-0.5 rounded-full">
-                {filteredSales.length} فاتورة
-              </span>
-            </h2>
-            <p className="text-xs text-[#86868B] mt-0.5">
-              انقر على «تعديل» لتغيير الأصناف أو الأسعار أو العميل، أو انقر على طريقة الدفع لتبديلها فوراً
-            </p>
-          </div>
-
-          <div className="relative w-full md:w-80">
+        {/* Row 3: Comprehensive Search Input & Active Filter Badges */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-black/[0.04]">
+          <div className="relative flex-1">
             <input
               type="text"
-              placeholder="ابحث برقم الفاتورة، اسم العطر، العميل، أو الهاتف..."
+              placeholder="ابحث برقم الفاتورة، اسم الموظف البائع، العميل، الهاتف، أو العطر..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full h-10 pr-9 pl-8 rounded-xl bg-white border border-black/[0.1] focus:border-[#0071E3] text-xs font-medium text-[#1D1D1F] outline-none transition-all"
@@ -691,11 +991,53 @@ ${itemsLines}
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#86868B] hover:text-[#1D1D1F]"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#86868B] hover:text-[#1D1D1F] cursor-pointer"
               >
                 <X size={13} />
               </button>
             )}
+          </div>
+
+          {(searchTerm || employeeFilter !== 'all' || paymentFilter !== 'all' || statusFilter !== 'all' || timeRange !== 'all') && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setEmployeeFilter('all');
+                setPaymentFilter('all');
+                setStatusFilter('all');
+                setTimeRange('all');
+              }}
+              className="text-xs text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0"
+            >
+              <X size={13} />
+              <span>مسح كافة الفلاتر</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ======================================================== */}
+      {/* INVOICES LOG TABLE WITH FULL INTERACTIVE CONTROL         */}
+      {/* ======================================================== */}
+      <div className="apple-glass-card rounded-[28px] p-4 sm:p-6 space-y-4 border border-black/[0.07] shadow-apple-sm">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3.5 border-b border-black/[0.06]">
+          <div>
+            <h2 className="text-base sm:text-lg font-black text-[#1D1D1F] flex items-center gap-2 flex-wrap">
+              <span>سجل الفواتير والعمليات المعتمدة</span>
+              <span className="text-xs font-mono font-bold text-[#0071E3] bg-[#0071E3]/10 px-2.5 py-0.5 rounded-full">
+                {filteredSales.length} فاتورة
+              </span>
+              {employeeFilter !== 'all' && (
+                <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full flex items-center gap-1 border border-slate-200">
+                  <User size={11} className="text-[#0071E3]" />
+                  <span>الموظف: {employeeFilter}</span>
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-[#86868B] mt-0.5">
+              انقر على «تفاصيل» لعرض الإيصال والموظف، أو «تعديل» لتغيير الأصناف والعميل، أو انقر على طريقة السداد لتبديلها
+            </p>
           </div>
         </div>
 
@@ -703,30 +1045,49 @@ ${itemsLines}
           <div className="py-14 text-center text-[#86868B] space-y-2.5">
             <FileText size={36} className="mx-auto text-[#AEAEB2] stroke-1" />
             <p className="text-sm font-bold text-[#1D1D1F]">
-              {timeRange === 'today'
+              {searchTerm || employeeFilter !== 'all' || paymentFilter !== 'all' || statusFilter !== 'all'
+                ? 'لا توجد فواتير تطابق شروط البحث أو الفلاتر المحددة'
+                : timeRange === 'today'
                 ? 'لا توجد بيانات مبيعات فعلية مسجلة لهذا اليوم'
                 : 'لا توجد بيانات مبيعات فعلية مسجلة في هذه الفترة'}
             </p>
             <p className="text-xs text-[#86868B]">
-              لا تظهر نتائج مالية إلا من البيانات الفعلية المسجلة (Test Data ≠ Production Data)
+              جرّب تغيير فترة العرض أو مسح الفلاتر لعرض كافة فواتير المتجر
             </p>
+            {(searchTerm || employeeFilter !== 'all' || paymentFilter !== 'all' || statusFilter !== 'all' || timeRange !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setEmployeeFilter('all');
+                  setPaymentFilter('all');
+                  setStatusFilter('all');
+                  setTimeRange('all');
+                }}
+                className="apple-btn px-4 py-2 rounded-xl bg-[#0071E3] text-white text-xs font-bold cursor-pointer"
+              >
+                مسح الفلاتر وعرض الكل
+              </button>
+            )}
           </div>
         ) : (
           <>
-            {/* Mobile View: Interactive Invoice Cards */}
-            <div className="md:hidden space-y-3">
+            {/* View Mode 1: Mobile Cards OR Desktop Cards Mode */}
+            <div className={`${viewMode === 'cards' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5' : 'md:hidden space-y-3'}`}>
               {filteredSales.map((sale) => {
                 const totalSaleGrams = (sale.items || []).reduce((s, i) => s + (i.essenceGrams || 0), 0);
                 const totalSaleBottles = (sale.items || []).reduce((s, i) => s + (i.quantity || 1), 0);
+                const cleanEmp = sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق';
                 return (
                   <div
                     key={sale.id}
                     className={`p-4 rounded-2xl border space-y-3 transition-all ${
                       sale.isReversed
                         ? 'bg-rose-50/40 border-rose-200 opacity-75'
-                        : 'bg-white border-black/[0.07] shadow-apple-xs'
+                        : 'bg-white border-black/[0.07] shadow-apple-xs hover:border-[#0071E3]/30'
                     }`}
                   >
+                    {/* Top Row: Invoice ID, Date, Total */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-black text-xs text-[#0071E3] bg-[#0071E3]/10 px-2 py-0.5 rounded-lg">
@@ -742,6 +1103,29 @@ ${itemsLines}
                       </span>
                     </div>
 
+                    {/* Dedicated Employee Attribution Banner (Key user requirement!) */}
+                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-gradient-to-l from-blue-50/80 to-indigo-50/40 border border-blue-200/60 text-xs">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-6 h-6 rounded-full bg-[#0071E3] text-white flex items-center justify-center font-black text-[10px] shadow-2xs shrink-0">
+                          {cleanEmp.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[9.5px] text-[#86868B] block font-medium">الموظف البائع (الكاشير):</span>
+                          <strong className="text-xs font-black text-[#1D1D1F] truncate block">
+                            {cleanEmp}
+                          </strong>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEmployeeFilter(cleanEmp)}
+                        className="px-2 py-0.5 rounded-lg bg-white border border-blue-200 text-[#0071E3] text-[10px] font-bold hover:bg-blue-50 transition-colors shrink-0 cursor-pointer"
+                        title={`تصفية فواتير ${cleanEmp}`}
+                      >
+                        فواتيره 🔍
+                      </button>
+                    </div>
+
                     {/* All Items in Invoice */}
                     <div className="space-y-1 bg-[#F5F5F7] p-2.5 rounded-xl">
                       {(sale.items || []).map((it, idx) => (
@@ -751,9 +1135,14 @@ ${itemsLines}
                             <span className="text-[10px] font-normal text-[#636366]">
                               ({it.bottleSize} مل × {it.quantity || 1} · {it.essenceGrams} جم)
                             </span>
+                            {it.isMix && (
+                              <span className="mr-1 px-1 py-0.2 rounded bg-amber-100 text-amber-900 text-[9px] font-bold">
+                                ميكس
+                              </span>
+                            )}
                           </span>
                           <span className="font-mono font-bold text-[#1D1D1F]">
-                            {it.sellingPrice} {settings.currency}
+                            {it.sellingPrice * (it.quantity || 1)} {settings.currency}
                           </span>
                         </div>
                       ))}
@@ -770,6 +1159,7 @@ ${itemsLines}
                         </span>
                       )}
                     </div>
+
                     {sale.isReversed && (
                       <div className="px-2.5 py-1.5 rounded-xl bg-rose-100/80 border border-rose-200 text-[11px] font-bold text-rose-800 flex items-center justify-between">
                         <span>⚠️ ملغاة بقيد عكسي: {sale.reversalReason || 'إلغاء فاتورة'}</span>
@@ -789,11 +1179,21 @@ ${itemsLines}
                       </button>
 
                       <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSale(sale)}
+                          className="px-2.5 py-1 rounded-lg bg-[#0071E3]/10 text-[#0071E3] hover:bg-[#0071E3] hover:text-white text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                          title="عرض تفاصيل الفاتورة والموظف"
+                        >
+                          <Eye size={12} />
+                          <span>تفاصيل</span>
+                        </button>
                         {onUpdateSale && (
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(sale)}
-                            className="px-2.5 py-1 rounded-lg bg-[#0071E3]/10 text-[#0071E3] text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                            className="px-2 py-1 rounded-lg bg-black/[0.05] hover:bg-black/[0.1] text-[#1D1D1F] text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                            title="تعديل الفاتورة"
                           >
                             <Edit3 size={12} />
                             <span>تعديل</span>
@@ -802,7 +1202,8 @@ ${itemsLines}
                         <button
                           type="button"
                           onClick={() => setSelectedSale(sale)}
-                          className="px-2.5 py-1 rounded-lg bg-[#1D1D1F] text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          className="px-2 py-1 rounded-lg bg-[#1D1D1F] text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          title="طباعة حرارية"
                         >
                           <Printer size={12} />
                           <span>طباعة</span>
@@ -810,7 +1211,7 @@ ${itemsLines}
                         <button
                           type="button"
                           onClick={() => handleCopyInvoice(sale)}
-                          className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 cursor-pointer"
+                          className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer"
                           title="نسخ واتساب"
                         >
                           {copiedInvoiceId === sale.id ? <Check size={13} /> : <Share2 size={13} />}
@@ -835,196 +1236,238 @@ ${itemsLines}
               })}
             </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto rounded-2xl border border-black/[0.06] bg-white">
-              <table className="w-full text-right text-xs">
-                <thead>
-                  <tr className="bg-[#F5F5F7] border-b border-black/[0.06] text-[#636366] font-bold">
-                    <th className="py-3.5 px-3">رقم الفاتورة</th>
-                    <th className="py-3.5 px-3">التاريخ والوقت</th>
-                    <th className="py-3.5 px-3">الأصناف والتركيبات العطرية</th>
-                    <th className="py-3.5 px-3">العبوات / الزيت</th>
-                    <th className="py-3.5 px-3">العميل</th>
-                    <th className="py-3.5 px-3">طريقة السداد</th>
-                    <th className="py-3.5 px-3">الإجمالي</th>
-                    {showProfitMetrics && (
-                      <th className="py-3.5 px-3">المساهمة المحققة</th>
-                    )}
-                    <th className="py-3.5 px-3 text-left">أدوات التحكم الكامل</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/[0.04]">
-                  {filteredSales.map((sale) => {
-                    const totalSaleGrams = (sale.items || []).reduce((s, i) => s + (i.essenceGrams || 0), 0);
-                    const totalSaleBottles = (sale.items || []).reduce((s, i) => s + (i.quantity || 1), 0);
-                    return (
-                      <tr
-                        key={sale.id}
-                        className={`transition-colors group ${
-                          sale.isReversed ? 'bg-rose-50/40 opacity-75' : 'hover:bg-[#F5F5F7]/60'
-                        }`}
-                      >
-                        <td className="py-3 px-3">
-                          <span className="font-mono font-black text-[#0071E3] block">
-                            #{sale.id.slice(-6)}
-                          </span>
-                          {sale.isReversed && (
-                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 text-[9px] font-black">
-                              ملغاة بقيد عكسي
+            {/* View Mode 2: Desktop Table View */}
+            {viewMode === 'table' && (
+              <div className="hidden md:block overflow-x-auto rounded-2xl border border-black/[0.06] bg-white">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="bg-[#F5F5F7] border-b border-black/[0.06] text-[#636366] font-bold">
+                      <th className="py-3.5 px-3">رقم الفاتورة</th>
+                      <th className="py-3.5 px-3">الموظف البائع</th>
+                      <th className="py-3.5 px-3">التاريخ والوقت</th>
+                      <th className="py-3.5 px-3">الأصناف والتركيبات العطرية</th>
+                      <th className="py-3.5 px-3">العبوات / الزيت</th>
+                      <th className="py-3.5 px-3">العميل</th>
+                      <th className="py-3.5 px-3">طريقة السداد</th>
+                      <th className="py-3.5 px-3">الإجمالي</th>
+                      {showProfitMetrics && (
+                        <th className="py-3.5 px-3">المساهمة المحققة</th>
+                      )}
+                      <th className="py-3.5 px-3 text-left">أدوات التحكم الكامل</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/[0.04]">
+                    {filteredSales.map((sale) => {
+                      const totalSaleGrams = (sale.items || []).reduce((s, i) => s + (i.essenceGrams || 0), 0);
+                      const totalSaleBottles = (sale.items || []).reduce((s, i) => s + (i.quantity || 1), 0);
+                      const cleanEmp = sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق';
+                      return (
+                        <tr
+                          key={sale.id}
+                          className={`transition-colors group ${
+                            sale.isReversed ? 'bg-rose-50/40 opacity-75' : 'hover:bg-[#F5F5F7]/60'
+                          }`}
+                        >
+                          {/* Invoice ID & Status */}
+                          <td className="py-3 px-3">
+                            <span className="font-mono font-black text-[#0071E3] block">
+                              #{sale.id.slice(-6)}
                             </span>
-                          )}
-                          <span className="text-[10px] text-[#86868B] block">
-                            بواسطة: {sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}
-                          </span>
-                        </td>
+                            {sale.isReversed ? (
+                              <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 text-[9px] font-black">
+                                ملغاة بقيد عكسي
+                              </span>
+                            ) : (
+                              <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-[#34C759]/15 text-[#248A3D] text-[9px] font-bold">
+                                معتمدة ✓
+                              </span>
+                            )}
+                          </td>
 
-                        <td className="py-3 px-3 font-mono text-[11px] text-[#636366]">
-                          <span className="block font-bold text-[#1D1D1F]">
-                            {new Date(sale.date).toLocaleDateString('ar-EG')}
-                          </span>
-                          <span>
-                            {new Date(sale.date).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </td>
+                          {/* Dedicated Employee Column (Key user requirement!) */}
+                          <td className="py-3 px-3">
+                            <div 
+                              onClick={() => setEmployeeFilter(cleanEmp)}
+                              title={`انقر لتصفية فواتير ${cleanEmp} فقط`}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-blue-50/80 hover:bg-blue-100/90 border border-blue-200/60 text-[#0071E3] transition-all cursor-pointer group/emp shadow-2xs"
+                            >
+                              <span className="w-5 h-5 rounded-full bg-[#0071E3] text-white text-[10px] font-black flex items-center justify-center shrink-0 shadow-2xs">
+                                {cleanEmp.charAt(0)}
+                              </span>
+                              <span className="font-black text-xs text-[#1D1D1F] group-hover/emp:text-[#0071E3] truncate max-w-[110px]">
+                                {cleanEmp}
+                              </span>
+                              <span className="text-[9px] font-bold text-[#0071E3] opacity-75">
+                                ✓
+                              </span>
+                            </div>
+                          </td>
 
-                        <td className="py-3 px-3 max-w-xs">
-                          <div className="space-y-1">
-                            {(sale.items || []).map((it, idx) => (
-                              <div key={idx} className="space-y-0.5">
-                                <div className="flex items-center gap-1.5 text-xs flex-wrap">
-                                  <span className="font-bold text-[#1D1D1F]">{it.productName}</span>
-                                  <span className="text-[10px] text-[#86868B] font-mono">
-                                    ({it.bottleSize}مل × {it.quantity || 1})
-                                  </span>
-                                  {it.isMix && (
-                                    <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 text-[9px] font-bold border border-amber-200">
-                                      ميكس
+                          {/* Date and Time */}
+                          <td className="py-3 px-3 font-mono text-[11px] text-[#636366]">
+                            <span className="block font-bold text-[#1D1D1F]">
+                              {new Date(sale.date).toLocaleDateString('ar-EG')}
+                            </span>
+                            <span>
+                              {new Date(sale.date).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </td>
+
+                          {/* Items and Formulations */}
+                          <td className="py-3 px-3 max-w-xs">
+                            <div className="space-y-1">
+                              {(sale.items || []).map((it, idx) => (
+                                <div key={idx} className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                                    <span className="font-bold text-[#1D1D1F]">{it.productName}</span>
+                                    <span className="text-[10px] text-[#86868B] font-mono">
+                                      ({it.bottleSize}مل × {it.quantity || 1})
                                     </span>
+                                    {it.isMix && (
+                                      <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 text-[9px] font-bold border border-amber-200">
+                                        ميكس
+                                      </span>
+                                    )}
+                                  </div>
+                                  {it.isMix && it.mixComponents && it.mixComponents.length > 0 && (
+                                    <div className="text-[10px] text-[#636366] pr-1">
+                                      ↳ {it.mixComponents.map(c => `${c.productName} (${c.grams}جم · ${c.percentage}%)`).join(' + ')}
+                                    </div>
                                   )}
                                 </div>
-                                {it.isMix && it.mixComponents && it.mixComponents.length > 0 && (
-                                  <div className="text-[10px] text-[#636366] pr-1">
-                                    ↳ {it.mixComponents.map(c => `${c.productName} (${c.grams}جم · ${c.percentage}%)`).join(' + ')}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                            {sale.discount && sale.discount > 0 ? (
-                              <span className="text-[10px] text-amber-700 font-bold block">
-                                خصم مطبق: -{sale.discount} {settings.currency}
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-3 font-mono">
-                          <span className="font-bold text-[#1D1D1F] block">{totalSaleBottles} عبوة</span>
-                          <span className="text-[10px] text-[#86868B]">{totalSaleGrams} جم زيت</span>
-                        </td>
-
-                        <td className="py-3 px-3">
-                          <span className="font-bold text-[#1D1D1F] block">
-                            {sale.customerName || 'عميل نقدي'}
-                          </span>
-                          {sale.customerPhone && (
-                            <span className="text-[10px] font-mono text-[#86868B] block">
-                              {sale.customerPhone}
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="py-3 px-3">
-                          <button
-                            type="button"
-                            onClick={() => handleQuickSwitchPayment(sale)}
-                            title="انقر لتبديل طريقة الدفع مباشرة"
-                            className="px-2.5 py-1 rounded-xl bg-[#F5F5F7] hover:bg-[#0071E3] hover:text-white text-[11px] font-bold text-[#1D1D1F] transition-all cursor-pointer"
-                          >
-                            {sale.paymentMethod || 'نقدي'} ↻
-                          </button>
-                        </td>
-
-                        <td className="py-3 px-3 font-mono font-black text-sm text-[#1D1D1F]">
-                          {sale.totalPrice.toLocaleString('ar-EG')} {settings.currency}
-                        </td>
-
-                        {showProfitMetrics && (
-                          <td className="py-3 px-3 font-mono font-black text-[#248A3D]">
-                            +{sale.totalProfit.toFixed(0)} {settings.currency}
+                              ))}
+                              {sale.discount && sale.discount > 0 ? (
+                                <span className="text-[10px] text-amber-700 font-bold block">
+                                  خصم مطبق: -{sale.discount} {settings.currency}
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
-                        )}
 
-                        <td className="py-3 px-3 text-left">
-                          <div className="flex items-center justify-end gap-1">
-                            {onUpdateSale && (
+                          {/* Bottles and Essence Grams */}
+                          <td className="py-3 px-3 font-mono">
+                            <span className="font-bold text-[#1D1D1F] block">{totalSaleBottles} عبوة</span>
+                            <span className="text-[10px] text-[#86868B]">{totalSaleGrams} جم زيت</span>
+                          </td>
+
+                          {/* Customer */}
+                          <td className="py-3 px-3">
+                            <span className="font-bold text-[#1D1D1F] block">
+                              {sale.customerName || 'عميل نقدي'}
+                            </span>
+                            {sale.customerPhone && (
+                              <span className="text-[10px] font-mono text-[#86868B] block">
+                                {sale.customerPhone}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Payment Method Switcher */}
+                          <td className="py-3 px-3">
+                            <button
+                              type="button"
+                              onClick={() => handleQuickSwitchPayment(sale)}
+                              title="انقر لتبديل طريقة الدفع مباشرة"
+                              className="px-2.5 py-1 rounded-xl bg-[#F5F5F7] hover:bg-[#0071E3] hover:text-white text-[11px] font-bold text-[#1D1D1F] transition-all cursor-pointer"
+                            >
+                              {sale.paymentMethod || 'نقدي'} ↻
+                            </button>
+                          </td>
+
+                          {/* Total Net */}
+                          <td className="py-3 px-3 font-mono font-black text-sm text-[#1D1D1F]">
+                            {sale.totalPrice.toLocaleString('ar-EG')} {settings.currency}
+                          </td>
+
+                          {/* Profit */}
+                          {showProfitMetrics && (
+                            <td className="py-3 px-3 font-mono font-black text-[#248A3D]">
+                              +{sale.totalProfit.toFixed(0)} {settings.currency}
+                            </td>
+                          )}
+
+                          {/* Action Tools */}
+                          <td className="py-3 px-3 text-left">
+                            <div className="flex items-center justify-end gap-1">
                               <button
                                 type="button"
-                                onClick={() => handleOpenEditModal(sale)}
+                                onClick={() => setSelectedSale(sale)}
                                 className="px-2.5 py-1.5 rounded-xl bg-[#0071E3]/10 hover:bg-[#0071E3] text-[#0071E3] hover:text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
-                                title="تعديل الفاتورة والأصناف والأسعار"
+                                title="عرض تفاصيل الفاتورة والموظف بالكامل"
                               >
-                                <Edit3 size={13} />
-                                <span>تعديل</span>
+                                <Eye size={13} />
+                                <span>تفاصيل</span>
                               </button>
-                            )}
 
-                            {onDuplicateSale && (
+                              {onUpdateSale && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditModal(sale)}
+                                  className="p-1.5 rounded-xl text-[#636366] hover:bg-black/[0.06] hover:text-[#1D1D1F] transition-colors cursor-pointer"
+                                  title="تعديل الفاتورة والأصناف"
+                                >
+                                  <Edit3 size={14} />
+                                </button>
+                              )}
+
+                              {onDuplicateSale && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const dup: Sale = {
+                                      ...sale,
+                                      id: Date.now().toString(),
+                                      date: new Date().toISOString(),
+                                    };
+                                    onDuplicateSale(dup);
+                                  }}
+                                  className="p-1.5 rounded-xl text-[#636366] hover:bg-black/[0.06] hover:text-[#1D1D1F] transition-colors cursor-pointer"
+                                  title="تكرار الفاتورة بنفس الأصناف"
+                                >
+                                  <Copy size={14} />
+                                </button>
+                              )}
+
                               <button
                                 type="button"
-                                onClick={() => {
-                                  const dup: Sale = {
-                                    ...sale,
-                                    id: Date.now().toString(),
-                                    date: new Date().toISOString(),
-                                  };
-                                  onDuplicateSale(dup);
-                                }}
-                                className="p-1.5 rounded-xl text-[#636366] hover:bg-black/[0.06] hover:text-[#1D1D1F] transition-colors cursor-pointer"
-                                title="تكرار الفاتورة بنفس الأصناف"
+                                onClick={() => handleCopyInvoice(sale)}
+                                className="p-1.5 rounded-xl text-[#248A3D] hover:bg-[#34C759]/12 transition-colors cursor-pointer"
+                                title="نسخ تفاصيل الفاتورة للواتساب"
                               >
-                                <Copy size={14} />
+                                {copiedInvoiceId === sale.id ? <Check size={14} /> : <Share2 size={14} />}
                               </button>
-                            )}
 
-                            <button
-                              type="button"
-                              onClick={() => handleCopyInvoice(sale)}
-                              className="p-1.5 rounded-xl text-[#248A3D] hover:bg-[#34C759]/12 transition-colors cursor-pointer"
-                              title="نسخ تفاصيل الفاتورة للواتساب"
-                            >
-                              {copiedInvoiceId === sale.id ? <Check size={14} /> : <Share2 size={14} />}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setSelectedSale(sale)}
-                              className="p-1.5 rounded-xl text-[#1D1D1F] hover:bg-black/[0.06] transition-colors cursor-pointer"
-                              title="عرض وطباعة الفاتورة الحرارية"
-                            >
-                              <Printer size={14} />
-                            </button>
-
-                            {onDeleteSale && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setRestoreStockOnDelete(true);
-                                  setSaleToDelete(sale);
-                                }}
-                                className="p-1.5 rounded-xl text-[#FF3B30] hover:bg-red-50 transition-colors cursor-pointer"
-                                title="استرجاع أو حذف الفاتورة"
+                                onClick={() => setSelectedSale(sale)}
+                                className="p-1.5 rounded-xl text-[#1D1D1F] hover:bg-black/[0.06] transition-colors cursor-pointer"
+                                title="طباعة الفاتورة الحرارية"
                               >
-                                <Trash2 size={14} />
+                                <Printer size={14} />
                               </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+
+                              {onDeleteSale && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRestoreStockOnDelete(true);
+                                    setSaleToDelete(sale);
+                                  }}
+                                  className="p-1.5 rounded-xl text-[#FF3B30] hover:bg-red-50 transition-colors cursor-pointer"
+                                  title="استرجاع أو حذف الفاتورة"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1109,8 +1552,8 @@ ${itemsLines}
             </div>
 
             <form onSubmit={handleSaveEditedSale} className="space-y-4 text-xs">
-              {/* Customer & Payment Method */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Customer, Employee & Payment Method */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                   <label className="font-bold text-[#1D1D1F] block mb-1">اسم العميل:</label>
                   <input
@@ -1120,6 +1563,24 @@ ${itemsLines}
                     placeholder="عميل نقدي..."
                     className="w-full h-10 px-3 rounded-xl bg-[#F5F5F7] border border-black/[0.08] font-medium outline-none focus:bg-white focus:border-[#0071E3]"
                   />
+                </div>
+                <div>
+                  <label className="font-bold text-[#1D1D1F] block mb-1">الموظف البائع (الكاشير):</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      list="edit-employees-list"
+                      value={editEmployeeName}
+                      onChange={(e) => setEditEmployeeName(e.target.value)}
+                      placeholder="اسم الموظف..."
+                      className="w-full h-10 px-3 rounded-xl bg-[#F5F5F7] border border-black/[0.08] font-bold text-[#0071E3] outline-none focus:bg-white focus:border-[#0071E3]"
+                    />
+                    <datalist id="edit-employees-list">
+                      {availableEmployees.map((emp) => (
+                        <option key={emp} value={emp} />
+                      ))}
+                    </datalist>
+                  </div>
                 </div>
                 <div>
                   <label className="font-bold text-[#1D1D1F] block mb-1">رقم الهاتف (واتساب):</label>

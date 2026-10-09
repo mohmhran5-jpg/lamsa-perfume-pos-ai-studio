@@ -40,6 +40,7 @@ import {
   Bluetooth,
   Zap,
   Radio,
+  User,
 } from 'lucide-react';
 
 export interface ThermalReceiptLiveViewProps {
@@ -269,9 +270,9 @@ export const ThermalReceiptLiveView: React.FC<ThermalReceiptLiveViewProps> = ({
             </div>
           )}
 
-          {design.showCashierName && (
+          {(design.showCashierName ?? true) && (
             <div className="flex items-center justify-between gap-1">
-              <span className="opacity-70">الكاشير:</span>
+              <span className="opacity-70 font-semibold">الموظف (الكاشير):</span>
               <span className="font-bold truncate">{sale.employeeName || 'طارق'}</span>
             </div>
           )}
@@ -702,6 +703,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
     if (draftDesign.showInvoiceNumber) {
       lines.push(`🔢 رقم الفاتورة: #${sale.id.slice(-6)}`);
     }
+    lines.push(`👤 الموظف المسؤول (الكاشير): ${sale.employeeName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}`);
     lines.push(``);
     lines.push(`🛍️ *تفاصيل المشتريات:*`);
     lines.push(itemsList);
@@ -1726,25 +1728,53 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                     </span>
                   </div>
 
+                  {/* Dedicated Employee Attribution Banner */}
+                  <div className="p-2.5 rounded-xl bg-gradient-to-l from-blue-50/80 via-indigo-50/50 to-white border border-blue-200/70 flex items-center justify-between shadow-2xs">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-[#0071E3] text-white flex items-center justify-center font-black text-xs shadow-2xs shrink-0">
+                        <User size={15} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-[#0071E3]">الموظف الذي قام بالبيع:</span>
+                          <span className="px-1.5 py-0.2 rounded-md bg-[#34C759]/15 text-[#248A3D] text-[9px] font-black">
+                            معتمد ✓
+                          </span>
+                        </div>
+                        <strong className="text-xs font-black text-[#1D1D1F] block truncate">
+                          {sale.employeeName || 'طارق'}
+                        </strong>
+                      </div>
+                    </div>
+                    <div className="text-left shrink-0">
+                      <span className="text-[10px] font-bold text-[#636366] block">
+                        مسؤول الكاشير
+                      </span>
+                      <span className="text-[11px] font-black text-[#0071E3] font-mono">
+                        {sale.paymentMethod || 'نقدي'}
+                      </span>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                     <div className="p-2 rounded-xl bg-white border border-black/[0.05]">
                       <span className="text-[9.5px] text-[#86868B] block">رقم الفاتورة والتوقيت</span>
-                      <strong className="font-mono text-[#1D1D1F] block mt-0.5">
+                      <strong className="font-mono text-[#1D1D1F] block mt-0.5 truncate">
                         #{sale.id.slice(-6)} · {formattedTime}
                       </strong>
                     </div>
 
                     <div className="p-2 rounded-xl bg-white border border-black/[0.05]">
-                      <span className="text-[9.5px] text-[#86868B] block">مسؤول المبيعات والدفع</span>
-                      <strong className="text-[#1D1D1F] block mt-0.5 truncate">
-                        {sale.employeeName || 'طارق'} · {sale.paymentMethod || 'نقدي'}
+                      <span className="text-[9.5px] text-[#86868B] block">الموظف البائع</span>
+                      <strong className="text-[#1D1D1F] block mt-0.5 truncate font-black text-[#0071E3]">
+                        {sale.employeeName || 'طارق'}
                       </strong>
                     </div>
 
                     <div className="p-2 rounded-xl bg-white border border-black/[0.05]">
-                      <span className="text-[9.5px] text-[#86868B] block">إجمالي العبوات والزيوت</span>
-                      <strong className="font-mono text-[#1D1D1F] block mt-0.5">
-                        {totalModalBottles} عبوة ({totalModalGrams} جم)
+                      <span className="text-[9.5px] text-[#86868B] block">طريقة السداد والعبوات</span>
+                      <strong className="text-[#1D1D1F] block mt-0.5 truncate font-mono">
+                        {sale.paymentMethod || 'نقدي'} · {totalModalBottles} عبوة
                       </strong>
                     </div>
 

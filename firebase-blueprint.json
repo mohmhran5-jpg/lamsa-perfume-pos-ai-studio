@@ -268,9 +268,30 @@
         "appVersion": { "type": "string" }
       },
       "required": ["deviceId", "userName", "lastSeenMs"]
+    },
+    "OwnerStaffBroadcast": {
+      "title": "OwnerStaffBroadcast",
+      "description": "Real-time owner direct broadcasts and staff directives",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "category": { "type": "string" },
+        "senderName": { "type": "string" },
+        "targetEmployee": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "requiresAcknowledgement": { "type": "boolean" },
+        "acknowledgedBy": { "type": "array" }
+      },
+      "required": ["id", "title", "message", "category", "senderName", "createdAt"]
     }
   },
   "firestore": {
+    "/owner_broadcasts/{broadcastId}": {
+      "schema": "OwnerStaffBroadcast",
+      "description": "Collection of owner directives and staff broadcasts"
+    },
     "/connected_devices/{deviceId}": {
       "schema": "ConnectedDevice",
       "description": "Real-time presence and heartbeats of active terminals"
