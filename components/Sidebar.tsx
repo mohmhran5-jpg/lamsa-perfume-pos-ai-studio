@@ -746,11 +746,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               type="button"
               onClick={onOpenLiveAlertsRadar}
               className="apple-btn w-full flex items-center justify-between px-2.5 py-2 rounded-xl bg-amber-500/12 hover:bg-amber-500/22 border border-amber-500/35 text-[11px] font-black text-amber-950 transition-all cursor-pointer shadow-2xs"
-              title="رادار تنبيهات المالك المباشرة للمبيعات والعمليات"
+              title="رادار التنبيهات المباشرة للمبيعات والعمليات"
             >
               <span className="flex items-center gap-1.5 truncate">
                 <Bell size={13} className="text-amber-600 fill-amber-500 animate-pulse shrink-0" />
-                <span className="truncate">رادار تنبيهات المالك</span>
+                <span className="truncate">رادار التنبيهات الحية</span>
               </span>
               <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-emerald-600 text-white shrink-0">
                 LIVE 24/7

@@ -171,13 +171,13 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
-                <span>رادار وتوجيهات المالك المباشرة</span>
+                <span>رادار التنبيهات والتزامن الفوري</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono">
                   LIVE 24/7
                 </span>
               </h2>
               <p className="text-xs text-slate-500">
-                إشعارات الموبايل الحية وإرسال توجيهات وتنبيهات فورية للموظفين
+                إشعارات الموبايل الحية والتواصل الذكي الفوري مع فريق العمل
               </p>
             </div>
           </div>

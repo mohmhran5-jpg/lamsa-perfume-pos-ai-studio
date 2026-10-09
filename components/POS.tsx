@@ -101,7 +101,8 @@ import {
   Wifi,
   WifiOff,
   ArrowLeftRight,
-  CheckCheck
+  CheckCheck,
+  ChevronDown
 } from 'lucide-react';
 import { enqueueOfflineAction } from '../services/offlineSyncService';
 import ReceiptModal from './ReceiptModal';
@@ -299,6 +300,7 @@ const POS: React.FC<POSProps> = ({
 
   // Guided Cashier Mode & Streamlined Cart Option Drawer
   const [showCashierGuide, setShowCashierGuide] = useState<boolean>(true);
+  const [isPosToolsOpen, setIsPosToolsOpen] = useState<boolean>(false);
   const [activeCartDrawer, setActiveCartDrawer] = useState<'none' | 'customer' | 'packaging' | 'discount' | 'accounting'>('none');
   const [isCustomerFieldsPulsing, setIsCustomerFieldsPulsing] = useState<boolean>(false);
   const [customerAlertDismissed, setCustomerAlertDismissed] = useState<boolean>(false);
@@ -1531,7 +1533,7 @@ const POS: React.FC<POSProps> = ({
       sellingPrice: mixAccounting.finalSellingPriceEgp,
       totalCost: mixAccounting.unitBottleCostEgp,
       isOwnerApproved: isOwner,
-      approvedBy: isOwner ? currentUser?.displayName || 'د. محمد (المالك)' : undefined,
+      approvedBy: isOwner ? currentUser?.displayName || 'الإدارة العامة' : undefined,
       mixGoal,
       customerRating: libraryCustomerRating,
       testResult: libraryTestResult,
@@ -1543,7 +1545,7 @@ const POS: React.FC<POSProps> = ({
       notes: `ثبات: ${libraryLongevityNotes} · فوحان: ${librarySillageNotes} · توازن: ${libraryBalanceNotes}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      createdBy: currentUser?.displayName || 'د. محمد (المالك)',
+      createdBy: currentUser?.displayName || 'الإدارة العامة',
     };
     onSaveMix(newFormula);
     setShowSaveLibraryModal(false);
@@ -1986,14 +1988,14 @@ const POS: React.FC<POSProps> = ({
         : 'بيع_طبيعي',
       ...(ownerOverrideGranted
         ? {
-            exceptionApprovedBy: 'د. محمد (المالك)',
+            exceptionApprovedBy: 'الإدارة العامة',
             exceptionReason: `${ownerExceptionReason} - ${ownerExceptionNotes}`,
           }
         : {}),
       employeeName: currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || currentUser?.displayName || 'طارق',
       source: 'المتجر',
       notes: ownerOverrideGranted 
-        ? `[استثناء معتمد من المالك: ${ownerExceptionReason}] ${ownerExceptionNotes}` 
+        ? `[استثناء معتمد من الإدارة العامة: ${ownerExceptionReason}] ${ownerExceptionNotes}` 
         : [
             packagingId !== 'basic_bag' ? packagingAccounting.accountingNote : '',
             redeemedLoyaltyPoints > 0 ? `خصم نقاط ولاء فوري: -${loyaltyDiscountAmount} ج.م (${redeemedLoyaltyPoints} نقطة)` : ''
@@ -2008,7 +2010,7 @@ const POS: React.FC<POSProps> = ({
       onAddAuditLog({
         id: `audit-${Date.now()}`,
         timestamp: new Date().toISOString(),
-        user: 'د. محمد (المالك)',
+        user: 'الإدارة العامة',
         action: 'تجاوز حد التكلفة',
         entityType: 'sale',
         entityId: newSale.id,
@@ -2016,7 +2018,7 @@ const POS: React.FC<POSProps> = ({
         oldValue: `تكلفة: ${cartTotalCost} ج.م`,
         newValue: `بيع: ${cartFinalTotal} ج.م (أقل من التكلفة)`,
         reason: `استثناء مصرح: ${ownerExceptionReason} - ${ownerExceptionNotes}`,
-        approvedBy: 'د. محمد (المالك)'
+        approvedBy: 'الإدارة العامة'
       });
     }
 
@@ -2074,50 +2076,56 @@ const POS: React.FC<POSProps> = ({
     <div className="p-3 sm:p-4 lg:p-5 max-w-[1440px] mx-auto space-y-3.5 pb-16 md:pb-10 animate-in fade-in duration-150">
       
       {/* ======================================================== */}
-      {/* EXECUTIVE POS COMMAND BAR (Single-Elevation Contract)    */}
+      {/* EXECUTIVE POS COMMAND BAR (Pure Apple Glass & Halos)     */}
       {/* ======================================================== */}
-      <header className="rounded-2xl px-4 py-3 border border-slate-200/90 bg-white flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-2xs">
+      <header className="rounded-3xl p-3 sm:p-4 apple-glass-card border border-black/[0.07] flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-apple-xs">
         {/* Zone 1: Brand Identity & Active Cashier Context */}
         <div className="flex items-center gap-3 min-w-0">
-          <img 
-            src={settings.logoUrl || "https://l.top4top.io/p_31142jfec0.png"} 
-            alt={settings.storeName} 
-            referrerPolicy="no-referrer"
-            className="w-10 h-10 object-contain bg-slate-50 rounded-xl p-1 border border-slate-200/80 shrink-0" 
-          />
+          <div className="w-11 h-11 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs p-1 flex items-center justify-center shrink-0">
+            <img 
+              src={settings.logoUrl || "https://l.top4top.io/p_31142jfec0.png"} 
+              alt={settings.storeName} 
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-contain rounded-xl" 
+            />
+          </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight truncate">
+              <h1 className="text-sm sm:text-base font-black text-[#1D1D1F] tracking-tight truncate">
                 {settings.storeName}
               </h1>
-              <span aria-hidden="true" className="text-slate-300 hidden sm:inline">·</span>
+              <span aria-hidden="true" className="text-black/20 hidden sm:inline">·</span>
               <span className="text-xs font-semibold text-[#9A6E23] hidden sm:inline truncate">
                 محطة الكاشير والتركيب الفوري
               </span>
             </div>
-            <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5 flex-wrap">
+            <div className="flex items-center gap-2 text-[11px] text-[#86868B] mt-0.5 flex-wrap">
               <span>
                 الكاشير المناوب:{' '}
-                <strong className="text-slate-900">{currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}</strong>
+                <strong className="text-[#1D1D1F] font-bold">{currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}</strong>
               </span>
               <span aria-hidden="true">·</span>
-              <span>{currentTimeInfo.timeLabel}</span>
+              <span className="font-mono">{currentTimeInfo.timeLabel}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-emerald-700 font-semibold">مزامنة فورية نشطة</span>
+              <span className="text-[#34C759] font-bold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] animate-pulse" />
+                مزامنة فورية
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Zone 2: Quick Shift & Operations Navigation */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Zone 2: Apple Glass Action Capsules with Subtle Halos & Consolidated Menu */}
+        <div className="flex flex-wrap items-center gap-2 relative">
+          {/* Shift State Pill */}
           {!isShiftReady ? (
             <button
               type="button"
               onClick={handleStartWork}
-              className="px-3.5 py-2 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              className="apple-pill-btn halo-blue px-3.5 py-2 bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer whitespace-nowrap"
             >
               <Play size={13} className="fill-white" />
-              <span>بدء العمل وفتح الوردية</span>
+              <span>بدء الوردية</span>
             </button>
           ) : (
             <button
@@ -2126,56 +2134,97 @@ const POS: React.FC<POSProps> = ({
                 setIsInitialShiftOpenAlert(false);
                 setShowShortagesModal(true);
               }}
-              className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              className="apple-pill-btn halo-emerald px-3 py-1.5 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              title="الوردية مفتوحة ومسجلة"
             >
-              <CheckCircle2 size={13} className="text-emerald-600" />
+              <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
               <span className="tabular-nums">الوردية مفتوحة ({todayEmployeeAttendance?.checkInTime || 'الآن'})</span>
             </button>
           )}
 
+          {/* Quick Expense */}
           <button
             type="button"
             onClick={() => setIsQuickExpenseModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+            className="apple-pill-btn halo-gold px-3 py-1.5 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
             title="تسجيل مصروف تشغيلي سريع من شاشة الكاشير"
           >
-            <DollarSign size={13} className="text-amber-600" />
-            <span>+ مصروف سريع</span>
+            <DollarSign size={13} className="text-[#C49746]" />
+            <span>+ مصروف</span>
           </button>
 
-          {onNavigateToCustomers && (
-            <button
-              type="button"
-              onClick={onNavigateToCustomers}
-              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-              title="فتح قسم العملاء وملفاتهم التفصيلية ونقاط الولاء"
-            >
-              <Users size={13} className="text-[#9A6E23]" />
-              <span className="tabular-nums">العملاء ({previousCustomers.length})</span>
-            </button>
-          )}
-
-          {onNavigateToInvoices && (
-            <button
-              type="button"
-              onClick={onNavigateToInvoices}
-              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-              title="فتح سجل المبيعات والفواتير والتحكم الكامل"
-            >
-              <Receipt size={13} className="text-[#0071E3]" />
-              <span className="tabular-nums">الفواتير ({salesHistory.length})</span>
-            </button>
-          )}
-
+          {/* New Invoice (Reset Cart) */}
           <button
             type="button"
             onClick={handleQuickNewSale}
-            className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+            className="apple-pill-btn halo-blue px-3 py-1.5 bg-[#1D1D1F] text-white hover:bg-black text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer whitespace-nowrap"
             title="بدء وتصفير فاتورة بيع جديدة فوراً"
           >
             <RotateCcw size={12} className="text-amber-300" />
             <span>فاتورة جديدة</span>
           </button>
+
+          {/* Consolidated Operations Dropdown Menu (دمج العملاء والفواتير لمنع التشتيت) */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsPosToolsOpen(!isPosToolsOpen)}
+              className="apple-pill-btn halo-purple px-3 py-1.5 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer group whitespace-nowrap"
+              title="إجراءات وسجلات إضافية"
+            >
+              <Sparkles size={13} className="text-purple-600" />
+              <span>السجلات</span>
+              <ChevronDown size={12} className={`text-[#86868B] transition-transform ${isPosToolsOpen ? 'rotate-180 text-purple-600' : ''}`} />
+            </button>
+
+            {/* Dropdown Sheets */}
+            {isPosToolsOpen && (
+              <div 
+                className="absolute top-11 left-0 z-40 w-64 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-2.5 space-y-1 animate-in fade-in zoom-in-95 duration-150"
+                dir="rtl"
+              >
+                <span className="text-[10px] font-bold text-[#86868B] px-2.5 py-1 block">الأقسام السريعة المرتبطة:</span>
+
+                {onNavigateToCustomers && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPosToolsOpen(false);
+                      onNavigateToCustomers();
+                    }}
+                    className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-xl bg-amber-100 text-[#9A6E23] flex items-center justify-center shrink-0">
+                      <Users size={14} />
+                    </div>
+                    <div className="text-right">
+                      <span className="block">سجل العملاء والولاء ({previousCustomers.length})</span>
+                      <span className="text-[9.5px] text-[#86868B]">الملفات الشخصية والنقاط</span>
+                    </div>
+                  </button>
+                )}
+
+                {onNavigateToInvoices && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPosToolsOpen(false);
+                      onNavigateToInvoices();
+                    }}
+                    className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-xl bg-blue-100 text-[#0071E3] flex items-center justify-center shrink-0">
+                      <Receipt size={14} />
+                    </div>
+                    <div className="text-right">
+                      <span className="block">سجل الفواتير والمبيعات ({salesHistory.length})</span>
+                      <span className="text-[9.5px] text-[#86868B]">مراجعة وطباعة العمليات</span>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 

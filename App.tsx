@@ -153,7 +153,7 @@ import {
   acknowledgeOwnerBroadcastCloud,
 } from './services/firebase';
 import { getSessionUser, saveSessionUser, canAccessView } from './services/authService';
-import { Lock, Radio, CheckCircle2, X } from 'lucide-react';
+import { Lock, Radio, CheckCircle2, X, Sparkles } from 'lucide-react';
 
 // Seed Data
 const INITIAL_PRODUCTS: Product[] = [
@@ -2990,8 +2990,9 @@ const App: React.FC = () => {
                 </div>
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-black/10 dark:bg-white/10">
-                      📢 توجيه رسمي مباشر من المالك ({activeBroadcastForDisplay.senderName})
+                    <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-black/10 dark:bg-white/10 flex items-center gap-1.5">
+                      <Sparkles size={11} className="text-[#C49746]" />
+                      <span>تنبيه إداري مباشر · {activeBroadcastForDisplay.senderName}</span>
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                       activeBroadcastForDisplay.category === 'urgent'

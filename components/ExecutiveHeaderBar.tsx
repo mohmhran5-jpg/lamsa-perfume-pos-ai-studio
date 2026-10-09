@@ -21,7 +21,6 @@ import {
   Crown, 
   ArrowLeftRight, 
   Lock, 
-  Unlock,
   KeyRound, 
   X, 
   CheckCircle2, 
@@ -45,7 +44,8 @@ import {
   Layers,
   Sparkles,
   LogOut,
-  Sliders
+  Sliders,
+  Store
 } from 'lucide-react';
 import { verifyPassword, normalizePasswordInput, canAccessView } from '../services/authService';
 
@@ -153,9 +153,11 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
   const pinInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
 
-  // Modal & Popover States
+  // Modal & Menu States
   const [isProfilePopoverOpen, setIsProfilePopoverOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
@@ -171,20 +173,21 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   const storeName = settings?.storeName || 'لمسة عطر';
   const logoUrl = settings?.logoUrl || 'https://l.top4top.io/p_31142jfec0.png';
 
-  // Close profile popover when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         setIsProfilePopoverOpen(false);
       }
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(e.target as Node)) {
+        setIsToolsMenuOpen(false);
+      }
     };
-    if (isProfilePopoverOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
+    document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isProfilePopoverOpen]);
+  }, []);
 
   // Compute today's financial & operational metrics
   const todayReportData = useMemo(() => {
@@ -440,7 +443,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
     const normalized = normalizePasswordInput(passwordInput);
     if (!normalized) {
-      setPasswordError('يرجى إدخال رمز المرور الخاص بالمدير العام');
+      setPasswordError('يرجى إدخال رمز المرور الخاص بالإدارة');
       return;
     }
 
@@ -501,7 +504,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     return ([
       { id: View.POS, label: 'الكاشير', icon: ShoppingBag, badge: todayReportData.todaysSalesCount > 0 ? `${todayReportData.todaysSalesCount}` : null },
       { id: View.DASHBOARD, label: 'لوحة القيادة', icon: Sparkles, badge: null },
-      { id: View.INVENTORY, label: 'المخزون', icon: Layers, badge: products.length > 0 ? `${products.length}` : null },
+      { id: View.INVENTORY, label: 'المخزون الخام', icon: Layers, badge: products.length > 0 ? `${products.length}` : null },
       { id: View.REPORTS, label: 'سجل الفواتير', icon: Clock, badge: null },
       { id: View.CUSTOMERS_LOYALTY, label: 'العملاء والولاء', icon: Crown, badge: null },
       { id: View.FORMULATION_ENGINE, label: 'محرك التركيب', icon: Sliders, badge: null },
@@ -512,16 +515,15 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   return (
     <>
       {/* ======================================================== */}
-      {/* PURE APPLE GLASS TOP BAR (FAITHFUL TO USER'S REFERENCE)  */}
-      {/* Capsule Profile + Circular Action Buttons + Status Pill */}
+      {/* PURE APPLE GLASS TOP BAR (ORGANIZED CAPSULES & SMART MENUS)*/}
       {/* ======================================================== */}
       <header
         aria-label="شريط التحكم العلوي"
         className="mx-2.5 sm:mx-4 lg:mx-6 mb-3 select-none"
       >
-        <div className="apple-glass rounded-[28px] border border-black/[0.06] p-2.5 sm:p-3 shadow-apple-xs space-y-2.5">
+        <div className="apple-glass-halo rounded-[28px] p-2.5 sm:p-3 space-y-2.5">
           {/* ---------------------------------------------------- */}
-          {/* ROW 1: BRAND LOGO + PROFILE CAPSULE + ACTION CIRCLES */}
+          {/* ROW 1: BRAND LOGO + PROFILE CAPSULE + LABELED BUTTONS*/}
           {/* ---------------------------------------------------- */}
           <div className="flex items-center justify-between gap-2">
             {/* RIGHT SIDE: Avatar Badge & Profile Capsule Pill */}
@@ -541,11 +543,11 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 />
               </div>
 
-              {/* Signature Profile Capsule Pill (كما في الصورة تماماً) */}
+              {/* Signature Profile Capsule Pill */}
               <button
                 type="button"
                 onClick={() => setIsProfilePopoverOpen(!isProfilePopoverOpen)}
-                className="h-11 sm:h-12 px-3.5 sm:px-4 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-between gap-2.5 sm:gap-3.5 min-w-[155px] sm:min-w-[200px] transition-all cursor-pointer group active:scale-98"
+                className="apple-pill-btn halo-gold h-11 sm:h-12 px-3.5 sm:px-4 min-w-[150px] sm:min-w-[190px] justify-between group"
                 title="إدارة الحساب وتبديل المستخدم"
               >
                 <div className="text-right min-w-0">
@@ -553,7 +555,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                     {isOwner ? 'أهلاً د. محمد' : 'أهلاً طارق'}
                   </div>
                   <div className="text-[10px] text-[#86868B] font-medium truncate mt-0.5 leading-none">
-                    {isOwner ? 'المدير العام (المالك)' : (currentUser?.phone || '01008518800 · كاشير')}
+                    {isOwner ? 'الإدارة العامة' : (currentUser?.phone || '01008518800 · كاشير')}
                   </div>
                 </div>
                 <ChevronDown 
@@ -583,7 +585,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] shrink-0" />
                       </div>
                       <span className="text-[11px] text-[#86868B] block truncate">
-                        {isOwner ? 'كامل صلاحيات الإدارة والمالك' : 'مسؤول المبيعات وتشغيل الكاشير'}
+                        {isOwner ? 'كامل صلاحيات الإدارة العامة' : 'مسؤول المبيعات وتشغيل الكاشير'}
                       </span>
                     </div>
                   </div>
@@ -600,7 +602,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         <div className="flex items-center gap-2">
                           <span className="w-7 h-7 rounded-full bg-blue-100 text-[#0071E3] flex items-center justify-center text-xs font-black">ط</span>
                           <div className="text-right">
-                            <span className="block font-bold">التبديل إلى حساب طارق</span>
+                            <span className="block font-bold">حساب طارق</span>
                             <span className="text-[9.5px] text-[#86868B]">كاشير ومبيعات مباشر</span>
                           </div>
                         </div>
@@ -615,8 +617,8 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         <div className="flex items-center gap-2">
                           <Crown size={15} className="text-[#C49746] fill-[#C49746]" />
                           <div className="text-right">
-                            <span className="block text-amber-300 font-bold">دخول المدير العام (د. محمد)</span>
-                            <span className="text-[9.5px] text-zinc-400">يتطلب رمز المرور السري</span>
+                            <span className="block text-amber-300 font-bold">دخول الإدارة العامة</span>
+                            <span className="text-[9.5px] text-zinc-400">رمز المرور السري</span>
                           </div>
                         </div>
                         <Lock size={13} className="text-[#C49746]" />
@@ -626,7 +628,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
                   {/* Quick Controls Grid */}
                   <div className="grid grid-cols-2 gap-2 pt-1 border-t border-black/[0.05]">
-                    {/* Lock Screen */}
                     {onLockScreen && (
                       <button
                         type="button"
@@ -641,7 +642,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                       </button>
                     )}
 
-                    {/* Numeral System Toggle */}
                     {onUpdateSettings && (
                       <button
                         type="button"
@@ -653,52 +653,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer font-mono"
                       >
                         <span>{settings?.siteNumeralSystem === 'ar' ? 'الأرقام: ١٢٣' : 'Numbers: 123'}</span>
-                      </button>
-                    )}
-
-                    {/* Daily Report Automation */}
-                    {isOwner && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfilePopoverOpen(false);
-                          if (onOpenDailyReportAutomation) onOpenDailyReportAutomation();
-                          else setShowDailyReportModal(true);
-                        }}
-                        className="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer col-span-2"
-                      >
-                        <FileText size={13} />
-                        <span>تصدير تقرير اليوم (.TXT)</span>
-                      </button>
-                    )}
-
-                    {/* Connected Devices */}
-                    {onOpenConnectedDevices && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfilePopoverOpen(false);
-                          onOpenConnectedDevices();
-                        }}
-                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Radio size={12} className="text-emerald-600" />
-                        <span>الأجهزة ({connectedDevicesCount})</span>
-                      </button>
-                    )}
-
-                    {/* Theme Studio */}
-                    {onOpenThemeStudio && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfilePopoverOpen(false);
-                          onOpenThemeStudio();
-                        }}
-                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Palette size={12} className="text-purple-600" />
-                        <span>الثيمات</span>
                       </button>
                     )}
                   </div>
@@ -721,108 +675,209 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               )}
             </div>
 
-            {/* LEFT SIDE: Trio of Perfect Circular Glass Action Buttons (كما في الصورة) */}
+            {/* LEFT SIDE: Labeled Capsule Buttons with Soft Chromatic Halos */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              {/* 1. Search Circle Button */}
+              {/* 1. Labeled Search Capsule */}
               <button
                 type="button"
                 onClick={() => setIsSearchModalOpen(true)}
-                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center text-[#1D1D1F] active:scale-95 transition-all cursor-pointer"
+                className="apple-pill-btn halo-gold h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F]"
                 title="بحث ذكي في العطور والتركيبات"
               >
-                <Search size={18} strokeWidth={1.8} />
+                <Search size={15} className="text-[#C49746] shrink-0" strokeWidth={2} />
+                <span className="hidden sm:inline">بحث العطور</span>
               </button>
 
-              {/* 2. Cart / POS Circle Button */}
+              {/* 2. Labeled Cart / POS Capsule */}
               <button
                 type="button"
                 onClick={() => onNavigate?.(View.POS)}
-                className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center active:scale-95 transition-all cursor-pointer relative ${currentView === View.POS ? 'ring-2 ring-[#0071E3] text-[#0071E3]' : 'text-[#1D1D1F]'}`}
+                className={`apple-pill-btn halo-blue h-11 px-3 sm:px-3.5 text-xs font-bold relative ${currentView === View.POS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
                 title="الكاشير والمبيعات"
               >
-                <ShoppingBag size={18} strokeWidth={1.8} />
+                <ShoppingBag size={15} className={currentView === View.POS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
+                <span>الكاشير</span>
                 {todayReportData.todaysSalesCount > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[19px] h-[19px] px-1 rounded-full bg-[#0071E3] text-white text-[10px] font-mono font-black flex items-center justify-center shadow-2xs border-2 border-white">
+                  <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[9.5px] font-mono font-black flex items-center justify-center ${currentView === View.POS ? 'bg-white text-[#0071E3]' : 'bg-[#0071E3] text-white shadow-2xs'}`}>
                     {todayReportData.todaysSalesCount}
                   </span>
                 )}
               </button>
 
-              {/* 3. Notification Bell Circle Button */}
+              {/* 3. Labeled Notifications Capsule */}
               <button
                 type="button"
                 onClick={onOpenLiveAlertsRadar}
-                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center text-[#1D1D1F] active:scale-95 transition-all cursor-pointer relative"
+                className="apple-pill-btn halo-emerald h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
                 title="رادار التنبيهات والتزامن الحي"
               >
-                <Bell size={18} strokeWidth={1.8} />
-                <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse" />
+                <Bell size={15} className="text-[#34C759] shrink-0" strokeWidth={2} />
+                <span className="hidden sm:inline">التنبيهات</span>
+                <span className="w-2 h-2 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse shrink-0" />
               </button>
+
+              {/* 4. CONSOLIDATED TOOLS MENU CAPSULE (دمج الأزرار في قائمة موحدة لمنع الزحام) */}
+              <div className="relative" ref={toolsMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsToolsMenuOpen(!isToolsMenuOpen)}
+                  className="apple-pill-btn halo-purple h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] group"
+                  title="قائمة الأدوات السريعة للمتجر"
+                >
+                  <Sparkles size={14} className="text-purple-600 shrink-0" />
+                  <span className="hidden sm:inline">الأدوات</span>
+                  <ChevronDown size={13} className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform ${isToolsMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Dropdown Tools Sheet */}
+                {isToolsMenuOpen && (
+                  <div 
+                    className="absolute top-14 left-0 z-50 w-64 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-2.5 space-y-1 animate-in fade-in zoom-in-95 duration-150"
+                    dir="rtl"
+                  >
+                    <span className="text-[10px] font-bold text-[#86868B] px-2.5 py-1 block">الأدوات والإعدادات المدمجة:</span>
+
+                    {/* Theme Studio */}
+                    {onOpenThemeStudio && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsMenuOpen(false);
+                          onOpenThemeStudio();
+                        }}
+                        className="w-full px-3 py-2 rounded-2xl hover:bg-purple-50 text-[#1D1D1F] hover:text-purple-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                      >
+                        <div className="w-7 h-7 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                          <Palette size={14} />
+                        </div>
+                        <div className="text-right">
+                          <span className="block">استوديو الثيمات والخطوط</span>
+                          <span className="text-[9.5px] text-[#86868B]">تخصيص الألوان والمظهر</span>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* Connected Devices */}
+                    {onOpenConnectedDevices && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsMenuOpen(false);
+                          onOpenConnectedDevices();
+                        }}
+                        className="w-full px-3 py-2 rounded-2xl hover:bg-emerald-50 text-[#1D1D1F] hover:text-emerald-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                      >
+                        <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                          <Radio size={14} />
+                        </div>
+                        <div className="text-right">
+                          <span className="block">الأجهزة المتصلة ({connectedDevicesCount})</span>
+                          <span className="text-[9.5px] text-[#86868B]">تزامن فوري بين الشاشات</span>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* Daily Report TXT */}
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsMenuOpen(false);
+                          if (onOpenDailyReportAutomation) onOpenDailyReportAutomation();
+                          else setShowDailyReportModal(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                      >
+                        <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                          <FileText size={14} />
+                        </div>
+                        <div className="text-right">
+                          <span className="block">تصدير تقرير اليوم (.TXT)</span>
+                          <span className="text-[9.5px] text-[#86868B]">ملخص المبيعات والأرباح</span>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* PWA Install */}
+                    {onOpenPWAInstall && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsMenuOpen(false);
+                          onOpenPWAInstall();
+                        }}
+                        className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                      >
+                        <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                          <Download size={14} />
+                        </div>
+                        <div className="text-right">
+                          <span className="block">تثبيت التطبيق على الجهاز</span>
+                          <span className="text-[9.5px] text-[#86868B]">نسخة سطح المكتب والموبايل</span>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* Screen Lock */}
+                    {onLockScreen && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsMenuOpen(false);
+                          onLockScreen();
+                        }}
+                        className="w-full px-3 py-2 rounded-2xl hover:bg-slate-100 text-[#1D1D1F] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border-t border-black/[0.04] mt-1 pt-2"
+                      >
+                        <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                          <Lock size={14} />
+                        </div>
+                        <div className="text-right">
+                          <span className="block">قفل الشاشة السريع</span>
+                          <span className="text-[9.5px] text-[#86868B]">حماية الخصوصية</span>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* ---------------------------------------------------- */}
-          {/* ROW 2: STATUS CAPSULE STRIP + HISTORY CLOCK CIRCLE  */}
-          {/* (مطابق تماماً للشريط الثانوي في الصورة)             */}
+          {/* ROW 2: STORE SHIFT CAPSULE + INVOICES LOG BUTTON    */}
           {/* ---------------------------------------------------- */}
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-black/[0.04]">
-            {/* RIGHT SIDE: Store Branch & Shift Capsule (كما في الصورة "من فضلك اختر عنوان ⌄") */}
+            {/* RIGHT SIDE: Store Branch & Shift Capsule */}
             <button
               type="button"
               onClick={onOpenDayOperations}
-              className="h-9 px-3.5 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center gap-2 transition-all cursor-pointer text-xs group active:scale-98 max-w-[70%] sm:max-w-none"
+              className="apple-pill-btn halo-emerald h-9 px-3.5 text-xs font-bold text-[#1D1D1F] max-w-[70%] sm:max-w-none"
               title="فتح وإغلاق اليوم والدرج"
             >
+              <Store size={13} className="text-emerald-600 shrink-0" />
               <span className={`w-2 h-2 rounded-full shrink-0 ${currentClosure?.status === 'مفتوح' ? 'bg-[#34C759] animate-pulse' : 'bg-rose-500'}`} />
-              <span className="font-bold text-[#1D1D1F] truncate text-[11px] sm:text-xs">
+              <span className="truncate text-[11px] sm:text-xs">
                 {currentClosure?.status === 'مفتوح'
                   ? 'فرع لمسة عطر الرئيسي · الوردية مفتوحة'
                   : 'فرع لمسة عطر الرئيسي · الوردية مغلقة'}
               </span>
-              <ChevronDown size={13} className="text-[#86868B] group-hover:text-[#1D1D1F] shrink-0" />
+              <ChevronDown size={12} className="text-[#86868B] shrink-0" />
             </button>
 
-            {/* LEFT SIDE: Circular History & Style Buttons (كما في أيقونة الساعة في الصورة) */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              {/* History / Invoices Circle Button */}
-              <button
-                type="button"
-                onClick={() => onNavigate?.(View.REPORTS)}
-                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center active:scale-95 transition-all cursor-pointer ${currentView === View.REPORTS ? 'ring-2 ring-[#0071E3] text-[#0071E3]' : 'text-[#1D1D1F]'}`}
-                title="سجل الفواتير والعمليات المعتمدة"
-              >
-                <Clock size={16} strokeWidth={1.8} />
-              </button>
-
-              {/* Theme Studio Button */}
-              {onOpenThemeStudio && (
-                <button
-                  type="button"
-                  onClick={onOpenThemeStudio}
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center text-[#1D1D1F] active:scale-95 transition-all cursor-pointer"
-                  title="استوديو الثيمات والخطوط"
-                >
-                  <Palette size={16} strokeWidth={1.8} />
-                </button>
-              )}
-
-              {/* PWA App Install Button */}
-              {onOpenPWAInstall && (
-                <button
-                  type="button"
-                  onClick={onOpenPWAInstall}
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-blue-50/90 hover:bg-blue-100 text-blue-700 border border-blue-200/60 shadow-apple-xs flex items-center justify-center active:scale-95 transition-all cursor-pointer"
-                  title="تثبيت التطبيق على الجهاز"
-                >
-                  <Download size={15} strokeWidth={1.8} />
-                </button>
-              )}
-            </div>
+            {/* LEFT SIDE: Invoices Log Capsule */}
+            <button
+              type="button"
+              onClick={() => onNavigate?.(View.REPORTS)}
+              className={`apple-pill-btn halo-blue h-9 px-3 sm:px-3.5 text-xs font-bold ${currentView === View.REPORTS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
+              title="سجل الفواتير والعمليات المعتمدة"
+            >
+              <Clock size={14} className={currentView === View.REPORTS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
+              <span>سجل الفواتير</span>
+            </button>
           </div>
 
           {/* ---------------------------------------------------- */}
           {/* ROW 3: ULTRA-CLEAN APPLE SEGMENTED NAVIGATION DOCK   */}
-          {/* (ترتيب أنيق وبسيط بدون زحام ولا تشتيت)              */}
           {/* ---------------------------------------------------- */}
           {onNavigate && (
             <div className="pt-1 border-t border-black/[0.04]">
@@ -884,7 +939,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
           isOpen={isSearchModalOpen}
           onClose={() => setIsSearchModalOpen(false)}
           products={products}
-          onAddToCart={(product) => {
+          onAddToCart={() => {
             setIsSearchModalOpen(false);
             if (onNavigate) onNavigate(View.POS);
           }}
@@ -989,7 +1044,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                   <Crown size={18} className="fill-[#C49746]" />
                 </div>
                 <div>
-                  <h4 className="font-black text-sm text-[#1D1D1F]">دخول المدير العام (د. محمد)</h4>
+                  <h4 className="font-black text-sm text-[#1D1D1F]">دخول الإدارة العامة (د. محمد)</h4>
                   <span className="text-[11px] text-[#86868B]">أدخل رمز المرور السري الخاص بالإدارة</span>
                 </div>
               </div>
@@ -1070,7 +1125,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                   className="apple-btn w-full py-3 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-40 text-white text-xs font-black shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <CheckCircle2 size={15} />
-                  <span>{isVerifying ? 'جاري التحقق...' : 'تأكيد الدخول كمدير عام'}</span>
+                  <span>{isVerifying ? 'جاري التحقق...' : 'تأكيد الدخول كإدارة عامة'}</span>
                 </button>
               </div>
             </form>

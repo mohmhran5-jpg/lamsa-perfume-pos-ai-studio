@@ -93,6 +93,7 @@ const Reports: React.FC<ReportsProps> = ({
   const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [searchTerm, setSearchTerm] = useState('');
   const [hideProfits, setHideProfits] = useState(false);
+  const [isReportsMenuOpen, setIsReportsMenuOpen] = useState(false);
 
   // Modals state
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -503,56 +504,94 @@ ${itemsLines}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {onDeleteSale && sales.some((s) => s.isReversed) && (
-            <button
-              type="button"
-              onClick={() => {
-                const reversedList = sales.filter((s) => s.isReversed);
-                reversedList.forEach((s) => {
-                  onDeleteSale(s.id, false, 'تنظيف الفواتير الملغاة نهائياً من السجل', 'permanent');
-                });
-              }}
-              className="apple-btn px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer"
-              title="حذف جميع الفواتير الملغاة سابقاً بقيد عكسي وإزالتها نهائياً من الجدول"
-            >
-              <Trash2 size={14} />
-              <span>حذف الفواتير الملغاة نهائياً ({sales.filter((s) => s.isReversed).length})</span>
-            </button>
-          )}
-
+        <div className="flex items-center gap-2 relative">
+          {/* 1. Primary Action: New Invoice */}
           {onNavigateToPOS && (
             <button
               type="button"
               onClick={onNavigateToPOS}
-              className="apple-btn px-4 py-2 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer"
+              className="apple-pill-btn halo-blue px-3.5 sm:px-4 py-2 bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer"
             >
               <Plus size={14} />
-              <span>إصدار فاتورة جديدة (الكاشير)</span>
+              <span>إصدار فاتورة</span>
             </button>
           )}
 
+          {/* 2. Direct Export CSV */}
           <button
             type="button"
             onClick={handleExportCSV}
-            className="apple-btn flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-black/[0.08] text-xs font-bold text-[#1D1D1F] shadow-apple-xs hover:bg-black/[0.02] cursor-pointer"
+            className="apple-pill-btn halo-emerald flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-bold text-[#1D1D1F] cursor-pointer"
             title="تصدير سجل الفواتير لملف إكسل CSV"
           >
-            <Download size={14} className="text-[#0071E3]" />
-            <span>تصدير إكسل (CSV)</span>
+            <Download size={14} className="text-emerald-600" />
+            <span className="hidden sm:inline">تصدير إكسل</span>
           </button>
 
-          {(canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && (
+          {/* 3. Consolidated Options Menu (دمج العمليات الثانوية لمنع الزحام) */}
+          <div className="relative">
             <button
               type="button"
-              onClick={() => setHideProfits(!hideProfits)}
-              className="apple-btn px-3 py-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer"
-              title="إخفاء أو إظهار أرقام الأرباح والتكاليف"
+              onClick={() => setIsReportsMenuOpen(!isReportsMenuOpen)}
+              className="apple-pill-btn halo-purple px-3 py-2 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer group"
+              title="خيارات إضافية"
             >
-              {hideProfits ? <EyeOff size={14} /> : <Eye size={14} />}
-              <span className="hidden sm:inline">{hideProfits ? 'إظهار الأرباح' : 'إخفاء الأرباح'}</span>
+              <Sparkles size={13} className="text-purple-600" />
+              <span>خيارات</span>
+              <ChevronDown size={12} className={`text-[#86868B] transition-transform ${isReportsMenuOpen ? 'rotate-180 text-purple-600' : ''}`} />
             </button>
-          )}
+
+            {/* Dropdown Options Sheet */}
+            {isReportsMenuOpen && (
+              <div 
+                className="absolute top-12 left-0 z-40 w-60 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-2.5 space-y-1 animate-in fade-in zoom-in-95 duration-150"
+                dir="rtl"
+              >
+                <span className="text-[10px] font-bold text-[#86868B] px-2.5 py-1 block">إجراءات السجل:</span>
+
+                {(canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHideProfits(!hideProfits);
+                      setIsReportsMenuOpen(false);
+                    }}
+                    className="w-full px-3 py-2 rounded-2xl hover:bg-slate-100 text-[#1D1D1F] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                      {hideProfits ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </div>
+                    <div className="text-right">
+                      <span className="block">{hideProfits ? 'إظهار أرقام الأرباح' : 'إخفاء أرقام الأرباح'}</span>
+                      <span className="text-[9.5px] text-[#86868B]">خصوصية شاشة العرض</span>
+                    </div>
+                  </button>
+                )}
+
+                {onDeleteSale && sales.some((s) => s.isReversed) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsReportsMenuOpen(false);
+                      const reversedList = sales.filter((s) => s.isReversed);
+                      reversedList.forEach((s) => {
+                        onDeleteSale(s.id, false, 'تنظيف الفواتير الملغاة نهائياً من السجل', 'permanent');
+                      });
+                    }}
+                    className="w-full px-3 py-2 rounded-2xl hover:bg-rose-50 text-rose-700 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                      <Trash2 size={14} />
+                    </div>
+                    <div className="text-right">
+                      <span className="block">حذف الفواتير الملغاة ({sales.filter((s) => s.isReversed).length})</span>
+                      <span className="text-[9.5px] text-rose-500">تنظيف السجل نهائياً</span>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
