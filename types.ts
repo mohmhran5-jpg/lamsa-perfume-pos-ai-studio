@@ -1495,9 +1495,14 @@ export interface OwnerStaffBroadcast {
   title: string;
   message: string;
   category: 'urgent' | 'target' | 'instruction' | 'reward';
-  senderName: string; // 'د. محمد (المالك)'
+  senderName: string; // e.g. 'الإدارة العامة'
   targetEmployee?: string; // 'all' or specific employee name e.g. 'طارق'
   createdAt: string; // ISO
+  expiresAt?: string; // ISO string when alert auto-expires (default: 8 hours after creation)
+  durationHours?: number; // e.g. 8 (default), 1, 4, 24, 72, 720, or 0 for permanent
+  isImportant?: boolean; // When true, stays pinned in Important Alerts & Directives Section
+  importanceCategory?: 'hours' | 'days' | 'months' | 'permanent'; // Category for time-based filtering
+  soundType?: 'chime' | 'warning' | 'peaceful' | 'silent';
   requiresAcknowledgement?: boolean;
   acknowledgedBy?: Array<{ employeeName: string; timestamp: string }>;
   isArchived?: boolean;

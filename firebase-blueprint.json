@@ -281,6 +281,11 @@
         "senderName": { "type": "string" },
         "targetEmployee": { "type": "string" },
         "createdAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "durationHours": { "type": "number" },
+        "isImportant": { "type": "boolean" },
+        "importanceCategory": { "type": "string" },
+        "soundType": { "type": "string" },
         "requiresAcknowledgement": { "type": "boolean" },
         "acknowledgedBy": { "type": "array" }
       },

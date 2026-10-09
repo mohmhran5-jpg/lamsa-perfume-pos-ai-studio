@@ -2179,50 +2179,59 @@ const POS: React.FC<POSProps> = ({
 
             {/* Dropdown Sheets */}
             {isPosToolsOpen && (
-              <div 
-                className="absolute top-11 left-0 z-40 w-64 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-2.5 space-y-1 animate-in fade-in zoom-in-95 duration-150"
-                dir="rtl"
-              >
-                <span className="text-[10px] font-bold text-[#86868B] px-2.5 py-1 block">الأقسام السريعة المرتبطة:</span>
+              <>
+                <div 
+                  className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
+                  onClick={() => setIsPosToolsOpen(false)} 
+                />
+                <div 
+                  className="absolute top-full mt-2.5 left-0 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150"
+                  dir="rtl"
+                >
+                  <div className="flex items-center justify-between px-2.5 py-1 border-b border-black/[0.05] mb-1">
+                    <span className="text-[11px] font-black text-[#1D1D1F]">الأقسام السريعة المرتبطة:</span>
+                    <span className="text-[9.5px] font-bold text-[#86868B]">انتقال فوري</span>
+                  </div>
 
-                {onNavigateToCustomers && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsPosToolsOpen(false);
-                      onNavigateToCustomers();
-                    }}
-                    className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-xl bg-amber-100 text-[#9A6E23] flex items-center justify-center shrink-0">
-                      <Users size={14} />
-                    </div>
-                    <div className="text-right">
-                      <span className="block">سجل العملاء والولاء ({previousCustomers.length})</span>
-                      <span className="text-[9.5px] text-[#86868B]">الملفات الشخصية والنقاط</span>
-                    </div>
-                  </button>
-                )}
+                  {onNavigateToCustomers && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsPosToolsOpen(false);
+                        onNavigateToCustomers();
+                      }}
+                      className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <div className="w-7 h-7 rounded-xl bg-amber-100 text-[#9A6E23] flex items-center justify-center shrink-0">
+                        <Users size={14} />
+                      </div>
+                      <div className="text-right">
+                        <span className="block">سجل العملاء والولاء ({previousCustomers.length})</span>
+                        <span className="text-[9.5px] text-[#86868B]">الملفات الشخصية والنقاط</span>
+                      </div>
+                    </button>
+                  )}
 
-                {onNavigateToInvoices && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsPosToolsOpen(false);
-                      onNavigateToInvoices();
-                    }}
-                    className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-xl bg-blue-100 text-[#0071E3] flex items-center justify-center shrink-0">
-                      <Receipt size={14} />
-                    </div>
-                    <div className="text-right">
-                      <span className="block">سجل الفواتير والمبيعات ({salesHistory.length})</span>
-                      <span className="text-[9.5px] text-[#86868B]">مراجعة وطباعة العمليات</span>
-                    </div>
-                  </button>
-                )}
-              </div>
+                  {onNavigateToInvoices && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsPosToolsOpen(false);
+                        onNavigateToInvoices();
+                      }}
+                      className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <div className="w-7 h-7 rounded-xl bg-blue-100 text-[#0071E3] flex items-center justify-center shrink-0">
+                        <Receipt size={14} />
+                      </div>
+                      <div className="text-right">
+                        <span className="block">سجل الفواتير والمبيعات ({salesHistory.length})</span>
+                        <span className="text-[9.5px] text-[#86868B]">مراجعة وطباعة العمليات</span>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>

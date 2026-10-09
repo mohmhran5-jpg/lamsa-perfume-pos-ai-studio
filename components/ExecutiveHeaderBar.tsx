@@ -173,9 +173,9 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   const storeName = settings?.storeName || 'لمسة عطر';
   const logoUrl = settings?.logoUrl || 'https://l.top4top.io/p_31142jfec0.png';
 
-  // Close menus when clicking outside
+  // Close menus when clicking outside (mouse and touch gestures)
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         setIsProfilePopoverOpen(false);
       }
@@ -184,8 +184,10 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
     };
   }, []);
 
@@ -568,110 +570,116 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               {/* APPLE PROFILE & USER SWITCHER CONTROL POPOVER    */}
               {/* ------------------------------------------------ */}
               {isProfilePopoverOpen && (
-                <div 
-                  className="absolute top-14 right-0 z-50 w-72 sm:w-80 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-3.5 space-y-3 animate-in fade-in zoom-in-95 duration-150"
-                  dir="rtl"
-                >
-                  {/* Current Active Account Header */}
-                  <div className="flex items-center gap-3 pb-3 border-b border-black/[0.06]">
-                    <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-sm text-white shadow-apple-xs ${isOwner ? 'bg-[#1D1D1F] border border-[#C49746]/50' : 'bg-[#0071E3]'}`}>
-                      {isOwner ? <Crown size={18} className="text-[#C49746] fill-[#C49746]" /> : 'ط'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <strong className="text-xs font-black text-[#1D1D1F] truncate block">
-                          {currentUser?.displayName || 'المستخدم'}
-                        </strong>
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] shrink-0" />
+                <>
+                  <div 
+                    className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
+                    onClick={() => setIsProfilePopoverOpen(false)} 
+                  />
+                  <div 
+                    className="absolute top-full mt-2.5 right-0 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-3.5 space-y-3 animate-in fade-in zoom-in-95 duration-150"
+                    dir="rtl"
+                  >
+                    {/* Current Active Account Header */}
+                    <div className="flex items-center gap-3 pb-3 border-b border-black/[0.06]">
+                      <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-sm text-white shadow-apple-xs ${isOwner ? 'bg-[#1D1D1F] border border-[#C49746]/50' : 'bg-[#0071E3]'}`}>
+                        {isOwner ? <Crown size={18} className="text-[#C49746] fill-[#C49746]" /> : 'ط'}
                       </div>
-                      <span className="text-[11px] text-[#86868B] block truncate">
-                        {isOwner ? 'كامل صلاحيات الإدارة العامة' : 'مسؤول المبيعات وتشغيل الكاشير'}
-                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <strong className="text-xs font-black text-[#1D1D1F] truncate block">
+                            {currentUser?.displayName || 'المستخدم'}
+                          </strong>
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] shrink-0" />
+                        </div>
+                        <span className="text-[11px] text-[#86868B] block truncate">
+                          {isOwner ? 'كامل صلاحيات الإدارة العامة' : 'مسؤول المبيعات وتشغيل الكاشير'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Switch Account Quick Action */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-[#86868B] px-1 block">تبديل المستخدم السريع:</span>
+                      {isOwner ? (
+                        <button
+                          type="button"
+                          onClick={handleQuickSwitchToTarek}
+                          className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-blue-50/80 border border-black/[0.05] hover:border-blue-200 flex items-center justify-between text-xs font-bold text-[#1D1D1F] transition-all cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="w-7 h-7 rounded-full bg-blue-100 text-[#0071E3] flex items-center justify-center text-xs font-black">ط</span>
+                            <div className="text-right">
+                              <span className="block font-bold">حساب طارق</span>
+                              <span className="text-[9.5px] text-[#86868B]">كاشير ومبيعات مباشر</span>
+                            </div>
+                          </div>
+                          <ArrowLeftRight size={13} className="text-[#0071E3]" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleSwitchToOwnerClick}
+                          className="w-full p-2.5 rounded-2xl bg-[#1D1D1F] hover:bg-black text-white border border-[#C49746]/30 flex items-center justify-between text-xs font-bold transition-all cursor-pointer shadow-apple-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Crown size={15} className="text-[#C49746] fill-[#C49746]" />
+                            <div className="text-right">
+                              <span className="block text-amber-300 font-bold">دخول الإدارة العامة</span>
+                              <span className="text-[9.5px] text-zinc-400">رمز المرور السري</span>
+                            </div>
+                          </div>
+                          <Lock size={13} className="text-[#C49746]" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Quick Controls Grid */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-black/[0.05]">
+                      {onLockScreen && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfilePopoverOpen(false);
+                            onLockScreen();
+                          }}
+                          className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Lock size={12} className="text-amber-600" />
+                          <span>قفل الشاشة</span>
+                        </button>
+                      )}
+
+                      {onUpdateSettings && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextNumeral = settings?.siteNumeralSystem === 'ar' ? 'en' : 'ar';
+                            onUpdateSettings(prev => ({ ...prev, siteNumeralSystem: nextNumeral }));
+                            setIsProfilePopoverOpen(false);
+                          }}
+                          className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer font-mono"
+                        >
+                          <span>{settings?.siteNumeralSystem === 'ar' ? 'الأرقام: ١٢٣' : 'Numbers: 123'}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* General Auth Modal / User Switch */}
+                    <div className="pt-2 border-t border-black/[0.05]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfilePopoverOpen(false);
+                          onOpenAuthModal();
+                        }}
+                        className="w-full py-2 rounded-xl text-rose-600 hover:bg-rose-50 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <LogOut size={13} />
+                        <span>إدارة المستخدمين وتسجيل الخروج</span>
+                      </button>
                     </div>
                   </div>
-
-                  {/* Switch Account Quick Action */}
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] font-bold text-[#86868B] px-1 block">تبديل المستخدم السريع:</span>
-                    {isOwner ? (
-                      <button
-                        type="button"
-                        onClick={handleQuickSwitchToTarek}
-                        className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-blue-50/80 border border-black/[0.05] hover:border-blue-200 flex items-center justify-between text-xs font-bold text-[#1D1D1F] transition-all cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="w-7 h-7 rounded-full bg-blue-100 text-[#0071E3] flex items-center justify-center text-xs font-black">ط</span>
-                          <div className="text-right">
-                            <span className="block font-bold">حساب طارق</span>
-                            <span className="text-[9.5px] text-[#86868B]">كاشير ومبيعات مباشر</span>
-                          </div>
-                        </div>
-                        <ArrowLeftRight size={13} className="text-[#0071E3]" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleSwitchToOwnerClick}
-                        className="w-full p-2.5 rounded-2xl bg-[#1D1D1F] hover:bg-black text-white border border-[#C49746]/30 flex items-center justify-between text-xs font-bold transition-all cursor-pointer shadow-apple-xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Crown size={15} className="text-[#C49746] fill-[#C49746]" />
-                          <div className="text-right">
-                            <span className="block text-amber-300 font-bold">دخول الإدارة العامة</span>
-                            <span className="text-[9.5px] text-zinc-400">رمز المرور السري</span>
-                          </div>
-                        </div>
-                        <Lock size={13} className="text-[#C49746]" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Quick Controls Grid */}
-                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-black/[0.05]">
-                    {onLockScreen && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfilePopoverOpen(false);
-                          onLockScreen();
-                        }}
-                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Lock size={12} className="text-amber-600" />
-                        <span>قفل الشاشة</span>
-                      </button>
-                    )}
-
-                    {onUpdateSettings && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const nextNumeral = settings?.siteNumeralSystem === 'ar' ? 'en' : 'ar';
-                          onUpdateSettings(prev => ({ ...prev, siteNumeralSystem: nextNumeral }));
-                          setIsProfilePopoverOpen(false);
-                        }}
-                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer font-mono"
-                      >
-                        <span>{settings?.siteNumeralSystem === 'ar' ? 'الأرقام: ١٢٣' : 'Numbers: 123'}</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* General Auth Modal / User Switch */}
-                  <div className="pt-2 border-t border-black/[0.05]">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsProfilePopoverOpen(false);
-                        onOpenAuthModal();
-                      }}
-                      className="w-full py-2 rounded-xl text-rose-600 hover:bg-rose-50 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <LogOut size={13} />
-                      <span>إدارة المستخدمين وتسجيل الخروج</span>
-                    </button>
-                  </div>
-                </div>
+                </>
               )}
             </div>
 
@@ -731,113 +739,122 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
                 {/* Dropdown Tools Sheet */}
                 {isToolsMenuOpen && (
-                  <div 
-                    className="absolute top-14 left-0 z-50 w-64 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-2.5 space-y-1 animate-in fade-in zoom-in-95 duration-150"
-                    dir="rtl"
-                  >
-                    <span className="text-[10px] font-bold text-[#86868B] px-2.5 py-1 block">الأدوات والإعدادات المدمجة:</span>
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
+                      onClick={() => setIsToolsMenuOpen(false)} 
+                    />
+                    <div 
+                      className="absolute top-full mt-2.5 left-0 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150"
+                      dir="rtl"
+                    >
+                      <div className="flex items-center justify-between px-2.5 py-1 border-b border-black/[0.05] mb-1">
+                        <span className="text-[11px] font-black text-[#1D1D1F]">الأدوات والإعدادات المدمجة:</span>
+                        <span className="text-[9.5px] font-bold text-[#86868B]">وصول مباشر</span>
+                      </div>
 
-                    {/* Theme Studio */}
-                    {onOpenThemeStudio && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsMenuOpen(false);
-                          onOpenThemeStudio();
-                        }}
-                        className="w-full px-3 py-2 rounded-2xl hover:bg-purple-50 text-[#1D1D1F] hover:text-purple-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                      >
-                        <div className="w-7 h-7 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
-                          <Palette size={14} />
-                        </div>
-                        <div className="text-right">
-                          <span className="block">استوديو الثيمات والخطوط</span>
-                          <span className="text-[9.5px] text-[#86868B]">تخصيص الألوان والمظهر</span>
-                        </div>
-                      </button>
-                    )}
+                      {/* Theme Studio */}
+                      {onOpenThemeStudio && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            onOpenThemeStudio();
+                          }}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-purple-50 text-[#1D1D1F] hover:text-purple-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                            <Palette size={14} />
+                          </div>
+                          <div className="text-right">
+                            <span className="block">استوديو الثيمات والخطوط</span>
+                            <span className="text-[9.5px] text-[#86868B]">تخصيص الألوان والمظهر</span>
+                          </div>
+                        </button>
+                      )}
 
-                    {/* Connected Devices */}
-                    {onOpenConnectedDevices && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsMenuOpen(false);
-                          onOpenConnectedDevices();
-                        }}
-                        className="w-full px-3 py-2 rounded-2xl hover:bg-emerald-50 text-[#1D1D1F] hover:text-emerald-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                      >
-                        <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                          <Radio size={14} />
-                        </div>
-                        <div className="text-right">
-                          <span className="block">الأجهزة المتصلة ({connectedDevicesCount})</span>
-                          <span className="text-[9.5px] text-[#86868B]">تزامن فوري بين الشاشات</span>
-                        </div>
-                      </button>
-                    )}
+                      {/* Connected Devices */}
+                      {onOpenConnectedDevices && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            onOpenConnectedDevices();
+                          }}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-emerald-50 text-[#1D1D1F] hover:text-emerald-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                            <Radio size={14} />
+                          </div>
+                          <div className="text-right">
+                            <span className="block">الأجهزة المتصلة ({connectedDevicesCount})</span>
+                            <span className="text-[9.5px] text-[#86868B]">تزامن فوري بين الشاشات</span>
+                          </div>
+                        </button>
+                      )}
 
-                    {/* Daily Report TXT */}
-                    {isOwner && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsMenuOpen(false);
-                          if (onOpenDailyReportAutomation) onOpenDailyReportAutomation();
-                          else setShowDailyReportModal(true);
-                        }}
-                        className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                      >
-                        <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-                          <FileText size={14} />
-                        </div>
-                        <div className="text-right">
-                          <span className="block">تصدير تقرير اليوم (.TXT)</span>
-                          <span className="text-[9.5px] text-[#86868B]">ملخص المبيعات والأرباح</span>
-                        </div>
-                      </button>
-                    )}
+                      {/* Daily Report TXT */}
+                      {isOwner && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            if (onOpenDailyReportAutomation) onOpenDailyReportAutomation();
+                            else setShowDailyReportModal(true);
+                          }}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                            <FileText size={14} />
+                          </div>
+                          <div className="text-right">
+                            <span className="block">تصدير تقرير اليوم (.TXT)</span>
+                            <span className="text-[9.5px] text-[#86868B]">ملخص المبيعات والأرباح</span>
+                          </div>
+                        </button>
+                      )}
 
-                    {/* PWA Install */}
-                    {onOpenPWAInstall && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsMenuOpen(false);
-                          onOpenPWAInstall();
-                        }}
-                        className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                      >
-                        <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                          <Download size={14} />
-                        </div>
-                        <div className="text-right">
-                          <span className="block">تثبيت التطبيق على الجهاز</span>
-                          <span className="text-[9.5px] text-[#86868B]">نسخة سطح المكتب والموبايل</span>
-                        </div>
-                      </button>
-                    )}
+                      {/* PWA Install */}
+                      {onOpenPWAInstall && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            onOpenPWAInstall();
+                          }}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                            <Download size={14} />
+                          </div>
+                          <div className="text-right">
+                            <span className="block">تثبيت التطبيق على الجهاز</span>
+                            <span className="text-[9.5px] text-[#86868B]">نسخة سطح المكتب والموبايل</span>
+                          </div>
+                        </button>
+                      )}
 
-                    {/* Screen Lock */}
-                    {onLockScreen && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsMenuOpen(false);
-                          onLockScreen();
-                        }}
-                        className="w-full px-3 py-2 rounded-2xl hover:bg-slate-100 text-[#1D1D1F] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border-t border-black/[0.04] mt-1 pt-2"
-                      >
-                        <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
-                          <Lock size={14} />
-                        </div>
-                        <div className="text-right">
-                          <span className="block">قفل الشاشة السريع</span>
-                          <span className="text-[9.5px] text-[#86868B]">حماية الخصوصية</span>
-                        </div>
-                      </button>
-                    )}
-                  </div>
+                      {/* Screen Lock */}
+                      {onLockScreen && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            onLockScreen();
+                          }}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-slate-100 text-[#1D1D1F] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border-t border-black/[0.04] mt-1 pt-2"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                            <Lock size={14} />
+                          </div>
+                          <div className="text-right">
+                            <span className="block">قفل الشاشة السريع</span>
+                            <span className="text-[9.5px] text-[#86868B]">حماية الخصوصية</span>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </div>

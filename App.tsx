@@ -153,7 +153,7 @@ import {
   acknowledgeOwnerBroadcastCloud,
 } from './services/firebase';
 import { getSessionUser, saveSessionUser, canAccessView } from './services/authService';
-import { Lock, Radio, CheckCircle2, X, Sparkles } from 'lucide-react';
+import { Lock, Radio, CheckCircle2, X, Sparkles, Star, Clock, Hourglass, ExternalLink } from 'lucide-react';
 
 // Seed Data
 const INITIAL_PRODUCTS: Product[] = [
@@ -839,7 +839,10 @@ const App: React.FC = () => {
   const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>(() => {
     return loadDataSync<OwnerStaffBroadcast[]>('lamsa_owner_broadcasts', []);
   });
-  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(new Set());
+  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(() => {
+    const cached = loadDataSync<string[]>('lamsa_dismissed_broadcasts_v2', []);
+    return new Set(cached);
+  });
   const prevDeviceCountRef = useRef<number>(0);
 
   // Track known remote event IDs to trigger real-time sound & system notifications when new records arrive from other devices
@@ -1812,7 +1815,7 @@ const App: React.FC = () => {
     } catch {}
   };
 
-  // Real-time Owner Directives & Staff Broadcast Handlers
+  // Real-time Administrative Directives & Staff Broadcast Handlers
   const handleSendOwnerBroadcast = async (broadcast: OwnerStaffBroadcast) => {
     setOwnerBroadcasts(prev => [broadcast, ...prev.filter(b => b.id !== broadcast.id)]);
     persistDataDurable('lamsa_owner_broadcasts', [broadcast, ...ownerBroadcasts]);
@@ -1825,38 +1828,63 @@ const App: React.FC = () => {
       'goal',
       `📢 ${broadcast.title}`,
       broadcast.message,
-      'توجيه المالك'
+      broadcast.isImportant ? 'تنبيه هام' : 'إشعار فوري'
     );
+  };
+
+  const handleDismissBroadcast = (broadcastId: string) => {
+    setDismissedBroadcastIds(prev => {
+      const next = new Set([...prev, broadcastId]);
+      persistDataDurable('lamsa_dismissed_broadcasts_v2', Array.from(next));
+      return next;
+    });
   };
 
   const handleAcknowledgeOwnerBroadcast = async (broadcastId: string) => {
     const employee = currentUser?.name || 'طارق';
-    setOwnerBroadcasts(prev => prev.map(b => {
-      if (b.id === broadcastId) {
-        const acks = b.acknowledgedBy || [];
-        if (!acks.some(a => a.employeeName === employee)) {
-          return {
-            ...b,
-            acknowledgedBy: [...acks, { employeeName: employee, timestamp: new Date().toISOString() }]
-          };
+    setOwnerBroadcasts(prev => {
+      const updated = prev.map(b => {
+        if (b.id === broadcastId) {
+          const acks = b.acknowledgedBy || [];
+          if (!acks.some(a => a.employeeName === employee)) {
+            return {
+              ...b,
+              acknowledgedBy: [...acks, { employeeName: employee, timestamp: new Date().toISOString() }]
+            };
+          }
         }
-      }
-      return b;
-    }));
+        return b;
+      });
+      persistDataDurable('lamsa_owner_broadcasts', updated);
+      return updated;
+    });
     try {
       await acknowledgeOwnerBroadcastCloud(broadcastId, employee);
     } catch (e) {
       console.error("Error acknowledging broadcast:", e);
     }
     soundAlertService.playActionChime();
-    pushTopNotification('info', 'تم تأكيد الاطلاع', 'تم توثيق قراءتك لتوجيه المالك بنجاح', 'تأكيد');
+    pushTopNotification('info', 'تم تأكيد الاطلاع', 'تم توثيق قراءتك للتنبيه بنجاح', 'تأكيد');
+    
+    // Automatically close from top banner upon read confirmation, persisting across reload
+    handleDismissBroadcast(broadcastId);
   };
 
-  // Active broadcast to display in UI for current user
+  // Active broadcast to display in UI for current user (auto-expires after 8 hours by default)
   const activeBroadcastForDisplay = useMemo(() => {
+    const now = Date.now();
     return ownerBroadcasts.find(b => {
       if (b.isArchived) return false;
       if (dismissedBroadcastIds.has(b.id)) return false;
+
+      // Auto-expiration check: Default 8 hours unless custom expiresAt or marked important
+      if (b.expiresAt) {
+        if (new Date(b.expiresAt).getTime() <= now) return false;
+      } else if (!b.isImportant && b.createdAt) {
+        const age = now - new Date(b.createdAt).getTime();
+        if (age > 8 * 3600 * 1000) return false; // Expired after 8 hours default
+      }
+
       // Target matching: 'all' or specific employee name or role
       const matchesTarget = !b.targetEmployee || b.targetEmployee === 'all' || b.targetEmployee === currentUser?.name;
       if (!matchesTarget) return false;
@@ -2964,37 +2992,45 @@ const App: React.FC = () => {
           onUpdateSettings={handleSetSettings}
         />
 
-        {/* Real-time Owner Directives & Staff Alert Banner (توجيهات وتنبيهات المالك المباشرة للموظفين في الواجهة) */}
+        {/* Real-time Administrative Directives & Staff Alert Banner (تنبيهات وإشعارات الإدارة العامة للموظفين) */}
         {activeBroadcastForDisplay && (
-          <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 pt-3 animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className={`p-4 rounded-3xl border shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+          <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 pt-3 animate-in fade-in slide-in-from-top-3 duration-500">
+            <div className={`p-4 sm:p-4.5 rounded-3xl border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 backdrop-blur-2xl transition-all ${
               activeBroadcastForDisplay.category === 'urgent'
-                ? 'bg-rose-500/10 border-rose-500/40 text-rose-950 dark:text-rose-100 shadow-rose-500/5'
+                ? 'bg-rose-500/12 dark:bg-rose-950/40 border-rose-500/40 text-rose-950 dark:text-rose-100 shadow-[0_8px_30px_rgba(244,63,94,0.12)]'
                 : activeBroadcastForDisplay.category === 'target'
-                ? 'bg-amber-500/10 border-amber-500/40 text-amber-950 dark:text-amber-100 shadow-amber-500/5'
+                ? 'bg-amber-500/12 dark:bg-amber-950/40 border-amber-500/45 text-amber-950 dark:text-amber-100 shadow-[0_8px_30px_rgba(245,158,11,0.12)]'
                 : activeBroadcastForDisplay.category === 'reward'
-                ? 'bg-purple-500/10 border-purple-500/40 text-purple-950 dark:text-purple-100 shadow-purple-500/5'
-                : 'bg-blue-500/10 border-blue-500/40 text-blue-950 dark:text-blue-100 shadow-blue-500/5'
+                ? 'bg-purple-500/12 dark:bg-purple-950/40 border-purple-500/40 text-purple-950 dark:text-purple-100 shadow-[0_8px_30px_rgba(168,85,247,0.12)]'
+                : 'bg-blue-500/12 dark:bg-blue-950/40 border-blue-500/40 text-blue-950 dark:text-blue-100 shadow-[0_8px_30px_rgba(59,130,246,0.12)]'
             }`}>
-              <div className="flex items-start gap-3 min-w-0">
-                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+              <div className="flex items-start gap-3.5 min-w-0">
+                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md ${
                   activeBroadcastForDisplay.category === 'urgent'
-                    ? 'bg-rose-600 text-white animate-pulse'
+                    ? 'bg-rose-600 text-white animate-pulse shadow-rose-600/30'
                     : activeBroadcastForDisplay.category === 'target'
-                    ? 'bg-amber-500 text-slate-950'
+                    ? 'bg-amber-500 text-slate-950 shadow-amber-500/30'
                     : activeBroadcastForDisplay.category === 'reward'
-                    ? 'bg-purple-600 text-white'
-                    : 'bg-blue-600 text-white'
+                    ? 'bg-purple-600 text-white shadow-purple-600/30'
+                    : 'bg-blue-600 text-white shadow-blue-600/30'
                 }`}>
                   <Radio size={20} className="animate-spin" />
                 </div>
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-black/10 dark:bg-white/10 flex items-center gap-1.5">
-                      <Sparkles size={11} className="text-[#C49746]" />
-                      <span>تنبيه إداري مباشر · {activeBroadcastForDisplay.senderName}</span>
-                    </span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    {activeBroadcastForDisplay.isImportant ? (
+                      <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-amber-500 text-slate-950 flex items-center gap-1.5 shadow-2xs">
+                        <Star size={11} className="fill-current" />
+                        <span>تنبيه فائق الأهمية</span>
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-black/10 dark:bg-white/10 flex items-center gap-1.5">
+                        <Sparkles size={11} className="text-[#C49746]" />
+                        <span>إشعار مباشر</span>
+                      </span>
+                    )}
+
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                       activeBroadcastForDisplay.category === 'urgent'
                         ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/40'
                         : activeBroadcastForDisplay.category === 'target'
@@ -3005,22 +3041,71 @@ const App: React.FC = () => {
                     }`}>
                       {activeBroadcastForDisplay.category === 'urgent' ? '🚨 عاجل وهام' : activeBroadcastForDisplay.category === 'target' ? '🎯 تارجت ومبيعات' : activeBroadcastForDisplay.category === 'reward' ? '🎁 مكافأة وتقدير' : '📋 تعليمات'}
                     </span>
-                    <span className="text-[10px] text-slate-500 font-mono">
+
+                    {/* Expiration Countdown Badge (Default 8 Hours) */}
+                    {(() => {
+                      if (activeBroadcastForDisplay.isImportant && (!activeBroadcastForDisplay.expiresAt || activeBroadcastForDisplay.durationHours === 0)) {
+                        return (
+                          <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-500 text-slate-950 flex items-center gap-1 shadow-2xs">
+                            <Star size={10} className="fill-current" />
+                            <span>هام ومثبت دائم</span>
+                          </span>
+                        );
+                      }
+                      const expiry = activeBroadcastForDisplay.expiresAt 
+                        ? new Date(activeBroadcastForDisplay.expiresAt).getTime() 
+                        : (activeBroadcastForDisplay.createdAt ? new Date(activeBroadcastForDisplay.createdAt).getTime() + (activeBroadcastForDisplay.durationHours || 8) * 3600 * 1000 : null);
+                      
+                      if (!expiry) return null;
+                      const remainingMs = expiry - Date.now();
+                      if (remainingMs <= 0) return null;
+
+                      const totalMinutes = Math.floor(remainingMs / (60 * 1000));
+                      const hours = Math.floor(totalMinutes / 60);
+                      const minutes = totalMinutes % 60;
+                      const days = Math.floor(hours / 24);
+
+                      let countdownStr = `${minutes} دقيقة`;
+                      if (days > 0) countdownStr = `${days} يوم و ${hours % 24} س`;
+                      else if (hours > 0) countdownStr = `${hours} س و ${minutes} د`;
+
+                      return (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/10 dark:bg-white/10 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-mono">
+                          <Hourglass size={10} className="text-amber-500" />
+                          <span>ينتهي تلقائياً خلال: {countdownStr}</span>
+                        </span>
+                      );
+                    })()}
+
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
                       {activeBroadcastForDisplay.createdAt ? new Date(activeBroadcastForDisplay.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : 'الآن'}
                     </span>
                   </div>
+
                   <h4 className="text-sm font-black truncate">{activeBroadcastForDisplay.title}</h4>
                   <p className="text-xs opacity-90 leading-relaxed font-medium">{activeBroadcastForDisplay.message}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                {/* 1. Open Radar/Today's Notifications */}
+                <button
+                  type="button"
+                  onClick={() => setIsOwnerLiveRadarOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-white/70 hover:bg-white dark:bg-white/10 dark:hover:bg-white/20 text-slate-700 dark:text-slate-200 text-xs font-bold border border-slate-200/60 dark:border-white/10 transition-colors cursor-pointer flex items-center gap-1"
+                  title="عرض في قسم الإشعارات اليومية والتنبيهات الهامة"
+                >
+                  <ExternalLink size={12} />
+                  <span>قسم الإشعارات</span>
+                </button>
+
+                {/* 2. Acknowledge Receipt Button */}
                 {activeBroadcastForDisplay.requiresAcknowledgement && (
                   !activeBroadcastForDisplay.acknowledgedBy?.some(a => a.employeeName === (currentUser?.name || 'طارق')) ? (
                     <button
                       type="button"
                       onClick={() => handleAcknowledgeOwnerBroadcast(activeBroadcastForDisplay.id)}
-                      className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-black text-amber-300 font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer transition-transform active:scale-95"
+                      className="px-4 py-2 rounded-xl bg-[#1D1D1F] hover:bg-black text-amber-300 font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer transition-transform active:scale-95 border border-[#C49746]/40"
                     >
                       <CheckCircle2 size={14} className="text-amber-400" />
                       <span>تأكيد الاطلاع والاستلام ✓</span>
@@ -3028,16 +3113,17 @@ const App: React.FC = () => {
                   ) : (
                     <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 px-3 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1">
                       <CheckCircle2 size={13} />
-                      <span>تم تأكيد الاطلاع بنجاح</span>
+                      <span>تم تأكيد الاطلاع</span>
                     </span>
                   )
                 )}
 
+                {/* 3. Close Button: Dismisses persistently so it does NOT reappear on refresh */}
                 <button
                   type="button"
-                  onClick={() => setDismissedBroadcastIds(prev => new Set([...prev, activeBroadcastForDisplay.id]))}
-                  className="p-2 rounded-xl text-slate-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                  title="إخفاء التنبيه"
+                  onClick={() => handleDismissBroadcast(activeBroadcastForDisplay.id)}
+                  className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                  title="إغلاق التنبيه (يظل محفوظاً في قسم إشعارات اليوم)"
                 >
                   <X size={16} />
                 </button>

@@ -543,53 +543,62 @@ ${itemsLines}
 
             {/* Dropdown Options Sheet */}
             {isReportsMenuOpen && (
-              <div 
-                className="absolute top-12 left-0 z-40 w-60 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-2.5 space-y-1 animate-in fade-in zoom-in-95 duration-150"
-                dir="rtl"
-              >
-                <span className="text-[10px] font-bold text-[#86868B] px-2.5 py-1 block">إجراءات السجل:</span>
+              <>
+                <div 
+                  className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
+                  onClick={() => setIsReportsMenuOpen(false)} 
+                />
+                <div 
+                  className="absolute top-full mt-2.5 left-0 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150"
+                  dir="rtl"
+                >
+                  <div className="flex items-center justify-between px-2.5 py-1 border-b border-black/[0.05] mb-1">
+                    <span className="text-[11px] font-black text-[#1D1D1F]">إجراءات السجل وخيارات العرض:</span>
+                    <span className="text-[9.5px] font-bold text-[#86868B]">تحكم سريع</span>
+                  </div>
 
-                {(canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHideProfits(!hideProfits);
-                      setIsReportsMenuOpen(false);
-                    }}
-                    className="w-full px-3 py-2 rounded-2xl hover:bg-slate-100 text-[#1D1D1F] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
-                      {hideProfits ? <Eye size={14} /> : <EyeOff size={14} />}
-                    </div>
-                    <div className="text-right">
-                      <span className="block">{hideProfits ? 'إظهار أرقام الأرباح' : 'إخفاء أرقام الأرباح'}</span>
-                      <span className="text-[9.5px] text-[#86868B]">خصوصية شاشة العرض</span>
-                    </div>
-                  </button>
-                )}
+                  {(canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHideProfits(!hideProfits);
+                        setIsReportsMenuOpen(false);
+                      }}
+                      className="w-full px-3 py-2 rounded-2xl hover:bg-slate-100 text-[#1D1D1F] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                        {hideProfits ? <Eye size={14} /> : <EyeOff size={14} />}
+                      </div>
+                      <div className="text-right">
+                        <span className="block">{hideProfits ? 'إظهار أرقام الأرباح' : 'إخفاء أرقام الأرباح'}</span>
+                        <span className="text-[9.5px] text-[#86868B]">خصوصية شاشة العرض</span>
+                      </div>
+                    </button>
+                  )}
 
-                {onDeleteSale && sales.some((s) => s.isReversed) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsReportsMenuOpen(false);
-                      const reversedList = sales.filter((s) => s.isReversed);
-                      reversedList.forEach((s) => {
-                        onDeleteSale(s.id, false, 'تنظيف الفواتير الملغاة نهائياً من السجل', 'permanent');
-                      });
-                    }}
-                    className="w-full px-3 py-2 rounded-2xl hover:bg-rose-50 text-rose-700 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
-                      <Trash2 size={14} />
-                    </div>
-                    <div className="text-right">
-                      <span className="block">حذف الفواتير الملغاة ({sales.filter((s) => s.isReversed).length})</span>
-                      <span className="text-[9.5px] text-rose-500">تنظيف السجل نهائياً</span>
-                    </div>
-                  </button>
-                )}
-              </div>
+                  {onDeleteSale && sales.some((s) => s.isReversed) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsReportsMenuOpen(false);
+                        const reversedList = sales.filter((s) => s.isReversed);
+                        reversedList.forEach((s) => {
+                          onDeleteSale(s.id, false, 'تنظيف الفواتير الملغاة نهائياً من السجل', 'permanent');
+                        });
+                      }}
+                      className="w-full px-3 py-2 rounded-2xl hover:bg-rose-50 text-rose-700 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <div className="w-7 h-7 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                        <Trash2 size={14} />
+                      </div>
+                      <div className="text-right">
+                        <span className="block">حذف الفواتير الملغاة ({sales.filter((s) => s.isReversed).length})</span>
+                        <span className="text-[9.5px] text-rose-500">تنظيف السجل نهائياً</span>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>

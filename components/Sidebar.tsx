@@ -515,6 +515,28 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               ))}
             </div>
+
+            {/* Mobile Radar Alerts Quick Button */}
+            {onOpenLiveAlertsRadar && (
+              <div className="pt-2 border-t border-black/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onOpenLiveAlertsRadar();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-xs font-black text-amber-950 shadow-2xs cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Bell size={15} className="text-amber-600 fill-amber-500 animate-pulse" />
+                    <span>رادار التنبيهات والتزامن الفوري</span>
+                  </span>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                    LIVE
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
