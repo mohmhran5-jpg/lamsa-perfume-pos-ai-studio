@@ -2934,8 +2934,8 @@ const App: React.FC = () => {
         }}
       />
 
-      {/* Main Content Area: Responsive padding with max-width containment (md:pr-72 for desktop sidebar, pt-[104px] for two-deck mobile top bar) */}
-      <main className="min-h-screen w-full max-w-full overflow-x-hidden relative z-0 md:pr-72 pt-[104px] md:pt-4 transition-all duration-200">
+      {/* Main Content Area: Responsive padding with max-width containment (md:pr-72 for desktop sidebar) */}
+      <main className="min-h-screen w-full max-w-full overflow-x-hidden relative z-0 md:pr-72 pt-2 sm:pt-3 md:pt-4 transition-all duration-200">
         {/* Unified Sleek Top Header Bar & Smart Color-Coded Notification Ticker */}
         <ExecutiveHeaderBar
           currentUser={currentUser}

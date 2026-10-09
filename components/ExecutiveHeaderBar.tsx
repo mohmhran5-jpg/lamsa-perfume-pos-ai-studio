@@ -1,32 +1,51 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { AppUser, Sale, Expense, StoreSettings, Product, DailyClosure, View, DEFAULT_USERS, OWNER_FULL_PERMISSIONS, TAREK_OPERATIONAL_PERMISSIONS, resolveActiveAppTheme, isActualPaidOperationalExpense, isLiveProductionSale, calculateDailyAccountingSeparation } from '../types';
+import { 
+  AppUser, 
+  Sale, 
+  Expense, 
+  StoreSettings, 
+  Product, 
+  DailyClosure, 
+  View, 
+  DEFAULT_USERS, 
+  OWNER_FULL_PERMISSIONS, 
+  TAREK_OPERATIONAL_PERMISSIONS, 
+  resolveActiveAppTheme, 
+  isActualPaidOperationalExpense, 
+  isLiveProductionSale, 
+  calculateDailyAccountingSeparation 
+} from '../types';
 import { AppleNotificationItem } from './AppleTopNotificationBanner';
+import SmartFragranceSearchModal from './SmartFragranceSearchModal';
 import { 
   Crown, 
   ArrowLeftRight, 
   Lock, 
   Unlock,
-  KeyRound,
-  X,
-  CheckCircle2,
-  FileText,
-  Download,
-  Bell,
-  BellRing,
-  Copy,
-  Check,
-  Eye,
-  EyeOff,
-  Delete,
-  TrendingUp,
-  ShoppingBag,
-  Wallet,
-  Pause,
-  Play,
-  AlertCircle,
-  Info,
-  Palette,
-  Radio
+  KeyRound, 
+  X, 
+  CheckCircle2, 
+  FileText, 
+  Download, 
+  Bell, 
+  Copy, 
+  Check, 
+  Eye, 
+  EyeOff, 
+  Delete, 
+  ShoppingBag, 
+  Wallet, 
+  AlertCircle, 
+  Info, 
+  Palette, 
+  Radio,
+  Search,
+  Clock,
+  ChevronDown,
+  Layers,
+  Sparkles,
+  LogOut,
+  Sliders
 } from 'lucide-react';
 import { verifyPassword, normalizePasswordInput, canAccessView } from '../services/authService';
 
@@ -39,17 +58,11 @@ export interface SmartTopTickerMessage {
   text: string;
 }
 
-/**
- * Automatically selects text, background, border, and badge colors based on notification type:
- * - 'error'   -> Red (أحمر للأخطاء والتنبيهات الحرجة)
- * - 'success' -> Green (أخضر للنجاح والإنجازات)
- * - 'info'    -> Blue (أزرق للمعلومات والتوجيهات)
- */
 export const getTickerNotificationTheme = (type: TickerNotificationKind) => {
   switch (type) {
     case 'error':
       return {
-        containerBg: 'bg-rose-500/12 border-rose-500/30 hover:bg-rose-500/18',
+        containerBg: 'bg-rose-500/10 border-rose-500/25 hover:bg-rose-500/15',
         badgeBg: 'bg-[#FF3B30] text-white',
         textColor: 'text-rose-800 font-bold',
         dotColor: 'bg-[#FF3B30]',
@@ -57,7 +70,7 @@ export const getTickerNotificationTheme = (type: TickerNotificationKind) => {
       };
     case 'success':
       return {
-        containerBg: 'bg-emerald-500/12 border-emerald-500/30 hover:bg-emerald-500/18',
+        containerBg: 'bg-emerald-500/10 border-emerald-500/25 hover:bg-emerald-500/15',
         badgeBg: 'bg-[#248A3D] text-white',
         textColor: 'text-emerald-900 font-bold',
         dotColor: 'bg-[#34C759]',
@@ -66,7 +79,7 @@ export const getTickerNotificationTheme = (type: TickerNotificationKind) => {
     case 'info':
     default:
       return {
-        containerBg: 'bg-[#0071E3]/10 border-[#0071E3]/25 hover:bg-[#0071E3]/15',
+        containerBg: 'bg-[#0071E3]/10 border-[#0071E3]/20 hover:bg-[#0071E3]/15',
         badgeBg: 'bg-[#0071E3] text-white',
         textColor: 'text-[#0051A8] font-semibold',
         dotColor: 'bg-[#0071E3]',
@@ -124,7 +137,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   onOpenConnectedDevices,
   onUpdateSettings,
 }) => {
-  const activeTheme = useMemo(() => resolveActiveAppTheme(settings), [settings]);
   const isOwner = currentUser?.role === 'OWNER' || currentUser?.username === 'mohamed' || currentUser?.id === 'owner_mohamed';
   const tarekUser = useMemo(() => {
     const found = users.find(u => u.username === 'tarek' || u.id === 'sales_tarek' || u.role === 'STORE_MANAGER');
@@ -138,23 +150,43 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       ? { ...DEFAULT_USERS[0], ...found, role: 'OWNER' as const, isActive: true, permissions: OWNER_FULL_PERMISSIONS }
       : DEFAULT_USERS[0];
   }, [users]);
-  const pinInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [isTickerPaused, setIsTickerPaused] = useState(false);
+  const pinInputRef = useRef<HTMLInputElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  // Modal & Popover States
+  const [isProfilePopoverOpen, setIsProfilePopoverOpen] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [showPinText, setShowPinText] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  // Daily Report Modal & Copy state
+  // Daily Report Modal
   const [showDailyReportModal, setShowDailyReportModal] = useState(false);
   const [copiedReport, setCopiedReport] = useState(false);
 
   const currency = settings?.currency || 'ج.م';
-  const storeName = settings?.storeName || 'لَمْسَةُ عِطْر';
+  const storeName = settings?.storeName || 'لمسة عطر';
+  const logoUrl = settings?.logoUrl || 'https://l.top4top.io/p_31142jfec0.png';
 
-  // Compute today's financial & operational metrics for the Daily Report
+  // Close profile popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setIsProfilePopoverOpen(false);
+      }
+    };
+    if (isProfilePopoverOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isProfilePopoverOpen]);
+
+  // Compute today's financial & operational metrics
   const todayReportData = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
     const dateArabic = new Date().toLocaleDateString('ar-EG', {
@@ -169,7 +201,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     });
 
     const todaysSales = sales.filter(s => s.date && s.date.startsWith(todayStr) && isLiveProductionSale(s));
-    // §1, §2, §36, §93: فقط المصروفات النقدية اليومية المدفوعة فعلياً من الدرج (دون خلط موازنة الـ 15,000 الشهرية أبداً)
     const todaysExpenses = expenses.filter(
       e => e.date && e.date.startsWith(todayStr) && isActualPaidOperationalExpense(e)
     );
@@ -203,8 +234,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     });
 
     const grossOperatingProfit = dailyAccounting.contribution;
-    const totalExpensesToday = directTodayExpenses;
-    // لا تظهر نتائج مالية إلا من البيانات الفعلية المسجلة
     const netFinalProfit = todaysSales.length > 0 ? dailyAccounting.dailyResultVsBudget : 0;
 
     let totalBottles = 0;
@@ -230,7 +259,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
     const lowStockProducts = products.filter(p => p.stock_grams <= (p.min_threshold_grams ?? 30));
 
-    // Build structured, clean Arabic text file content
     const lines: string[] = [
       `================================================================`,
       `               تقرير الأداء المالي والتشغيلي اليومي               `,
@@ -248,104 +276,70 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       `• إجمالي إيرادات المبيعات    : ${totalSalesRevenue.toLocaleString('ar-EG')} ${currency}`,
       `  - مبيعات نقدية (كاش)      : ${cashSales.toLocaleString('ar-EG')} ${currency}`,
       `  - مبيعات بطاقة بنكية       : ${cardSales.toLocaleString('ar-EG')} ${currency}`,
-      `  - مبيعات محفظة إلكترونية   : ${walletSales.toLocaleString('ar-EG')} ${currency}`,
+      `  - محافظ إلكترونية/تحويل    : ${walletSales.toLocaleString('ar-EG')} ${currency}`,
       `----------------------------------------------------------------`,
-      `ثانياً: ملخص التكاليف والمصروفات والمخصص التخطيطي (§37 & §93)`,
+      `ثانياً: التحليل المالي والأرباح التشغيلية`,
       `----------------------------------------------------------------`,
-      `• تكلفة الخامات والزجاجات    : ${Math.round(totalRawMaterialCost).toLocaleString('ar-EG')} ${currency}`,
-      `• عمولات المبيعات المستحقة   : ${Math.round(totalCommissions).toLocaleString('ar-EG')} ${currency}`,
-      `• مصروفات نقدية بالدرج اليوم : ${directTodayExpenses.toLocaleString('ar-EG')} ${currency} (${todaysExpenses.length} حركة)`,
-      `• المخصص التخطيطي لليوم      : ${dailyFixedShare.toLocaleString('ar-EG')} ${currency} (من موازنة 15,000 الشهرية / 25 يوم)`,
-      `• المبلغ الممول فعلياً اليوم : ${dailyAccounting.fundedAllocationToday.toLocaleString('ar-EG')} ${currency}`,
-      `• عجز تمويل مخصص اليوم       : ${dailyAccounting.unfundedAllocationDeficitToday.toLocaleString('ar-EG')} ${currency}`,
+      `• تكلفة المواد الخام المستهلكة : ${Math.round(totalRawMaterialCost).toLocaleString('ar-EG')} ${currency}`,
+      `• عمولات المبيعات المستحقة     : ${Math.round(totalCommissions).toLocaleString('ar-EG')} ${currency}`,
+      `• مجمل المساهمة التشغيلية       : ${Math.round(grossOperatingProfit).toLocaleString('ar-EG')} ${currency}`,
+      `• مصروفات تشغيلية نقدية اليوم   : ${directTodayExpenses.toLocaleString('ar-EG')} ${currency}`,
+      `• صافي النتيجة مقابل الهدف     : ${Math.round(netFinalProfit).toLocaleString('ar-EG')} ${currency}`,
       `----------------------------------------------------------------`,
-      `ثالثاً: المساهمة ونتيجة التشغيل وفق الموازنة`,
-      `----------------------------------------------------------------`,
-      ...(todaysSales.length === 0
-        ? [
-            `• الحالة اليومية              : لا توجد بيانات مبيعات فعلية مسجلة لهذا اليوم`,
-            `• ملاحظة محاسبية              : المخصص التخطيطي اليومي (600 ج) ليس مصروفاً نقدياً يومياً ولا يسجل عجزاً دون معاملات فعلية.`,
-          ]
-        : [
-            `• المساهمة (المبيعات ← التكلفة ← العمولة) : ${Math.round(grossOperatingProfit).toLocaleString('ar-EG')} ${currency}`,
-            `• نتيجة التشغيل وفق الموازنة   : ${netFinalProfit >= 0 ? '+' : ''}${Math.round(netFinalProfit).toLocaleString('ar-EG')} ${currency} (${dailyAccounting.resultStatusBadgeAr})`,
-            `• نسبة المساهمة للمبيعات     : ${totalSalesRevenue > 0 ? Math.round((grossOperatingProfit / totalSalesRevenue) * 100) : 0}%`,
-          ]),
-      `----------------------------------------------------------------`,
-      `رابعاً: أكثر العطور مبيعاً اليوم`,
+      `ثالثاً: أكثر العطور مبيعاً اليوم`,
       `----------------------------------------------------------------`,
       ...(topPerfumes.length > 0
-        ? topPerfumes.map(([name, info], i) => `${i + 1}. ${name} — ${info.qty} عبوة (${info.revenue.toLocaleString('ar-EG')} ${currency})`)
-        : ['• لم يتم تسجيل مبيعات أصناف حتى الآن اليوم.']),
+        ? topPerfumes.map((p, idx) => ` ${idx + 1}. ${p[0]}: ${p[1].qty} عبوة (${p[1].revenue.toLocaleString('ar-EG')} ${currency})`)
+        : [' • لا توجد مبيعات مسجلة حتى الآن.']),
       `----------------------------------------------------------------`,
-      `خامساً: تنبيهات المخزون والنواقص الحرجة (${lowStockProducts.length} صنف)`,
+      `رابعاً: تنبيهات المخزون الحرج`,
       `----------------------------------------------------------------`,
       ...(lowStockProducts.length > 0
-        ? lowStockProducts.slice(0, 8).map(p => `• ${p.name} (${p.type}): المتبقي ${p.stock_grams} جم`)
-        : ['• جميع الزيوت العطرية في مستوى آمن ومستقر.']),
+        ? lowStockProducts.map(p => ` ⚠️ ${p.name}: المتبقي (${p.stock_grams} جم) - الحد الأدنى (${p.min_threshold_grams ?? 30} جم)`)
+        : [' • كافة الزيوت العطرية في مستويات آمنة.']),
       `================================================================`,
-      `   تم إنشاء هذا التقرير آلياً عبر نظام ${storeName} الذكي   `,
-      `================================================================`,
+      `تم استخراج هذا التقرير آلياً من نظام إدارة المتجر الذكي.`
     ];
 
     return {
       todayStr,
+      dateArabic,
+      timeArabic,
       todaysSalesCount: todaysSales.length,
-      totalBottles,
       totalSalesRevenue,
       totalRawMaterialCost,
-      directTodayExpenses,
-      totalExpensesToday,
-      grossOperatingProfit,
-      netFinalProfit,
+      totalCommissions,
       cashSales,
       cardSales,
       walletSales,
+      directTodayExpenses,
+      grossOperatingProfit,
+      netFinalProfit,
+      totalBottles,
+      totalGrams,
+      topPerfumes,
       lowStockCount: lowStockProducts.length,
-      reportText: lines.join('\n'),
+      reportTextContent: lines.join('\n')
     };
-  }, [sales, expenses, settings, products, currentUser, currency, storeName]);
+  }, [sales, expenses, products, storeName, currentUser, currency]);
 
-  // Download .TXT file helper
+  // Export Daily Report (.TXT)
   const handleDownloadTxtReport = () => {
-    const blob = new Blob(['\uFEFF' + todayReportData.reportText], {
-      type: 'text/plain;charset=utf-8;'
-    });
+    const blob = new Blob([todayReportData.reportTextContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `تقرير-اليوم-${todayReportData.todayStr}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `تقرير_لمسة_عطر_اليومي_${todayReportData.todayStr}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
-
-    if (onSendSmartNotification) {
-      onSendSmartNotification(
-        `تم تحميل تقرير اليوم (${todayReportData.todayStr})`,
-        `المبيعات: ${todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} ${currency} · المصروفات: ${todayReportData.directTodayExpenses.toLocaleString('ar-EG')} ${currency} · الصافي: +${Math.round(todayReportData.netFinalProfit).toLocaleString('ar-EG')} ${currency}`,
-        'تقرير نصي .TXT'
-      );
-    }
   };
 
-  // Send as Smart Top Notification immediately
-  const handleSendSmartReportNotification = () => {
-    if (onSendSmartNotification) {
-      onSendSmartNotification(
-        `ملخص تقرير اليوم (${todayReportData.todaysSalesCount} فاتورة)`,
-        `إجمالي المبيعات: ${todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} ${currency} | المصروفات: ${todayReportData.directTodayExpenses.toLocaleString('ar-EG')} ${currency} | صافي الربح: +${Math.round(todayReportData.netFinalProfit).toLocaleString('ar-EG')} ${currency}`,
-        'إشعار إداري ذكي'
-      );
-    }
-    setShowDailyReportModal(false);
-  };
-
-  // Copy Report Text
-  const handleCopyReportText = () => {
-    navigator.clipboard.writeText(todayReportData.reportText);
+  const handleCopyReportToClipboard = () => {
+    navigator.clipboard.writeText(todayReportData.reportTextContent);
     setCopiedReport(true);
-    setTimeout(() => setCopiedReport(false), 2000);
+    setTimeout(() => setCopiedReport(false), 2500);
     if (onSendSmartNotification) {
       onSendSmartNotification(
         'تم نسخ تقرير اليوم للحافظة',
@@ -357,6 +351,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
   // Quick switch from Owner to Tarek
   const handleQuickSwitchToTarek = () => {
+    setIsProfilePopoverOpen(false);
     if (tarekUser) {
       onSwitchUser({ ...tarekUser, requiresPasswordChange: false });
     } else {
@@ -366,6 +361,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
   // Open Owner switch modal
   const handleSwitchToOwnerClick = () => {
+    setIsProfilePopoverOpen(false);
     setPasswordInput('');
     setPasswordError(null);
     setShowPinText(false);
@@ -384,19 +380,16 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     setPasswordError(null);
   };
 
-  // Background verification without exposing the password on UI
   const handleInputChange = async (rawVal: string) => {
     setPasswordInput(rawVal);
     setPasswordError(null);
     const normalized = normalizePasswordInput(rawVal);
     const digitsOnly = normalized.replace(/\D/g, '');
-    // Secret background auto-unlock when owner PIN is typed
     if (normalized === '5188' || digitsOnly === '5188') {
       executeOwnerUnlock();
     }
   };
 
-  // Global keyboard listener when showPasswordPrompt is active so typing 5188 works even without input focus
   useEffect(() => {
     if (!showPasswordPrompt) return;
     const focusTimer = window.setTimeout(() => {
@@ -466,7 +459,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       } else {
         setPasswordError('رمز المرور غير صحيح، يرجى المحاولة مرة أخرى');
       }
-    } catch (err) {
+    } catch {
       if (normalized === '5188') {
         executeOwnerUnlock();
       } else {
@@ -483,422 +476,427 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     handleInputChange(next);
   };
 
-  // Build real-time semantic notifications for the unified top ticker across all pages
-  const smartTickerMessages = useMemo<SmartTopTickerMessage[]>(() => {
-    const list: SmartTopTickerMessage[] = [];
-
-    // 1. Include any active/recent top notifications mapped to semantic (error | success | info)
-    topNotifications.forEach((n) => {
-      const mappedType: TickerNotificationKind =
-        n.type === 'stock' || n.type === 'warning'
-          ? 'error'
-          : n.type === 'sale' || n.type === 'auth'
-          ? 'success'
-          : 'info';
-      list.push({
-        id: `live-notif-${n.id}`,
-        type: mappedType,
-        tag: n.badgeText || (mappedType === 'error' ? 'تنبيه' : mappedType === 'success' ? 'نجاح' : 'معلومة'),
-        text: n.subtitle ? `${n.title} — ${n.subtitle}` : n.title,
-      });
-    });
-
-    // 2. Shift & Daily Closure Status
-    const isShiftOpen = currentClosure?.status === 'مفتوح';
-    if (!isShiftOpen) {
-      list.push({
-        id: 'shift-closed-error',
-        type: 'error',
-        tag: 'تنبيه الوردية',
-        text: 'يوم التشغيل مغلق حالياً — اضغط «الدرج» لفتح الوردية وتفعيل تسجيل المبيعات.',
-      });
-    } else {
-      list.push({
-        id: 'shift-open-success',
-        type: 'success',
-        tag: 'الوردية نشطة',
-        text: 'الوردية مفتوحة ومتصلة بالسحابة — يتم حفظ الفواتير وحركة الجرامات لحظياً.',
-      });
+  // Single quiet current status headline for Dynamic Island
+  const currentStatusHeadline = useMemo(() => {
+    if (currentClosure?.status !== 'مفتوح') {
+      return {
+        text: 'يوم التشغيل مغلق — اضغط على زر الوردية لتسجيل عهدة البداية',
+        type: 'error' as const,
+      };
     }
-
-    // 3. Today's Sales Achievement (Profit shown only to Owner)
     if (todayReportData.todaysSalesCount > 0) {
-      list.push({
-        id: 'sales-today-success',
-        type: 'success',
-        tag: 'إنجاز اليوم',
-        text: isOwner
-          ? `تم إصدار (${todayReportData.todaysSalesCount}) فاتورة اليوم بإجمالي ${todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} ${currency} وصافي ربح +${Math.round(todayReportData.netFinalProfit).toLocaleString('ar-EG')} ${currency}.`
-          : `تم إصدار (${todayReportData.todaysSalesCount}) فاتورة اليوم (${todayReportData.totalBottles} عبوة) بإجمالي مبيعات ${todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} ${currency}.`,
-      });
-    } else {
-      list.push({
-        id: 'sales-start-info',
-        type: 'info',
-        tag: 'معلومة الكاشير',
-        text: 'لإصدار فاتورة سريعة: اختر العطر وحدد الحجم المطلوب بحرية تامة أو خصص الجرامات والتركيز.',
-      });
+      return {
+        text: `تم تسجيل ${todayReportData.todaysSalesCount} فاتورة اليوم بإجمالي ${todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} ${currency}`,
+        type: 'success' as const,
+      };
     }
+    return {
+      text: 'المتجر متصل بالسحابة والوردية نشطة وجاهزة لتسجيل المبيعات',
+      type: 'info' as const,
+    };
+  }, [currentClosure?.status, todayReportData.todaysSalesCount, todayReportData.totalSalesRevenue, currency]);
 
-    // 4. Stock & Shortages Alert
-    if (todayReportData.lowStockCount > 0) {
-      list.push({
-        id: 'stock-shortage-error',
-        type: 'error',
-        tag: 'نواقص المخزون',
-        text: `تنبيه مخزون: يوجد (${todayReportData.lowStockCount}) صنف عطري وصل للحد الحرج ويحتاج لمراجعة وطلب توريد.`,
-      });
-    } else {
-      list.push({
-        id: 'stock-safe-success',
-        type: 'success',
-        tag: 'استقرار المخزون',
-        text: 'جميع الزيوت العطرية الأساسية متوفرة بمستويات آمنة ومستقرة في المخزون.',
-      });
-    }
-
-    // 5. Smart Target & Sales Motivation Info
-    const todayNetContrib = Math.max(0, todayReportData.grossOperatingProfit - todayReportData.totalCommissions);
-    list.push({
-      id: 'target-contrib-info',
-      type: todayNetContrib >= 600 ? 'success' : 'info',
-      tag: 'تحفيز المبيعات',
-      text: isOwner
-        ? `مساهمة اليوم المحققة: ${Math.round(todayNetContrib).toLocaleString('ar-EG')} ${currency} من تارجت 600 ${currency} (الهدف التطويري 1,000 ${currency}).`
-        : `عبوات اليوم المباعة: (${todayReportData.totalBottles}) عبوة — بيع أكثر من 10 عبوات يرفع عمولتك الفورية من 5% إلى 7% على كافة المبيعات.`,
-    });
-
-    if (isOwner) {
-      list.push({
-        id: 'daily-report-info',
-        type: 'info',
-        tag: 'إدارة ذكية',
-        text: 'يمكنك تصدير ملخص المبيعات والأرباح اليومي كملف نصي (.TXT) في أي لحظة من زر «تقرير اليوم» بالأعلى.',
-      });
-    }
-
-    if (connectedDevicesCount > 0) {
-      list.push({
-        id: 'connected-devices-sync-live',
-        type: 'success',
-        tag: 'تزامن حي 100%',
-        text: `⚡ متصل الآن (${connectedDevicesCount}) أجهزة في الوقت الفعلي مع تحديث فوري لكافة المبيعات والمخزون والخزائن.`,
-      });
-    }
-
-    return list;
-  }, [topNotifications, currentClosure?.status, todayReportData, currency, settings?.loyaltyEnabled, isOwner, connectedDevicesCount]);
-
-  const marqueeLoopMessages = useMemo(
-    () => [...smartTickerMessages, ...smartTickerMessages],
-    [smartTickerMessages]
-  );
+  // Main accessible views list for the Segmented Navigation Dock
+  const navItems = useMemo(() => {
+    return ([
+      { id: View.POS, label: 'الكاشير', icon: ShoppingBag, badge: todayReportData.todaysSalesCount > 0 ? `${todayReportData.todaysSalesCount}` : null },
+      { id: View.DASHBOARD, label: 'لوحة القيادة', icon: Sparkles, badge: null },
+      { id: View.INVENTORY, label: 'المخزون', icon: Layers, badge: products.length > 0 ? `${products.length}` : null },
+      { id: View.REPORTS, label: 'سجل الفواتير', icon: Clock, badge: null },
+      { id: View.CUSTOMERS_LOYALTY, label: 'العملاء والولاء', icon: Crown, badge: null },
+      { id: View.FORMULATION_ENGINE, label: 'محرك التركيب', icon: Sliders, badge: null },
+      { id: View.EXPENSES, label: 'المصاريف', icon: Wallet, badge: null },
+    ] as const).filter(item => canAccessView(currentUser, item.id));
+  }, [currentUser, todayReportData.todaysSalesCount, products.length]);
 
   return (
     <>
       {/* ======================================================== */}
-      {/* UNIFIED SLEEK TOP BAR + SMART COLOR-CODED TICKER         */}
-      {/* (Sits cleanly at the top of ALL pages without bloat)     */}
+      {/* PURE APPLE GLASS TOP BAR (FAITHFUL TO USER'S REFERENCE)  */}
+      {/* Capsule Profile + Circular Action Buttons + Status Pill */}
       {/* ======================================================== */}
-      <aside
-        aria-label="الشريط العلوي الموحد والإشعارات الذكية"
-        className="mx-3 sm:mx-5 lg:mx-6 mb-2.5 animate-in fade-in duration-200"
+      <header
+        aria-label="شريط التحكم العلوي"
+        className="mx-2.5 sm:mx-4 lg:mx-6 mb-3 select-none"
       >
-        <div className="apple-glass rounded-2xl border border-black/[0.07] px-2.5 py-1.5 shadow-apple-xs flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 overflow-hidden">
-          {/* Right: Compact Identity Chip (No bulky privilege explanation) + Ticker Pause/Play */}
-          <div className="flex items-center gap-1.5 shrink-0 z-10">
-            {isOwner ? (
-              <div
-                className="px-2.5 py-1 rounded-xl bg-[#1D1D1F] text-white border border-[#C49746]/40 flex items-center gap-1.5 shadow-2xs"
-                title="المدير العام"
+        <div className="apple-glass rounded-[28px] border border-black/[0.06] p-2.5 sm:p-3 shadow-apple-xs space-y-2.5">
+          {/* ---------------------------------------------------- */}
+          {/* ROW 1: BRAND LOGO + PROFILE CAPSULE + ACTION CIRCLES */}
+          {/* ---------------------------------------------------- */}
+          <div className="flex items-center justify-between gap-2">
+            {/* RIGHT SIDE: Avatar Badge & Profile Capsule Pill */}
+            <div className="flex items-center gap-2 shrink-0 relative" ref={popoverRef}>
+              {/* Circular Logo Badge */}
+              <div 
+                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center p-1.5 shrink-0 select-none hover:scale-105 transition-transform"
+                title={storeName}
               >
-                <Crown size={13} className="text-[#C49746] fill-[#C49746] shrink-0" />
-                <span className="text-[11px] font-black tracking-tight text-amber-300 whitespace-nowrap">
-                  {currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || 'د. محمد'}
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] shrink-0" />
-              </div>
-            ) : (
-              <div
-                className="px-2.5 py-1 rounded-xl bg-[#0071E3]/10 text-[#0071E3] border border-[#0071E3]/25 flex items-center gap-1.5"
-                title="مدير المبيعات"
-              >
-                <span className="text-xs leading-none shrink-0">💼</span>
-                <span className="text-[11px] font-black tracking-tight text-[#1D1D1F] whitespace-nowrap">
-                  {currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-[#0071E3] shrink-0" />
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setIsTickerPaused(!isTickerPaused)}
-              className="w-6 h-6 rounded-lg bg-black/[0.04] hover:bg-black/[0.08] text-[#636366] hover:text-[#1D1D1F] flex items-center justify-center transition-colors cursor-pointer shrink-0"
-              title={isTickerPaused ? 'تشغيل حركة شريط الإشعارات' : 'إيقاف مؤقت للقراءة'}
-            >
-              {isTickerPaused ? <Play size={11} className="fill-current" /> : <Pause size={11} />}
-            </button>
-          </div>
-
-          {/* Center: Smart Notification Ticker (.apple-ticker-track-right) with Automatic Semantic Colors */}
-          <div
-            dir="ltr"
-            className="order-3 lg:order-2 w-full lg:w-auto lg:flex-1 min-w-0 overflow-hidden relative apple-ticker-mask py-0.5 select-none border-t lg:border-t-0 border-black/[0.04] pt-1.5 lg:pt-0"
-          >
-            <div className={`apple-ticker-track-right items-center ${isTickerPaused ? 'apple-ticker-paused' : ''}`}>
-              {[0, 1].map((loopIdx) => (
-                <div
-                  key={loopIdx}
-                  className="flex items-center shrink-0"
-                  aria-hidden={loopIdx === 1}
-                >
-                  {smartTickerMessages.map((msg) => {
-                    const theme = getTickerNotificationTheme(msg.type);
-                    return (
-                      <div
-                        key={`${loopIdx}-${msg.id}`}
-                        dir="rtl"
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 mx-1.5 rounded-xl border transition-colors shrink-0 ${theme.containerBg}`}
-                      >
-                        {theme.icon}
-                        <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black whitespace-nowrap ${theme.badgeBg}`}>
-                          {msg.tag}
-                        </span>
-                        <span className={`text-[11px] whitespace-nowrap tracking-tight ${theme.textColor}`}>
-                          {msg.text}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Left: Sleek Compact Quick Controls */}
-          <div className="order-2 lg:order-3 flex items-center gap-1.5 shrink-0 z-10">
-            {onUpdateSettings && (
-              <button
-                type="button"
-                data-keep-numerals="true"
-                onClick={() => {
-                  const nextNumeral = settings?.siteNumeralSystem === 'ar' ? 'en' : 'ar';
-                  onUpdateSettings((prev) => ({
-                    ...prev,
-                    siteNumeralSystem: nextNumeral,
-                  }));
-                  if (onSendSmartNotification) {
-                    onSendSmartNotification(
-                      nextNumeral === 'ar'
-                        ? 'تم تفعيل الأرقام العربية (٠١٢٣٤٥٦٧٨٩) في كامل الموقع'
-                        : 'تم تفعيل الأرقام الإنجليزية (0123456789) في كامل الموقع',
-                      'يمكنك التبديل في أي لحظة أو تخصيص الخطوط والألوان من استوديو الثيمات',
-                      nextNumeral === 'ar' ? '١٢٣ عربي' : '123 EN'
-                    );
-                  }
-                }}
-                className="apple-btn px-2 py-1 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.08] text-[10px] font-mono font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                title="تبديل فوري للغة الأرقام في كامل الموقع (عربية ٠١٢٣ / إنجليزية 0123)"
-              >
-                <span className={settings?.siteNumeralSystem === 'ar' ? 'text-[#0071E3]' : 'opacity-50'}>
-                  ١٢٣
-                </span>
-                <span className="opacity-30">/</span>
-                <span className={settings?.siteNumeralSystem !== 'ar' ? 'text-[#0071E3]' : 'opacity-50'}>
-                  123
-                </span>
-              </button>
-            )}
-
-            {onOpenThemeStudio && (
-              <button
-                type="button"
-                onClick={onOpenThemeStudio}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.08] text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
-                title={`تحكم في الخطوط والألوان وحجم الخط والثيمات — النشط حالياً: ${activeTheme.nameAr}`}
-              >
-                <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0 border border-white/60 shadow-2xs"
-                  style={{ backgroundColor: activeTheme.colors.primaryAccent }}
+                <img
+                  src={logoUrl}
+                  alt={storeName}
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                  className="w-full h-full object-contain rounded-full"
                 />
-                <Palette size={12} style={{ color: activeTheme.colors.primaryAccent }} />
-                <span>الخطوط والثيمات</span>
-              </button>
-            )}
+              </div>
 
-            {onOpenLiveAlertsRadar && (
+              {/* Signature Profile Capsule Pill (كما في الصورة تماماً) */}
+              <button
+                type="button"
+                onClick={() => setIsProfilePopoverOpen(!isProfilePopoverOpen)}
+                className="h-11 sm:h-12 px-3.5 sm:px-4 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-between gap-2.5 sm:gap-3.5 min-w-[155px] sm:min-w-[200px] transition-all cursor-pointer group active:scale-98"
+                title="إدارة الحساب وتبديل المستخدم"
+              >
+                <div className="text-right min-w-0">
+                  <div className={`text-xs sm:text-[13px] font-black truncate leading-tight ${isOwner ? 'text-[#C49746]' : 'text-[#0071E3]'}`}>
+                    {isOwner ? 'أهلاً د. محمد' : 'أهلاً طارق'}
+                  </div>
+                  <div className="text-[10px] text-[#86868B] font-medium truncate mt-0.5 leading-none">
+                    {isOwner ? 'المدير العام (المالك)' : (currentUser?.phone || '01008518800 · كاشير')}
+                  </div>
+                </div>
+                <ChevronDown 
+                  size={14} 
+                  className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform duration-200 ${isProfilePopoverOpen ? 'rotate-180 text-[#0071E3]' : ''}`} 
+                />
+              </button>
+
+              {/* ------------------------------------------------ */}
+              {/* APPLE PROFILE & USER SWITCHER CONTROL POPOVER    */}
+              {/* ------------------------------------------------ */}
+              {isProfilePopoverOpen && (
+                <div 
+                  className="absolute top-14 right-0 z-50 w-72 sm:w-80 rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.08] shadow-2xl p-3.5 space-y-3 animate-in fade-in zoom-in-95 duration-150"
+                  dir="rtl"
+                >
+                  {/* Current Active Account Header */}
+                  <div className="flex items-center gap-3 pb-3 border-b border-black/[0.06]">
+                    <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-sm text-white shadow-apple-xs ${isOwner ? 'bg-[#1D1D1F] border border-[#C49746]/50' : 'bg-[#0071E3]'}`}>
+                      {isOwner ? <Crown size={18} className="text-[#C49746] fill-[#C49746]" /> : 'ط'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <strong className="text-xs font-black text-[#1D1D1F] truncate block">
+                          {currentUser?.displayName || 'المستخدم'}
+                        </strong>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] shrink-0" />
+                      </div>
+                      <span className="text-[11px] text-[#86868B] block truncate">
+                        {isOwner ? 'كامل صلاحيات الإدارة والمالك' : 'مسؤول المبيعات وتشغيل الكاشير'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Switch Account Quick Action */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold text-[#86868B] px-1 block">تبديل المستخدم السريع:</span>
+                    {isOwner ? (
+                      <button
+                        type="button"
+                        onClick={handleQuickSwitchToTarek}
+                        className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-blue-50/80 border border-black/[0.05] hover:border-blue-200 flex items-center justify-between text-xs font-bold text-[#1D1D1F] transition-all cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="w-7 h-7 rounded-full bg-blue-100 text-[#0071E3] flex items-center justify-center text-xs font-black">ط</span>
+                          <div className="text-right">
+                            <span className="block font-bold">التبديل إلى حساب طارق</span>
+                            <span className="text-[9.5px] text-[#86868B]">كاشير ومبيعات مباشر</span>
+                          </div>
+                        </div>
+                        <ArrowLeftRight size={13} className="text-[#0071E3]" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSwitchToOwnerClick}
+                        className="w-full p-2.5 rounded-2xl bg-[#1D1D1F] hover:bg-black text-white border border-[#C49746]/30 flex items-center justify-between text-xs font-bold transition-all cursor-pointer shadow-apple-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Crown size={15} className="text-[#C49746] fill-[#C49746]" />
+                          <div className="text-right">
+                            <span className="block text-amber-300 font-bold">دخول المدير العام (د. محمد)</span>
+                            <span className="text-[9.5px] text-zinc-400">يتطلب رمز المرور السري</span>
+                          </div>
+                        </div>
+                        <Lock size={13} className="text-[#C49746]" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Quick Controls Grid */}
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-black/[0.05]">
+                    {/* Lock Screen */}
+                    {onLockScreen && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfilePopoverOpen(false);
+                          onLockScreen();
+                        }}
+                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Lock size={12} className="text-amber-600" />
+                        <span>قفل الشاشة</span>
+                      </button>
+                    )}
+
+                    {/* Numeral System Toggle */}
+                    {onUpdateSettings && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextNumeral = settings?.siteNumeralSystem === 'ar' ? 'en' : 'ar';
+                          onUpdateSettings(prev => ({ ...prev, siteNumeralSystem: nextNumeral }));
+                          setIsProfilePopoverOpen(false);
+                        }}
+                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer font-mono"
+                      >
+                        <span>{settings?.siteNumeralSystem === 'ar' ? 'الأرقام: ١٢٣' : 'Numbers: 123'}</span>
+                      </button>
+                    )}
+
+                    {/* Daily Report Automation */}
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfilePopoverOpen(false);
+                          if (onOpenDailyReportAutomation) onOpenDailyReportAutomation();
+                          else setShowDailyReportModal(true);
+                        }}
+                        className="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer col-span-2"
+                      >
+                        <FileText size={13} />
+                        <span>تصدير تقرير اليوم (.TXT)</span>
+                      </button>
+                    )}
+
+                    {/* Connected Devices */}
+                    {onOpenConnectedDevices && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfilePopoverOpen(false);
+                          onOpenConnectedDevices();
+                        }}
+                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Radio size={12} className="text-emerald-600" />
+                        <span>الأجهزة ({connectedDevicesCount})</span>
+                      </button>
+                    )}
+
+                    {/* Theme Studio */}
+                    {onOpenThemeStudio && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfilePopoverOpen(false);
+                          onOpenThemeStudio();
+                        }}
+                        className="p-2 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Palette size={12} className="text-purple-600" />
+                        <span>الثيمات</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* General Auth Modal / User Switch */}
+                  <div className="pt-2 border-t border-black/[0.05]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfilePopoverOpen(false);
+                        onOpenAuthModal();
+                      }}
+                      className="w-full py-2 rounded-xl text-rose-600 hover:bg-rose-50 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <LogOut size={13} />
+                      <span>إدارة المستخدمين وتسجيل الخروج</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* LEFT SIDE: Trio of Perfect Circular Glass Action Buttons (كما في الصورة) */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* 1. Search Circle Button */}
+              <button
+                type="button"
+                onClick={() => setIsSearchModalOpen(true)}
+                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center text-[#1D1D1F] active:scale-95 transition-all cursor-pointer"
+                title="بحث ذكي في العطور والتركيبات"
+              >
+                <Search size={18} strokeWidth={1.8} />
+              </button>
+
+              {/* 2. Cart / POS Circle Button */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.(View.POS)}
+                className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center active:scale-95 transition-all cursor-pointer relative ${currentView === View.POS ? 'ring-2 ring-[#0071E3] text-[#0071E3]' : 'text-[#1D1D1F]'}`}
+                title="الكاشير والمبيعات"
+              >
+                <ShoppingBag size={18} strokeWidth={1.8} />
+                {todayReportData.todaysSalesCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[19px] h-[19px] px-1 rounded-full bg-[#0071E3] text-white text-[10px] font-mono font-black flex items-center justify-center shadow-2xs border-2 border-white">
+                    {todayReportData.todaysSalesCount}
+                  </span>
+                )}
+              </button>
+
+              {/* 3. Notification Bell Circle Button */}
               <button
                 type="button"
                 onClick={onOpenLiveAlertsRadar}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-amber-500/12 hover:bg-amber-500/22 text-amber-950 border border-amber-500/35 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shadow-2xs"
-                title="رادار تنبيهات المالك المباشرة (تزامن المبيعات في الوقت الفعلي مع اللاب توب والموبايل)"
+                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center text-[#1D1D1F] active:scale-95 transition-all cursor-pointer relative"
+                title="رادار التنبيهات والتزامن الحي"
               >
-                <Bell size={12} className="text-amber-600 fill-amber-500 animate-pulse" />
-                <span className="hidden sm:inline">رادار التنبيهات</span>
-                <span className="text-[10px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-800 font-mono font-bold">LIVE</span>
+                <Bell size={18} strokeWidth={1.8} />
+                <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse" />
               </button>
-            )}
+            </div>
+          </div>
 
-            {onOpenConnectedDevices && (
-              <button
-                type="button"
-                onClick={onOpenConnectedDevices}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-emerald-500/12 hover:bg-emerald-500/22 text-emerald-950 border border-emerald-500/35 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shadow-2xs"
-                title="رادار الأجهزة المتصلة والتزامن اللحظي المباشر بين الهواتف والكمبيوتر"
-              >
-                <Radio size={12} className="text-emerald-600 animate-pulse" />
-                <span className="hidden sm:inline">الأجهزة المتصلة</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-800 font-mono font-bold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                  <span>{connectedDevicesCount}</span>
-                </span>
-              </button>
-            )}
-
-            {onOpenPWAInstall && (
-              <button
-                type="button"
-                onClick={onOpenPWAInstall}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-blue-500/12 hover:bg-blue-500/22 text-blue-950 border border-blue-500/35 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shadow-2xs"
-                title="تثبيت لمسة عطر كتطبيق مستقل على الموبايل واللاب توب والكمبيوتر"
-              >
-                <Download size={12} className="text-blue-600" />
-                <span className="hidden sm:inline">تثبيت التطبيق</span>
-                <span className="text-[10px] px-1 py-0.2 rounded bg-blue-500/20 text-blue-800 font-mono font-bold">APP</span>
-              </button>
-            )}
-
-            {isOwner && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (onOpenDailyReportAutomation) {
-                    onOpenDailyReportAutomation();
-                  } else {
-                    setShowDailyReportModal(true);
-                  }
-                }}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-emerald-500/12 hover:bg-emerald-500/20 text-emerald-800 border border-emerald-500/25 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                title="أتمتة تقرير إغلاق اليوم (12 منتصف الليل) وإرساله عبر Gmail و Google Forms"
-              >
-                <FileText size={12} className="text-emerald-700" />
-                <span className="hidden sm:inline">أتمتة تقرير اليوم</span>
-              </button>
-            )}
-
+          {/* ---------------------------------------------------- */}
+          {/* ROW 2: STATUS CAPSULE STRIP + HISTORY CLOCK CIRCLE  */}
+          {/* (مطابق تماماً للشريط الثانوي في الصورة)             */}
+          {/* ---------------------------------------------------- */}
+          <div className="flex items-center justify-between gap-2 pt-1 border-t border-black/[0.04]">
+            {/* RIGHT SIDE: Store Branch & Shift Capsule (كما في الصورة "من فضلك اختر عنوان ⌄") */}
             <button
               type="button"
               onClick={onOpenDayOperations}
-              className="apple-btn px-2.5 py-1 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.06] text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+              className="h-9 px-3.5 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center gap-2 transition-all cursor-pointer text-xs group active:scale-98 max-w-[70%] sm:max-w-none"
               title="فتح وإغلاق اليوم والدرج"
             >
-              {currentClosure?.status === 'مفتوح' ? (
-                <Unlock size={12} className="text-emerald-600" />
-              ) : (
-                <Lock size={12} className="text-rose-600" />
-              )}
-              <span>الدرج</span>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${currentClosure?.status === 'مفتوح' ? 'bg-[#34C759] animate-pulse' : 'bg-rose-500'}`} />
+              <span className="font-bold text-[#1D1D1F] truncate text-[11px] sm:text-xs">
+                {currentClosure?.status === 'مفتوح'
+                  ? 'فرع لمسة عطر الرئيسي · الوردية مفتوحة'
+                  : 'فرع لمسة عطر الرئيسي · الوردية مغلقة'}
+              </span>
+              <ChevronDown size={13} className="text-[#86868B] group-hover:text-[#1D1D1F] shrink-0" />
             </button>
 
-            {onLockScreen && (
-              <button
-                type="button"
-                onClick={onLockScreen}
-                className="apple-btn px-2 py-1 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.06] text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                title="قفل الشاشة فوراً"
-              >
-                <Lock size={12} className="text-amber-500" />
-                <span className="hidden sm:inline">قفل</span>
-              </button>
-            )}
-
-            {isOwner ? (
-              <button
-                type="button"
-                onClick={handleQuickSwitchToTarek}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-[#C49746]/20 hover:bg-[#C49746]/30 text-[#6E470B] border border-[#C49746]/35 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                title="تحويل سريع لحساب طارق"
-              >
-                <ArrowLeftRight size={11} strokeWidth={2.5} />
-                <span>حساب طارق</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSwitchToOwnerClick}
-                className="apple-btn px-2.5 py-1 rounded-xl bg-[#1D1D1F] hover:bg-black text-amber-300 text-[11px] font-black flex items-center gap-1 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
-                title="دخول المدير العام (د. محمد)"
-              >
-                <Crown size={12} className="text-[#C49746] fill-[#C49746]" />
-                <span>د. محمد</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Store Manager Quick Workspace Navigation Dock (1-Click Access Across All Core Operations) */}
-        {onNavigate && (
-          <div className="mt-2 px-2.5 py-1.5 rounded-2xl bg-white/95 border border-slate-200/85 shadow-2xs flex items-center justify-between gap-2 overflow-x-auto scrollbar-none">
+            {/* LEFT SIDE: Circular History & Style Buttons (كما في أيقونة الساعة في الصورة) */}
             <div className="flex items-center gap-1.5 shrink-0">
-              {([
-                { id: View.POS, label: '🛒 الكاشير والمبيعات', badge: `${todayReportData.todaysSalesCount} فاتورة` },
-                { id: View.DASHBOARD, label: '📊 لوحة القيادة', badge: null },
-                { id: View.INVENTORY, label: '📦 المخزون الخام', badge: `${products.length} صنف` },
-                { id: View.REPORTS, label: '🧾 سجل الفواتير', badge: null },
-                { id: View.CUSTOMERS_LOYALTY, label: '👥 العملاء والولاء', badge: null },
-                { id: View.FORMULATION_ENGINE, label: '🧪 محرك التركيب', badge: null },
-                { id: View.EXPENSES, label: '💸 المصاريف', badge: null },
-              ] as const)
-                .filter((navItem) => canAccessView(currentUser, navItem.id))
-                .map((navItem) => {
-                  const isActive = currentView === navItem.id;
+              {/* History / Invoices Circle Button */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.(View.REPORTS)}
+                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center active:scale-95 transition-all cursor-pointer ${currentView === View.REPORTS ? 'ring-2 ring-[#0071E3] text-[#0071E3]' : 'text-[#1D1D1F]'}`}
+                title="سجل الفواتير والعمليات المعتمدة"
+              >
+                <Clock size={16} strokeWidth={1.8} />
+              </button>
+
+              {/* Theme Studio Button */}
+              {onOpenThemeStudio && (
+                <button
+                  type="button"
+                  onClick={onOpenThemeStudio}
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/95 hover:bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center text-[#1D1D1F] active:scale-95 transition-all cursor-pointer"
+                  title="استوديو الثيمات والخطوط"
+                >
+                  <Palette size={16} strokeWidth={1.8} />
+                </button>
+              )}
+
+              {/* PWA App Install Button */}
+              {onOpenPWAInstall && (
+                <button
+                  type="button"
+                  onClick={onOpenPWAInstall}
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-blue-50/90 hover:bg-blue-100 text-blue-700 border border-blue-200/60 shadow-apple-xs flex items-center justify-center active:scale-95 transition-all cursor-pointer"
+                  title="تثبيت التطبيق على الجهاز"
+                >
+                  <Download size={15} strokeWidth={1.8} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ---------------------------------------------------- */}
+          {/* ROW 3: ULTRA-CLEAN APPLE SEGMENTED NAVIGATION DOCK   */}
+          {/* (ترتيب أنيق وبسيط بدون زحام ولا تشتيت)              */}
+          {/* ---------------------------------------------------- */}
+          {onNavigate && (
+            <div className="pt-1 border-t border-black/[0.04]">
+              <nav 
+                aria-label="التنقل السريع"
+                className="flex items-center gap-1.5 p-1 rounded-full bg-black/[0.03] overflow-x-auto no-scrollbar scroll-smooth"
+              >
+                {navItems.map((item) => {
+                  const isActive = currentView === item.id;
+                  const Icon = item.icon;
                   return (
                     <button
-                      key={navItem.id}
+                      key={item.id}
                       type="button"
-                      onClick={() => onNavigate(navItem.id)}
-                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                      onClick={() => onNavigate(item.id)}
+                      className={`px-3 sm:px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 active:scale-98 ${
                         isActive
-                          ? 'bg-slate-900 text-white shadow-2xs'
-                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/70'
+                          ? 'bg-[#1D1D1F] text-white shadow-apple-xs'
+                          : 'text-[#636366] hover:text-[#1D1D1F] hover:bg-white/60'
                       }`}
                     >
-                      <span>{navItem.label}</span>
-                      {navItem.badge && (
-                        <span
-                          className={`font-mono text-[9.5px] px-1.5 py-0.2 rounded-md font-black ${
-                            isActive ? 'bg-white/15 text-amber-300' : 'bg-slate-200/70 text-slate-600'
-                          }`}
-                        >
-                          {navItem.badge}
+                      <Icon size={13} strokeWidth={isActive ? 2.2 : 1.8} />
+                      <span>{item.label}</span>
+                      {item.badge && (
+                        <span className={`font-mono text-[9.5px] px-1.5 py-0.2 rounded-full font-black ${isActive ? 'bg-white/20 text-white' : 'bg-black/[0.06] text-[#86868B]'}`}>
+                          {item.badge}
                         </span>
                       )}
                     </button>
                   );
                 })}
+              </nav>
+            </div>
+          )}
+
+          {/* ---------------------------------------------------- */}
+          {/* ROW 4: SUBTLE DYNAMIC ISLAND STATUS NOTIFICATION     */}
+          {/* ---------------------------------------------------- */}
+          <div className="flex items-center justify-between text-[11px] px-1 text-[#86868B] font-medium">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className={`w-1.5 h-1.5 rounded-full ${currentStatusHeadline.type === 'error' ? 'bg-rose-500' : currentStatusHeadline.type === 'success' ? 'bg-[#34C759]' : 'bg-[#0071E3]'}`} />
+              <span className="truncate">{currentStatusHeadline.text}</span>
             </div>
 
-            <div className="hidden xl:flex items-center gap-2 text-[11px] font-mono text-slate-500 shrink-0 pl-1">
-              <span>
-                مبيعات اليوم: <strong className="text-slate-900">{todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} {currency}</strong>
-              </span>
+            <div className="hidden sm:flex items-center gap-2 font-mono text-[10.5px] shrink-0">
+              <span>مبيعات اليوم: <strong className="text-[#1D1D1F]">{todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} {currency}</strong></span>
               <span>·</span>
-              <span>
-                العبوات: <strong className="text-[#0071E3]">{todayReportData.totalBottles}</strong>
-              </span>
+              <span>العبوات: <strong className="text-[#0071E3]">{todayReportData.totalBottles}</strong></span>
             </div>
           </div>
-        )}
-      </aside>
+        </div>
+      </header>
 
       {/* ======================================================== */}
-      {/* DAILY REPORT EXPORT & SMART NOTIFICATION MODAL           */}
+      {/* INTEGRATED SMART SEARCH MODAL (SEARCH CIRCLE BUTTON)     */}
+      {/* ======================================================== */}
+      {isSearchModalOpen && (
+        <SmartFragranceSearchModal
+          isOpen={isSearchModalOpen}
+          onClose={() => setIsSearchModalOpen(false)}
+          products={products}
+          onAddToCart={(product) => {
+            setIsSearchModalOpen(false);
+            if (onNavigate) onNavigate(View.POS);
+          }}
+        />
+      )}
+
+      {/* ======================================================== */}
+      {/* DAILY REPORT EXPORT MODAL (.TXT)                         */}
       {/* ======================================================== */}
       {showDailyReportModal && (
         <div className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="apple-glass rounded-[28px] p-5 sm:p-6 w-full max-w-lg border border-black/[0.1] shadow-apple-lg space-y-4 bg-white/95 max-h-[90vh] flex flex-col">
-            {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-2xl bg-[#0071E3] text-white flex items-center justify-center shadow-xs">
@@ -920,7 +918,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               </button>
             </div>
 
-            {/* Quick Executive KPI Cards */}
             <div className="grid grid-cols-3 gap-2.5 shrink-0">
               <div className="p-3 rounded-2xl bg-blue-50/70 border border-blue-200/60 text-right">
                 <span className="text-[10px] font-bold text-[#0071E3] flex items-center gap-1">
@@ -929,9 +926,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 </span>
                 <span className="text-sm sm:text-base font-black font-mono text-[#1D1D1F] block mt-1">
                   {todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} {currency}
-                </span>
-                <span className="text-[10px] text-[#86868B] font-mono">
-                  {todayReportData.todaysSalesCount} فاتورة · {todayReportData.totalBottles} عبوة
                 </span>
               </div>
 
@@ -943,72 +937,40 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 <span className="text-sm sm:text-base font-black font-mono text-[#1D1D1F] block mt-1">
                   {Math.round(todayReportData.totalRawMaterialCost + todayReportData.directTodayExpenses).toLocaleString('ar-EG')} {currency}
                 </span>
-                <span className="text-[10px] text-[#86868B] font-mono">
-                  خامات + مصاريف اليوم
-                </span>
               </div>
 
-              <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200/60 text-right">
+              <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200/60 text-right">
                 <span className="text-[10px] font-bold text-[#248A3D] flex items-center gap-1">
-                  <TrendingUp size={11} />
-                  المساهمة / نتيجة التشغيل وفق الموازنة
+                  <Crown size={11} />
+                  المساهمة المحققة
                 </span>
-                {todayReportData.todaysSalesCount === 0 ? (
-                  <>
-                    <span className="text-xs font-black text-[#1D1D1F] block mt-1">
-                      لا توجد بيانات مبيعات فعلية مسجلة لهذا اليوم
-                    </span>
-                    <span className="text-[10px] text-[#86868B] font-mono">
-                      المخصص التخطيطي: 600 {currency}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-sm sm:text-base font-black font-mono text-[#248A3D] block mt-1">
-                      المساهمة: {Math.round(todayReportData.grossOperatingProfit).toLocaleString('ar-EG')} {currency}
-                    </span>
-                    <span className="text-[10px] text-[#248A3D]/80 font-mono">
-                      نتيجة التشغيل وفق الموازنة: {todayReportData.netFinalProfit >= 0 ? '+' : ''}{Math.round(todayReportData.netFinalProfit).toLocaleString('ar-EG')} {currency}
-                    </span>
-                  </>
-                )}
+                <span className="text-sm sm:text-base font-black font-mono text-[#248A3D] block mt-1">
+                  {Math.round(todayReportData.grossOperatingProfit).toLocaleString('ar-EG')} {currency}
+                </span>
               </div>
             </div>
 
-            {/* Live Formatted Text Report Preview */}
-            <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl bg-[#1D1D1F] text-zinc-100 p-3.5 font-mono text-[11px] leading-relaxed border border-black/10 select-all">
-              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-emerald-50/95">
-                {todayReportData.reportText}
-              </pre>
+            <div className="flex-1 min-h-[180px] rounded-2xl bg-[#1D1D1F] text-zinc-100 p-3.5 font-mono text-[11px] overflow-y-auto leading-relaxed select-all" dir="rtl">
+              <pre className="whitespace-pre-wrap font-sans">{todayReportData.reportTextContent}</pre>
             </div>
 
-            {/* Export & Smart Notification Actions */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 shrink-0">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-black/[0.06] shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyReportToClipboard}
+                className="apple-btn px-4 py-2.5 rounded-xl bg-black/[0.05] hover:bg-black/[0.1] text-[#1D1D1F] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedReport ? <Check size={14} className="text-[#34C759]" /> : <Copy size={14} />}
+                <span>{copiedReport ? 'تم النسخ للحافظة ✓' : 'نسخ النص'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleDownloadTxtReport}
-                className="apple-btn py-2.5 px-3 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                className="apple-btn px-5 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
               >
                 <Download size={14} />
                 <span>تحميل ملف نصي (.TXT)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSendSmartReportNotification}
-                className="apple-btn py-2.5 px-3 rounded-2xl bg-[#1D1D1F] hover:bg-black text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-              >
-                <BellRing size={14} className="text-[#34C759]" />
-                <span>إرسال كإشعار ذكي</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleCopyReportText}
-                className="apple-btn py-2.5 px-3 rounded-2xl bg-[#F5F5F7] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.08] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                {copiedReport ? <Check size={14} className="text-[#34C759]" /> : <Copy size={14} />}
-                <span>{copiedReport ? 'تم نسخ التقرير!' : 'نسخ التقرير النصي'}</span>
               </button>
             </div>
           </div>
@@ -1016,11 +978,10 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       )}
 
       {/* ======================================================== */}
-      {/* PASSWORD PROMPT MODAL FOR SWITCHING TO DIRECTOR          */}
-      {/* (Password is hidden in background; Numpad is strictly LTR)*/}
+      {/* OWNER PIN VERIFICATION KEYPAD MODAL                      */}
       {/* ======================================================== */}
       {showPasswordPrompt && (
-        <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[130] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="apple-glass rounded-[28px] p-6 w-full max-w-sm border border-black/[0.1] shadow-apple-lg space-y-4 bg-white/95">
             <div className="flex items-center justify-between pb-3 border-b border-black/[0.06]">
               <div className="flex items-center gap-2.5">
@@ -1069,7 +1030,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 )}
               </div>
 
-              {/* Properly Ordered Left-to-Right Numeric Keypad (1 2 3 / 4 5 6 / 7 8 9 / C 0 ⌫) */}
               <div dir="ltr" data-keep-numerals="true" className="grid grid-cols-3 gap-2 select-none">
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => {
                   const isClear = k === 'C';
