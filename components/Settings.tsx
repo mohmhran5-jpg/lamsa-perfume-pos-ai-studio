@@ -26,6 +26,9 @@ import {
 import { ThermalReceiptLiveView } from './ReceiptModal';
 import { AppleThemeStudioPanel } from './AppleThemeStudioModal';
 import { DashboardLayoutStudioPanel } from './DashboardLayoutStudioPanel';
+import UsersManagement from './UsersManagement';
+import AuditLogViewer from './AuditLogViewer';
+import { FinancialVaults } from './FinancialVaults';
 import { canViewProfits, canViewCosts, hashPassword } from '../services/authService';
 import { analyzeLoyaltyProgramWithAI } from '../services/geminiService';
 import { 
@@ -73,10 +76,17 @@ import {
   Palette,
   AlignCenter,
   AlignRight,
-  AlignLeft
+  AlignLeft,
+  History
 } from 'lucide-react';
 
 export type SettingsSection = 
+  | 'staff_management'
+  | 'commission_policies'
+  | 'budget_management'
+  | 'system_settings'
+  | 'audit_log'
+  // Backward compatibility aliases
   | 'dashboard_layout'
   | 'themes'
   | 'loyalty_ai'
@@ -101,12 +111,16 @@ interface SettingsProps {
   products?: Product[];
   customCustomers?: CustomCustomerRecord[];
   currentUser?: AppUser | null;
+  users?: AppUser[];
+  auditLogs?: AuditLogRecord[];
   attendanceRecords?: StaffAttendanceRecord[];
   onCheckInAttendance?: (record: StaffAttendanceRecord) => void;
   onAddWithdrawal?: (tx: WithdrawalTransaction, updatedVault: FinancialVault) => void;
   onNavigate?: (view: View) => void;
   onSaveAppUser?: (user: AppUser) => void;
   onAddAuditLog?: (log: AuditLogRecord) => void;
+  onPreviewUserPermissions?: (user: AppUser | null) => void;
+  onUpdateSale?: (updatedSale: Sale, previousSale: Sale, adjustStock?: boolean) => void;
   initialSection?: SettingsSection;
 }
 
@@ -122,20 +136,32 @@ export const Settings: React.FC<SettingsProps> = ({
   products = [],
   customCustomers = [],
   currentUser,
+  users = [],
+  auditLogs = [],
   attendanceRecords = [],
   onCheckInAttendance,
   onAddWithdrawal,
   onNavigate,
   onSaveAppUser,
   onAddAuditLog,
-  initialSection = 'budget'
+  onPreviewUserPermissions,
+  onUpdateSale,
+  initialSection = 'staff_management'
 }) => {
   const isOwner = currentUser?.role === 'OWNER';
 
-  // Navigation tab index (defaulting to budget/targets)
-  const [activeSection, setActiveSection] = useState<SettingsSection>(
-    initialSection === 'loyalty_ai' ? 'budget' : initialSection
-  );
+  // Active Main Administrative Tab
+  const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
+    if (initialSection === 'loyalty_ai' || initialSection === 'budget') return 'budget_management';
+    if (['identity', 'pricing', 'privacy', 'pos_receipts', 'inventory', 'security_backup', 'themes', 'dashboard_layout'].includes(initialSection)) {
+      return 'system_settings';
+    }
+    return initialSection || 'staff_management';
+  });
+
+  // System Settings Sub-Tab
+  const [systemSubTab, setSystemSubTab] = useState<'identity' | 'themes' | 'pos_receipts' | 'pricing_inventory' | 'security_backup'>('identity');
+
   const [searchTerm, setSearchTerm] = useState('');
 
   // Sync if initialSection prop changes or if navigated from Dashboard customization button
@@ -470,81 +496,47 @@ export const Settings: React.FC<SettingsProps> = ({
     };
   }, [simBottlePrice, simBottleCost, simCustomerPoints, localSettings, todayNetContribution]);
 
-  // Menu items definition for the indexed side menu
-  const menuItems: { id: SettingsSection; label: string; desc: string; icon: any; category: string }[] = [
-    ...(isOwner
-      ? [
-          {
-            id: 'dashboard_layout' as SettingsSection,
-            label: 'تخصيص بطاقات Dashboard (للمالك)',
-            desc: 'ترتيب وإظهار أهم التقارير المالية والتشغيلية حسب رغبتك',
-            icon: Layout,
-            category: 'لوحة القيادة والتقارير',
-          },
-        ]
-      : []),
+  // 5 Master Administrative Sidebar Tabs
+  const menuItems: { id: SettingsSection; label: string; desc: string; icon: any; category: string; badge: string }[] = [
     {
-      id: 'themes',
-      label: 'الخطوط، الألوان، الأرقام، والثيمات (Typography & Themes)',
-      desc: 'لون وحجم وسمك الخط، لغة الأرقام (١٢٣/123)، و20 ثيماً فاخراً',
-      icon: Palette,
-      category: 'المظهر والخطوط والجو العام'
+      id: 'staff_management',
+      label: 'إدارة الموظفين والصلاحيات',
+      desc: 'حسابات كادر العمل، أدوار الـ RBAC، ومعاينة الصلاحيات',
+      icon: Users,
+      category: 'الموظفين',
+      badge: 'الكادر'
     },
     {
-      id: 'budget',
-      label: 'الموازنة والتارجت وحوافز المبيعات',
-      desc: 'الـ 15,000 ج.م، تارجت المساهمة، والعمولات',
+      id: 'commission_policies',
+      label: 'سياسات العمولات والحوافز',
+      desc: 'نسبة الـ 5% والـ 7%، شرائح العبوات، واحتياطي المكافآت',
+      icon: Award,
+      category: 'العمولات',
+      badge: 'الحوافز'
+    },
+    {
+      id: 'budget_management',
+      label: 'إدارة الموازنة والخزائن',
+      desc: 'موازنة الـ 15,000 ج المعتمدة، الخزائن، ومسحوبات المالك',
       icon: Target,
-      category: 'المبيعات والتارجت'
+      category: 'الموازنة',
+      badge: '15k'
     },
     {
-      id: 'identity',
-      label: 'الهوية والمتجر',
-      desc: 'الاسم، الشعار، العنوان، والواتساب',
-      icon: Store,
-      category: 'عام'
+      id: 'system_settings',
+      label: 'إعدادات النظام والهوية والطباعة',
+      desc: 'الهوية، الثيمات، تصميم الفواتير، التكاليف والنسخ الاحتياطي',
+      icon: Sliders,
+      category: 'النظام',
+      badge: 'الإعدادات'
     },
     {
-      id: 'pricing',
-      label: 'التسعير والأحجام والخلطات',
-      desc: 'أسعار الجرام، أحجام الزجاجات، والتكاليف',
-      icon: Beaker,
-      category: 'التسعير والمنتجات'
-    },
-    {
-      id: 'vaults',
-      label: 'الخزائن وقواعد المسحوبات',
-      desc: 'المحافظ الثمانية وضوابط سحب المالك',
-      icon: Wallet,
-      category: 'المالية'
-    },
-    {
-      id: 'privacy',
-      label: 'الصلاحيات والسرية والخصوصية',
-      desc: 'حجب الأرباح والتكاليف عن الكاشير',
-      icon: ShieldCheck,
-      category: 'الأمان والسرية'
-    },
-    {
-      id: 'pos_receipts',
-      label: 'الفواتير والطباعة والـ POS',
-      desc: 'ترويسة الفاتورة، الشعار، وسياسة المتجر',
-      icon: Receipt,
-      category: 'المبيعات'
-    },
-    {
-      id: 'inventory',
-      label: 'المخزون والتنبيهات الذكية',
-      desc: 'حد النقص بالجرام وإجراءات الجرد',
-      icon: Package,
-      category: 'المستودع'
-    },
-    {
-      id: 'security_backup',
-      label: 'الأمان والنسخ الاحتياطي',
-      desc: 'كلمة المرور، تصدير JSON، والمزامنة',
-      icon: KeyRound,
-      category: 'الأمان والسرية'
+      id: 'audit_log',
+      label: 'سجل التدقيق وتتبع العمليات',
+      desc: 'تتبع تغيير الأسعار، تعديل التكاليف، وسجلات أمان النظام',
+      icon: History,
+      category: 'التدقيق',
+      badge: 'الأمان'
     }
   ];
 
@@ -972,91 +964,92 @@ export const Settings: React.FC<SettingsProps> = ({
           </div>
         </div>
 
-        {/* 4 Group Roadmap Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-          {/* Group 1: Themes & Layout */}
-          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-amber-400/40 transition-colors">
-            <div className="flex items-center gap-2 text-amber-400 font-black">
-              <Palette size={16} />
-              <span>1. الواجهات والمظهر (3 أقسام)</span>
+        {/* 5 Master Administrative Tabs Roadmap Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
+          {/* Tab 1: Staff Management */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('staff_management')}
+            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
+              activeSection === 'staff_management'
+                ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-sm'
+                : 'bg-white/5 border-white/10 hover:border-amber-400/40 text-gray-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 font-black mb-1">
+              <span className="flex items-center gap-1.5"><Users size={15} /> 1. إدارة الموظفين</span>
+              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">RBAC</span>
             </div>
-            <div className="space-y-1 text-gray-300">
-              <button type="button" onClick={() => setActiveSection('dashboard_layout')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• تخصيص بطاقات اللوحة</span>
-                <span className="text-[10px] font-mono text-amber-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('themes')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• الخطوط والسمات والألوان</span>
-                <span className="text-[10px] font-mono text-amber-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('identity')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
-                <span>• هوية المتجر والواتساب</span>
-                <span className="text-[10px] font-mono text-amber-400">انتقال ←</span>
-              </button>
-            </div>
-          </div>
+            <p className="text-[11px] opacity-80 leading-tight">حسابات كادر العمل والصلاحيات ومعاينة أدوار الكاشير</p>
+          </button>
 
-          {/* Group 2: Budget & Pricing */}
-          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-emerald-400/40 transition-colors">
-            <div className="flex items-center gap-2 text-emerald-400 font-black">
-              <Target size={16} />
-              <span>2. التسعير والموازنة (3 أقسام)</span>
+          {/* Tab 2: Commission Policies */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('commission_policies')}
+            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
+              activeSection === 'commission_policies'
+                ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-bold shadow-sm'
+                : 'bg-white/5 border-white/10 hover:border-emerald-400/40 text-gray-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 font-black mb-1">
+              <span className="flex items-center gap-1.5"><Award size={15} /> 2. سياسات العمولات</span>
+              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">5% / 7%</span>
             </div>
-            <div className="space-y-1 text-gray-300">
-              <button type="button" onClick={() => setActiveSection('budget')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• الموازنة والعمولات (15k)</span>
-                <span className="text-[10px] font-mono text-emerald-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('pricing')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• تسعير العبوات والتركيبات</span>
-                <span className="text-[10px] font-mono text-emerald-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('vaults')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
-                <span>• الخزائن ومسحوبات المالك</span>
-                <span className="text-[10px] font-mono text-emerald-400">انتقال ←</span>
-              </button>
-            </div>
-          </div>
+            <p className="text-[11px] opacity-80 leading-tight">شريحة الفائض، التارجت، واحتياطي الحوافز (500 ج)</p>
+          </button>
 
-          {/* Group 3: Receipts & Loyalty AI */}
-          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-blue-400/40 transition-colors">
-            <div className="flex items-center gap-2 text-blue-400 font-black">
-              <Receipt size={16} />
-              <span>3. الفواتير والولاء الذكي (2 قسم)</span>
+          {/* Tab 3: Budget Management */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('budget_management')}
+            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
+              activeSection === 'budget_management'
+                ? 'bg-blue-500 text-white border-blue-400 font-bold shadow-sm'
+                : 'bg-white/5 border-white/10 hover:border-blue-400/40 text-gray-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 font-black mb-1">
+              <span className="flex items-center gap-1.5"><Target size={15} /> 3. إدارة الموازنة</span>
+              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">15,000 ج</span>
             </div>
-            <div className="space-y-1 text-gray-300">
-              <button type="button" onClick={() => setActiveSection('pos_receipts')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• استوديو الفواتير والطباعة</span>
-                <span className="text-[10px] font-mono text-blue-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('loyalty_ai')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
-                <span>• نقاط الولاء الذكية وربح اليوم</span>
-                <span className="text-[10px] font-mono text-blue-400">انتقال ←</span>
-              </button>
-            </div>
-          </div>
+            <p className="text-[11px] opacity-80 leading-tight">بنود الموازنة الثابتة والخزائن ومسحوبات المالك</p>
+          </button>
 
-          {/* Group 4: Security & Inventory */}
-          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-purple-400/40 transition-colors">
-            <div className="flex items-center gap-2 text-purple-400 font-black">
-              <ShieldCheck size={16} />
-              <span>4. الأمان والمخزون (3 أقسام)</span>
+          {/* Tab 4: System Settings */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('system_settings')}
+            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
+              activeSection === 'system_settings'
+                ? 'bg-purple-500 text-white border-purple-400 font-bold shadow-sm'
+                : 'bg-white/5 border-white/10 hover:border-purple-400/40 text-gray-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 font-black mb-1">
+              <span className="flex items-center gap-1.5"><Sliders size={15} /> 4. إعدادات النظام</span>
+              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">الطباعة والهوية</span>
             </div>
-            <div className="space-y-1 text-gray-300">
-              <button type="button" onClick={() => setActiveSection('privacy')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• حجب التكاليف وحماية السرية</span>
-                <span className="text-[10px] font-mono text-purple-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('inventory')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
-                <span>• المخزون وحد النقص</span>
-                <span className="text-[10px] font-mono text-purple-400">انتقال ←</span>
-              </button>
-              <button type="button" onClick={() => setActiveSection('security_backup')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
-                <span>• النسخ الاحتياطي وكلمة المرور</span>
-                <span className="text-[10px] font-mono text-purple-400">انتقال ←</span>
-              </button>
+            <p className="text-[11px] opacity-80 leading-tight">الهوية، الثيمات، تصميم الفواتير، التكاليف والنسخ</p>
+          </button>
+
+          {/* Tab 5: Audit Log */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('audit_log')}
+            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
+              activeSection === 'audit_log'
+                ? 'bg-amber-600 text-white border-amber-400 font-bold shadow-sm'
+                : 'bg-white/5 border-white/10 hover:border-amber-400/40 text-gray-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 font-black mb-1">
+              <span className="flex items-center gap-1.5"><History size={15} /> 5. سجل التدقيق</span>
+              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">السرية</span>
             </div>
-          </div>
+            <p className="text-[11px] opacity-80 leading-tight">تتبع تغيير الأسعار، تعديل التكاليف وسجلات الأمان</p>
+          </button>
         </div>
       </div>
 

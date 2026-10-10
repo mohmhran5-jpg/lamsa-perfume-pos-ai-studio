@@ -653,7 +653,7 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
           { id: 'settlements', label: 'السحب والتسويات', icon: CreditCard },
           { id: 'advances', label: 'السلف المالية', icon: DollarSign },
           { id: 'incentives', label: 'الحوافز والمكافآت', icon: Sparkles },
-          { id: 'incentive_reserve', label: 'ميزانية احتياطي الحوافز (500 ج)', icon: Award },
+          ...(isOwner ? [{ id: 'incentive_reserve', label: 'ميزانية احتياطي الحوافز (500 ج)', icon: Award }] : []),
           { id: 'deductions', label: 'الخصومات والتعديلات', icon: MinusCircle },
           { id: 'vouchers', label: 'سجل المدفوعات والإيصالات', icon: Receipt },
           { id: 'statement', label: 'كشف حساب تفصيلي', icon: FileText },

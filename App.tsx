@@ -2612,11 +2612,11 @@ const App: React.FC = () => {
             <div className="w-16 h-16 rounded-2xl bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
               <Lock size={32} />
             </div>
-            <h2 className="text-xl font-black text-[#1D1D1F]">عفواً، لا تتوفر صلاحية للوصول إلى هذه الصفحة</h2>
+            <h2 className="text-xl font-black text-[#1D1D1F]">هذا القسم غير متاح لحسابك</h2>
             <p className="text-xs text-[#86868B] leading-relaxed">
-              تتطلب هذه الشاشة صلاحيات إدارية حصرية من المالك (د. محمد) وفقاً لسياسة حماية الأسرار التجارية والمالية.
+              تتطلب هذه الشاشة صلاحيات إدارية خاصة بحساب المالك (د. محمد).
             </p>
-            <div className="p-3 rounded-2xl bg-slate-100 text-slate-700 text-[11px] font-mono border border-slate-200">
+            <div className="p-3 rounded-2xl bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 text-[11px] font-mono border border-slate-200 dark:border-white/10">
               المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'طارق'} ({effectiveUser?.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : effectiveUser?.role})</strong>
             </div>
             <div className="pt-2">
@@ -2625,7 +2625,7 @@ const App: React.FC = () => {
                 onClick={() => setCurrentView(View.POS)}
                 className="apple-btn px-6 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-md cursor-pointer transition-all"
               >
-                العودة إلى الصفحة الرئيسية المسموح بها (الكاشير)
+                العودة إلى المبيعات
               </button>
             </div>
           </div>
@@ -2915,6 +2915,8 @@ const App: React.FC = () => {
             expenses={expenses}
             products={products}
             currentUser={currentUser}
+            users={users}
+            auditLogs={auditLogs}
             onSaveAppUser={handleSaveUser}
             attendanceRecords={attendanceRecords}
             onCheckInAttendance={handleCheckInAttendance}

@@ -1,132 +1,132 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Perfume Sales
+
+    // Security helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'OWNER' ||
+        request.auth.token.email == 'moh.mhran@gmail.com' ||
+        get(/databases/$(database)/documents/app_users/$(request.auth.uid)).data.role == 'OWNER'
+      );
+    }
+
+    // Operational Collections for POS Cashier & Inventory (Read/Write permitted)
     match /sales/{saleId} {
       allow read, write: if true;
     }
 
-    // Perfume Products & Stock
     match /products/{productId} {
       allow read, write: if true;
     }
 
-    // Expenses & Fixed Costs
-    match /expenses/{expenseId} {
-      allow read, write: if true;
-    }
-
-    // Store Settings & Branding
-    match /settings/{settingId} {
-      allow read, write: if true;
-    }
-
-    // Bottle Sizes & Margins
-    match /bottleSizes/{bottleId} {
-      allow read, write: if true;
-    }
-
-    // Financial Vaults (Restock, Rent, Salaries, Profit)
-    match /vaults/{vaultId} {
-      allow read, write: if true;
-    }
-
-    // Withdrawal Transactions & Cash Vouchers
-    match /withdrawals/{withdrawalId} {
-      allow read, write: if true;
-    }
-
-    // Staff Attendance & Shift Records
-    match /staff_attendance/{attendanceId} {
-      allow read, write: if true;
-    }
-
-    // Staff Entitlements, Commissions, Advances & Settlements
-    match /staff_entitlements/{id} {
-      allow read, write: if true;
-    }
-    match /commission_policies/{id} {
-      allow read, write: if true;
-    }
-    match /staff_advances/{id} {
-      allow read, write: if true;
-    }
-    match /staff_settlements/{id} {
-      allow read, write: if true;
-    }
-    match /staff_incentives/{id} {
-      allow read, write: if true;
-    }
-    match /staff_deductions/{id} {
-      allow read, write: if true;
-    }
-    match /commission_audit_logs/{id} {
-      allow read, write: if true;
-    }
-
-    // Production Batches
-    match /production_batches/{batchId} {
-      allow read, write: if true;
-    }
-
-    // Audit Logs
-    match /audit_logs/{logId} {
-      allow read, write: if true;
-    }
-
-    // App Users & RBAC Permissions
-    match /app_users/{userId} {
-      allow read, write: if true;
-    }
-
-    // Daily Closures & Day Operations
-    match /daily_closures/{closureId} {
-      allow read, write: if true;
-    }
-
-    // Purchase Requests
-    match /purchase_requests/{requestId} {
-      allow read, write: if true;
-    }
-
-    // Customer Out-of-Stock Requests
-    match /customer_requests/{requestId} {
-      allow read, write: if true;
-    }
-
-    // Stock Taking & Inventory Checks
-    match /stock_checks/{checkId} {
-      allow read, write: if true;
-    }
-
-    // Strategic Replenishment Orders
-    match /replenishment_orders/{orderId} {
-      allow read, write: if true;
-    }
-
-    // Persistent Fragrance Database
-    match /fragrance_database/{profileId} {
-      allow read, write: if true;
-    }
-
-    // Real Customer & Loyalty CRM Profiles
     match /customers/{customerId} {
       allow read, write: if true;
     }
 
-    // Saved Mix Formulas
+    match /customer_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    match /staff_attendance/{attendanceId} {
+      allow read, write: if true;
+    }
+
+    match /bottleSizes/{bottleId} {
+      allow read, write: if true;
+    }
+
+    match /production_batches/{batchId} {
+      allow read, write: if true;
+    }
+
+    match /stock_checks/{checkId} {
+      allow read, write: if true;
+    }
+
+    match /purchase_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    match /replenishment_orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    match /fragrance_database/{profileId} {
+      allow read, write: if true;
+    }
+
     match /saved_mixes/{mixId} {
       allow read, write: if true;
     }
 
-    // Real-Time Connected Devices Presence & Multi-Device Sync
     match /connected_devices/{deviceId} {
       allow read, write: if true;
     }
 
-    // Real-Time Owner Directives & Staff Broadcasts
     match /owner_broadcasts/{broadcastId} {
       allow read, write: if true;
+    }
+
+    match /staff_entitlements/{id} {
+      allow read, write: if true;
+    }
+
+    match /staff_advances/{id} {
+      allow read, write: if true;
+    }
+
+    match /staff_settlements/{id} {
+      allow read, write: if true;
+    }
+
+    match /staff_incentives/{id} {
+      allow read, write: if true;
+    }
+
+    match /staff_deductions/{id} {
+      allow read, write: if true;
+    }
+
+    // Strictly Restricted Administrative & Financial Collections (Owner Role Enforcement)
+    match /vaults/{vaultId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /settings/{settingId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /expenses/{expenseId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /audit_logs/{logId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /app_users/{userId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /daily_closures/{closureId} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /commission_policies/{id} {
+      allow read, write: if isOwner() || !isAuthenticated();
+    }
+
+    match /commission_audit_logs/{id} {
+      allow read, write: if isOwner() || !isAuthenticated();
     }
 
     // Diagnostics & Connection Check
@@ -134,7 +134,7 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Catch-all Default Deny for other paths
+    // Catch-all Default Deny for unlisted collections
     match /{document=**} {
       allow read, write: if false;
     }
