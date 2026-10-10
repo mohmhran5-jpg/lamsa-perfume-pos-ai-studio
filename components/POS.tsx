@@ -45,8 +45,7 @@ import {
   analyzeSelectedPerfumeProfile,
   OlfactoryProfileAnalysis,
   getCairoCurrentTimeString,
-  isLiveProductionSale,
-  View
+  isLiveProductionSale
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
 import { soundAlertService } from '../services/soundAlertService';
@@ -140,7 +139,6 @@ interface POSProps {
   savedMixes?: SavedMixFormula[];
   onSaveMix?: (formula: SavedMixFormula) => void;
   onDeleteMix?: (mixId: string) => void;
-  onNavigate?: (view: View) => void;
 }
 
 interface CartItem extends SaleItem {
@@ -183,8 +181,7 @@ const POS: React.FC<POSProps> = ({
   onOpenLoyaltySettings,
   savedMixes = [],
   onSaveMix,
-  onDeleteMix,
-  onNavigate
+  onDeleteMix
 }) => {
   // Navigation & Catalogue Filtering (including Quick Side Filter Menu: صيفي، شتوي، نيش، مسك، عود، فرنسي)
   const [searchTerm, setSearchTerm] = useState('');
@@ -2321,7 +2318,6 @@ const POS: React.FC<POSProps> = ({
           setShowShortagesModal(true);
         }}
         onOpenSmartSearch={() => setShowSmartSearchModal(true)}
-        onOpenStaffEntitlements={() => onNavigate && onNavigate(View.STAFF_ENTITLEMENTS)}
       />
 
       {/* Top Item Added Toast Notification */}

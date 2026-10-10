@@ -114,11 +114,9 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null, throwError: boolean = false) {
-  const errMsg = error instanceof Error ? error.message : String(error);
-  const isPermissionError = errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('insufficient');
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
-    error: errMsg,
+    error: error instanceof Error ? error.message : String(error),
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -133,19 +131,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-
-  if (isPermissionError) {
-    console.warn(`[Firestore Authorization Guard] Restricted access on '${path}' (${operationType}):`, errMsg);
-    if (throwError) {
-      throw new Error(JSON.stringify(errInfo));
-    }
-    return;
-  }
-
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  if (throwError) {
-    throw new Error(JSON.stringify(errInfo));
-  }
+  throw new Error(JSON.stringify(errInfo));
 }
 
 /**

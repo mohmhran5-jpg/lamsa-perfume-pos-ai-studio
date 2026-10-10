@@ -1,46 +1,4 @@
 import { AppUser, UserPermissions, View } from '../types';
-import { loadDataSync, persistDataDurable } from './persistenceService';
-
-export interface RejectedAccessLog {
-  id: string;
-  timestamp: string;
-  username: string;
-  employeeName: string;
-  role: string;
-  attemptedView?: string;
-  attemptedAction?: string;
-  ipOrDevice?: string;
-  reason: string;
-}
-
-const REJECTED_LOGS_KEY = 'lamsa_rejected_access_logs_v1';
-
-export function loadRejectedAccessLogs(): RejectedAccessLog[] {
-  return loadDataSync<RejectedAccessLog[]>(REJECTED_LOGS_KEY, []);
-}
-
-export function logRejectedAccessAttempt(
-  user: AppUser | null,
-  attemptedView?: string,
-  attemptedAction?: string,
-  reason: string = 'محاولة خرق صلاحيات الوصول والصفحات المقيدة'
-): RejectedAccessLog {
-  const newLog: RejectedAccessLog = {
-    id: `sec-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    timestamp: new Date().toISOString(),
-    username: user?.username || 'مجهول',
-    employeeName: user?.displayName || user?.fullName || 'مستخدم غير معروف',
-    role: user?.role || 'زائر',
-    attemptedView,
-    attemptedAction,
-    reason,
-  };
-
-  const existing = loadRejectedAccessLogs();
-  const next = [newLog, ...existing].slice(0, 100);
-  persistDataDurable(REJECTED_LOGS_KEY, next);
-  return newLog;
-}
 
 const OWNER_ONLY_PERMISSIONS = new Set<keyof UserPermissions>([
   'canEditProductCost', 'canViewCosts', 'canViewProfits', 'canViewCostAndProfit',
@@ -106,38 +64,36 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
 
   switch (view) {
     case View.POS:
-      return Boolean(p?.canRecordSale);
+      return p.canRecordSale;
 
     case View.CUSTOMERS_LOYALTY:
-      return Boolean(p?.canRecordSale);
-
-    case View.STAFF_ENTITLEMENTS:
-      return Boolean(p?.canRequestWithdrawal || p?.canApproveWithdrawal || p?.canRecordSale);
+      return true;
 
     case View.ANALYZER:
-      return Boolean(p?.canViewStock || p?.canRecordSale);
+      return true;
 
     case View.DASHBOARD:
       return hasPermission(user, 'canViewExecutiveDashboard');
 
     case View.REPORTS:
-      return Boolean(p?.canRecordSale || p?.canViewStock);
+      // Allow access to Sales & Invoices Ledger (profit/cost columns remain role-protected inside)
+      return true;
 
     case View.DAY_OPERATIONS:
     case 'DAY_OPERATIONS_ACTION':
-      return Boolean(p?.canOpenDay || p?.canCloseDay);
+      return p.canOpenDay || p.canCloseDay;
 
     case View.INVENTORY:
-      return Boolean(p?.canViewStock);
+      return p.canViewStock;
 
     case View.INVENTORY_INTELLIGENCE:
-      return Boolean(p?.canViewStock || p?.canRecordShortage || p?.canStockCheck || p?.canCreatePurchaseRequest);
+      return p.canViewStock || p.canRecordShortage || p.canStockCheck || p.canCreatePurchaseRequest;
 
     case View.FORMULATION_ENGINE:
-      return Boolean(p?.canEditProductCost && p?.canViewCosts);
+      return p.canEditProductCost === true && p.canViewCosts === true;
 
     case View.FINANCIAL_VAULTS:
-      return Boolean(p?.canViewVaults && p?.canApproveWithdrawal);
+      return p.canViewVaults && p.canApproveWithdrawal;
 
     case View.EXPENSES:
       return hasPermission(user, 'canViewExpenses') || hasPermission(user, 'canEditBudget');
@@ -158,10 +114,9 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return hasPermission(user, 'canExportData');
 
     case View.MARKETING:
-      return hasPermission(user, 'canViewExecutiveDashboard');
+      return true;
 
     default:
-      // Rule 9: Default Deny for any unlisted or newly added view
       return false;
   }
 }
