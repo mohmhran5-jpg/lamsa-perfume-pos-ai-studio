@@ -103,8 +103,12 @@ export const AppleWelcomeLockScreen: React.FC<AppleWelcomeLockScreenProps> = ({
           <div className="welcome-greeting-pill inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-semibold">
             <span>{greeting}</span>
           </div>
-          <div className="text-5xl sm:text-7xl font-extralight tracking-tight text-white/95">{timeFormatted}</div>
-          <div className="text-xs sm:text-sm text-zinc-400">{dateFormatted}</div>
+          <div className="text-5xl sm:text-7xl font-extralight tracking-tight font-sans text-white/95 select-none">
+            {timeFormatted}
+          </div>
+          <div className="text-xs sm:text-sm text-zinc-400 font-medium">
+            {dateFormatted}
+          </div>
         </div>
 
         <section className="welcome-auth-card w-full rounded-3xl backdrop-blur-2xl border p-6 sm:p-8 shadow-2xl space-y-4" aria-labelledby="welcome-auth-title">

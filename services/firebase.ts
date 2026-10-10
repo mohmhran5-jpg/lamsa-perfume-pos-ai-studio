@@ -60,6 +60,7 @@ import {
   INVENTORY_KEEPER_PERMISSIONS,
   UserRole
 } from '../types';
+import type { OwnerStaffBroadcast } from '../types';
 import { extractOperationalCostData, mergeConfidentialDocument, privateConfidentialDocId, splitConfidentialDocument } from './confidentialData';
 
 // Initialize Firebase App
@@ -196,11 +197,14 @@ export const loadAuthorizedAppUser = async (firebaseUser: User): Promise<AppUser
     ...rolePermissions(role),
     ...(profile.permissions || {}),
   };
-  if (role !== 'OWNER') Object.assign(permissions, OWNER_ONLY_PERMISSION_OVERRIDES);
+  if (role !== 'OWNER') {
+    Object.assign(permissions, OWNER_ONLY_PERMISSION_OVERRIDES);
+    permissions.canViewCosts = false;
+  }
   if (role === 'STORE_MANAGER') {
     const isTarekProfile = profile.username?.toString().trim().toLowerCase() === 'tarek'
       || profile.appUserId === 'user-tarek';
-    permissions.canViewCosts = isTarekProfile || profile.permissions?.canViewCosts === true;
+    permissions.canViewCosts = isTarekProfile;
     permissions.canOverridePrice = false;
   }
   activeAuthorizedPermissions = permissions;
@@ -355,9 +359,11 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null, throwError: boolean = false) {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const isPermissionError = errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('insufficient');
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -372,8 +378,19 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
+
+  if (isPermissionError) {
+    console.warn(`[Firestore Authorization Guard] Restricted access on '${path}' (${operationType}):`, errMsg);
+    if (throwError) {
+      throw new Error(JSON.stringify(errInfo));
+    }
+    return;
+  }
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  if (throwError) {
+    throw new Error(JSON.stringify(errInfo));
+  }
 }
 
 export const queueFirestoreWrite = (writePromise: Promise<unknown>, operation: string): Promise<void> => {
@@ -1981,6 +1998,82 @@ export const subscribeToDevicePresence = (onUpdate: (devices: DevicePresenceReco
     } as DevicePresenceRecord)));
   }, (error) => {
     console.error('Unable to load owner-only device presence records.', error);
+  });
+};
+
+/** Reads only broadcasts visible to the verified app profile; Firestore rules enforce the same target check. */
+export const subscribeToOwnerBroadcasts = (
+  onUpdate: (broadcasts: OwnerStaffBroadcast[]) => void,
+  currentUser: AppUser | null,
+) => {
+  if (!currentUser || !auth.currentUser || !activeAuthorizedRole) {
+    onUpdate([]);
+    return () => {};
+  }
+
+  const broadcastsCollection = collection(db, 'owner_broadcasts');
+  const targets = [...new Set([
+    'all',
+    currentUser.displayName,
+    currentUser.username,
+    currentUser.id,
+  ].map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+  const broadcastsQuery = isOwnerSession()
+    ? broadcastsCollection
+    : query(broadcastsCollection, where('targetEmployee', 'in', targets));
+
+  return onSnapshot(broadcastsQuery, (snapshot) => {
+    const broadcasts = snapshot.docs.map((broadcastDoc) => ({
+      ...broadcastDoc.data(),
+      id: broadcastDoc.id,
+    } as OwnerStaffBroadcast));
+    broadcasts.sort((left, right) =>
+      new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime());
+    onUpdate(broadcasts);
+  }, (error) => {
+    console.error('Unable to load authorized owner broadcasts.', error);
+  });
+};
+
+/** Broadcast creation is owner-only; omitted recipients are explicitly stored as all staff. */
+export const sendOwnerBroadcastCloud = async (broadcast: OwnerStaffBroadcast) => {
+  await ensureAuth();
+  if (!isOwnerSession()) throw new Error('إرسال توجيهات الموظفين متاح للمالك فقط.');
+  const targetEmployee = broadcast.targetEmployee?.trim() || 'all';
+  await firestoreSetDoc(doc(db, 'owner_broadcasts', broadcast.id), cleanForFirestore({
+    ...broadcast,
+    targetEmployee,
+    updatedAt: new Date().toISOString(),
+  }), { merge: true });
+};
+
+/** Appends a single acknowledgement under the signed-in profile's verified display name. */
+export const acknowledgeOwnerBroadcastCloud = async (broadcastId: string, employeeName: string) => {
+  await ensureAuth();
+  const email = auth.currentUser?.email?.trim().toLowerCase();
+  if (!email || !activeAuthorizedRole) throw new Error('يجب تسجيل الدخول بحساب Google مصرح به.');
+  const profileSnapshot = await getDoc(doc(db, 'authorized_users', email));
+  if (!profileSnapshot.exists() || profileSnapshot.data().isActive !== true) {
+    throw new Error('ملف الموظف غير نشط.');
+  }
+  const canonicalName = String(profileSnapshot.data().displayName || '').trim();
+  if (!canonicalName || employeeName.trim() !== canonicalName) {
+    throw new Error('لا يمكن تسجيل إقرار باسم مستخدم آخر.');
+  }
+
+  const broadcastRef = doc(db, 'owner_broadcasts', broadcastId);
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(broadcastRef);
+    if (!snapshot.exists()) return;
+    const broadcast = snapshot.data() as OwnerStaffBroadcast;
+    const previousAcks = Array.isArray(broadcast.acknowledgedBy) ? broadcast.acknowledgedBy : [];
+    if (previousAcks.some((ack) => ack.employeeName === canonicalName)) return;
+    transaction.update(broadcastRef, {
+      acknowledgedBy: [...previousAcks, {
+        employeeName: canonicalName,
+        timestamp: new Date().toISOString(),
+      }],
+    });
   });
 };
 

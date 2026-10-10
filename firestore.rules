@@ -38,6 +38,34 @@ service cloud.firestore {
           || (memberProfile().migrationReady == true && confidentialMigrationComplete()));
     }
 
+    function canReadOwnerBroadcast(data) {
+      let target = data.get('targetEmployee', 'all');
+      return isOwner() || (activeMember()
+        && (target == 'all'
+          || target == memberProfile().get('displayName', '')
+          || target == memberProfile().get('username', '')
+          || target == memberProfile().get('appUserId', '')));
+    }
+
+    function canAcknowledgeOwnerBroadcast() {
+      let previousAcks = resource.data.get('acknowledgedBy', []);
+      let nextAcks = request.resource.data.get('acknowledgedBy', []);
+      return activeMember()
+        && resource.data.get('requiresAcknowledgement', false) == true
+        && canReadOwnerBroadcast(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acknowledgedBy'])
+        && previousAcks is list
+        && nextAcks is list
+        && nextAcks.size() == previousAcks.size() + 1
+        && nextAcks.hasAll(previousAcks)
+        && nextAcks[nextAcks.size() - 1] is map
+        && nextAcks[nextAcks.size() - 1].keys().hasAll(['employeeName', 'timestamp'])
+        && nextAcks[nextAcks.size() - 1].keys().hasOnly(['employeeName', 'timestamp'])
+        && nextAcks[nextAcks.size() - 1].employeeName == memberProfile().get('displayName', '')
+        && nextAcks[nextAcks.size() - 1].timestamp is string
+        && nextAcks[nextAcks.size() - 1].timestamp.size() <= 40;
+    }
+
     function restrictedNonOwnerPermission(permission) {
       return permission in [
         'canEditProductCost', 'canOverridePrice', 'canViewProfits', 'canViewCostAndProfit',
@@ -54,9 +82,11 @@ service cloud.firestore {
       return isOwner()
         || (activeMember()
           && !restrictedNonOwnerPermission(permission)
-          && (memberProfile().permissions.get(permission, false) == true
-            || (permission == 'canViewCosts'
-              && memberProfile().get('appUserId', '') == 'user-tarek')));
+          && (permission == 'canViewCosts'
+            ? memberProfile().role == 'STORE_MANAGER'
+              && (memberProfile().get('appUserId', '') == 'user-tarek'
+                || memberProfile().get('username', '') == 'tarek')
+            : memberProfile().permissions.get(permission, false) == true));
     }
 
     function canEditProductPrice() {
@@ -463,6 +493,36 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
+    // Upstream additions: conservative access until collection ownership is documented.
+    match /owner_broadcasts/{broadcastId} {
+      allow read: if canReadOwnerBroadcast(resource.data);
+      allow create, delete: if isOwner();
+      allow update: if isOwner() || canAcknowledgeOwnerBroadcast();
+    }
+    match /staff_entitlements/{id} {
+      allow read, write: if isOwner();
+    }
+    match /staff_advances/{id} {
+      allow read, write: if isOwner();
+    }
+    match /staff_settlements/{id} {
+      allow read, write: if isOwner();
+    }
+    match /staff_incentives/{id} {
+      allow read, write: if isOwner();
+    }
+    match /staff_deductions/{id} {
+      allow read, write: if isOwner();
+    }
+    match /connected_devices/{deviceId} {
+      allow read, write: if isOwner();
+    }
+    match /commission_policies/{id} {
+      allow read, write: if isOwner();
+    }
+    match /commission_audit_logs/{id} {
+      allow read, write: if isOwner();
+    }
     match /{document=**} {
       allow read, write: if false;
     }

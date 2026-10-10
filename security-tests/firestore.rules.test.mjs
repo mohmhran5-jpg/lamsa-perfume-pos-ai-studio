@@ -115,6 +115,8 @@ beforeEach(async () => {
     await setDoc(doc(db, 'authorized_users', ownerEmail), {
       email: ownerEmail,
       appUserId: 'user-mohamed',
+      displayName: 'د. محمد',
+      username: 'mohamed',
       role: 'OWNER',
       isActive: true,
       migrationReady: true,
@@ -123,6 +125,8 @@ beforeEach(async () => {
     await setDoc(doc(db, 'authorized_users', tarekEmail), {
       email: tarekEmail,
       appUserId: 'user-tarek',
+      displayName: 'طارق',
+      username: 'tarek',
       role: 'STORE_MANAGER',
       isActive: true,
       migrationReady: true,
@@ -226,7 +230,7 @@ test('a staff role without canViewCosts can still read operations but cannot rea
   await assertFails(getDocs(query(collection(cashier, 'employee_costs'), where('sourceCollection', '==', 'products'))));
 });
 
-test('the explicit cost-visibility exception is limited to Tarek, not other STORE_MANAGER accounts', async () => {
+test('cost visibility stays limited to Tarek even if another manager claims canViewCosts', async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await updateDoc(doc(db, 'authorized_users', tarekEmail), {
@@ -235,13 +239,14 @@ test('the explicit cost-visibility exception is limited to Tarek, not other STOR
     await setDoc(doc(db, 'authorized_users', 'manager2@lamsa.test'), {
       email: 'manager2@lamsa.test', appUserId: 'user-manager-2', username: 'manager2',
       role: 'STORE_MANAGER', isActive: true, migrationReady: true,
-      permissions: { ...tarekPermissions, canViewCosts: false },
+      permissions: { ...tarekPermissions, canViewCosts: true },
     });
   });
   const tarek = googleContext(tarekEmail, 'tarek-uid');
   const otherManager = googleContext('manager2@lamsa.test', 'manager2-uid');
   await assertSucceeds(getDoc(doc(tarek, 'employee_costs', 'sales__sale-1')));
   await assertFails(getDoc(doc(otherManager, 'employee_costs', 'sales__sale-1')));
+  await assertFails(getDoc(doc(otherManager, 'employee_costs', 'products__p-1')));
 });
 
 test('Tarek cannot self-promote or grant another account access', async () => {
@@ -360,4 +365,40 @@ test('unlisted collections use default deny', async () => {
   const tarek = googleContext(tarekEmail, 'tarek-uid');
   await assertFails(getDoc(doc(tarek, 'system_backdoor', 'x')));
   await assertFails(getDocs(collection(tarek, 'system_backdoor')));
+});
+
+test('owner broadcasts are recipient-scoped and staff may append only their own acknowledgement', async () => {
+  const owner = googleContext(ownerEmail, 'owner-uid');
+  const tarek = googleContext(tarekEmail, 'tarek-uid');
+  const broadcast = (targetEmployee) => ({
+    title: 'توجيه اختباري',
+    message: 'رسالة داخلية',
+    targetEmployee,
+    requiresAcknowledgement: true,
+    acknowledgedBy: [],
+    isArchived: false,
+    createdAt: '2026-10-11T00:00:00.000Z',
+  });
+
+  await assertSucceeds(setDoc(doc(owner, 'owner_broadcasts', 'broadcast-all'), broadcast('all')));
+  await assertSucceeds(setDoc(doc(owner, 'owner_broadcasts', 'broadcast-tarek'), broadcast('طارق')));
+  await assertSucceeds(setDoc(doc(owner, 'owner_broadcasts', 'broadcast-other'), broadcast('موظف آخر')));
+
+  await assertSucceeds(getDoc(doc(tarek, 'owner_broadcasts', 'broadcast-all')));
+  await assertSucceeds(getDoc(doc(tarek, 'owner_broadcasts', 'broadcast-tarek')));
+  await assertFails(getDoc(doc(tarek, 'owner_broadcasts', 'broadcast-other')));
+  const visible = await assertSucceeds(getDocs(query(
+    collection(tarek, 'owner_broadcasts'),
+    where('targetEmployee', 'in', ['all', 'طارق', 'tarek', 'user-tarek']),
+  )));
+  assert.deepEqual(new Set(visible.docs.map((entry) => entry.id)), new Set(['broadcast-all', 'broadcast-tarek']));
+
+  const broadcastRef = doc(tarek, 'owner_broadcasts', 'broadcast-tarek');
+  const ownAck = { employeeName: 'طارق', timestamp: '2026-10-11T00:01:00.000Z' };
+  await assertSucceeds(updateDoc(broadcastRef, { acknowledgedBy: [ownAck] }));
+  await assertFails(updateDoc(broadcastRef, { title: 'توجيه مزور' }));
+  await assertFails(updateDoc(broadcastRef, {
+    acknowledgedBy: [ownAck, { employeeName: 'موظف آخر', timestamp: '2026-10-11T00:02:00.000Z' }],
+  }));
+  await assertFails(setDoc(doc(tarek, 'owner_broadcasts', 'forged-broadcast'), broadcast('all')));
 });
