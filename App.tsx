@@ -27,7 +27,6 @@ import InteractiveTypingController from './components/InteractiveTypingControlle
 import OwnerLiveAlertsRadarModal from './components/OwnerLiveAlertsRadarModal';
 import PWAInstallModal from './components/PWAInstallModal';
 import ConnectedDevicesSyncModal from './components/ConnectedDevicesSyncModal';
-import StaffEntitlements from './components/StaffEntitlements';
 import { soundAlertService } from './services/soundAlertService';
 import { browserNotificationService } from './services/browserNotificationService';
 import { 
@@ -2805,21 +2804,6 @@ const App: React.FC = () => {
               setVaults(updatedList);
               saveAllVaultsCloud(updatedList).catch(console.error);
             }}
-          />
-        );
-      case View.STAFF_ENTITLEMENTS:
-        return (
-          <StaffEntitlements
-            sales={sales}
-            vaults={vaults}
-            currentUser={currentUser}
-            users={users}
-            settings={settings}
-            onUpdateVaults={(updatedList) => {
-              setVaults(updatedList);
-              saveAllVaultsCloud(updatedList).catch(console.error);
-            }}
-            onAddExpense={(newExp) => handleSetExpenses(prev => [newExp, ...prev])}
           />
         );
       case View.EXPENSES:

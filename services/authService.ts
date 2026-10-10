@@ -113,11 +113,6 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
     case View.CUSTOMERS_LOYALTY:
       return Boolean(p?.canRecordSale);
 
-    case View.STAFF_ENTITLEMENTS:
-      // Payroll, advances, commissions, and settlements are owner-confidential.
-      // The owner role is handled by the unconditional check above.
-      return false;
-
     case View.ANALYZER:
       return Boolean(p?.canViewStock || p?.canRecordSale);
 

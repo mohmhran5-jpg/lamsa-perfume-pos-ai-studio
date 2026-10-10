@@ -28,7 +28,6 @@ import {
   Layers,
   Clock,
   Sliders,
-  Award,
   Store,
   LogOut,
   Radio
@@ -562,7 +561,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               </button>
 
               {/* 3. Labeled Notifications Capsule (رادار المالك للمالك - وقسم العمولات لطارق) */}
-              {isOwner ? (
+              {isOwner && (
                 <button
                   type="button"
                   onClick={onOpenLiveAlertsRadar}
@@ -572,17 +571,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                   <Bell size={15} className="text-[#34C759] shrink-0" strokeWidth={2} />
                   <span className="hidden sm:inline">رادار التنبيهات</span>
                   <span className="w-2 h-2 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse shrink-0" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onNavigate && onNavigate(View.STAFF_ENTITLEMENTS)}
-                  className="apple-pill-btn halo-blue h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
-                  title="قسم مستحقات طارق وعمولات اليوم وتوجيهات العمل"
-                >
-                  <Award size={15} className="text-[#0071E3] shrink-0" strokeWidth={2} />
-                  <span className="hidden sm:inline">عمولاتي ومستحقاتي</span>
-                  <span className="w-2 h-2 rounded-full bg-[#0071E3] ring-2 ring-white animate-pulse shrink-0" />
                 </button>
               )}
 
