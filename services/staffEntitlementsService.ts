@@ -47,7 +47,7 @@ export const DEFAULT_STAFF_SALARY_CONFIGS: StaffBaseSalaryConfig[] = [
     effectiveStartDate: '2026-01-01',
     payPeriodFrequency: 'monthly',
     approvedBy: 'د. محمد',
-    notes: 'الراتب الثابت الشهري المعتمد الجديد (1,000 ج.م) مع إعادة تخصيص 500 ج.م لاحتياطي الحوافز',
+    notes: 'الراتب الثابت الشهري المعتمد (1,000 ج.م)',
   },
 ];
 

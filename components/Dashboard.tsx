@@ -248,8 +248,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const progressPhase1 = todaysSales.length > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase1) * 100), 100) : 0;
   const progressPhase2 = todaysSales.length > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase2) * 100), 100) : 0;
 
-  // Remaining money to initial contribution target (only when actual sales exist)
-  const remainingToBreakEven = todaysSales.length > 0 ? Math.max(0, targetPhase1 - netContributionToday) : 0;
+  // Remaining money to initial contribution target (600 EGP)
+  const remainingToBreakEven = Math.max(0, targetPhase1 - netContributionToday);
   const hasRealProfit = todaysSales.length > 0 && netContributionToday >= targetPhase1;
 
   // Essence consumed today

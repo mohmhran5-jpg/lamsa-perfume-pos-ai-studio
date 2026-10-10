@@ -1097,7 +1097,7 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
       {/* ======================================================== */}
       {/* SUB-TAB: INCENTIVE RESERVE LEDGER & BUDGET               */}
       {/* ======================================================== */}
-      {activeSubTab === 'incentive_reserve' && (
+      {isOwner && activeSubTab === 'incentive_reserve' && (
         <div className="space-y-4">
           <div className="p-4 rounded-3xl bg-white dark:bg-[#1D1D1F] border border-slate-200 dark:border-white/10 shadow-2xs space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-white/10 pb-3">

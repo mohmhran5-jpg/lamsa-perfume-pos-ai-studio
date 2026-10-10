@@ -273,8 +273,8 @@ export const OperationsSystem: React.FC<OperationsSystemProps> = ({
     (sum, s) => sum + s.items.reduce((acc, it) => acc + (it.quantity || 1), 0),
     0
   );
-  const remainingFor600 = todaysSales.length > 0 ? Math.max(0, 600 - todaysContribution) : 0;
-  const remainingFor1000 = todaysSales.length > 0 ? Math.max(0, 1000 - todaysContribution) : 0;
+  const remainingFor600 = Math.max(0, 600 - todaysContribution);
+  const remainingFor1000 = Math.max(0, 1000 - todaysContribution);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6 pb-12 animate-in fade-in duration-200">
