@@ -11,7 +11,7 @@ import {
   isLiveProductionSale,
   isTestOrExampleRecord
 } from '../types';
-import { canViewProfits, canViewCosts } from '../services/authService';
+import { canViewProfits, canViewCosts, hasPermission } from '../services/authService';
 import {
   TrendingUp,
   DollarSign,
@@ -76,6 +76,11 @@ const Reports: React.FC<ReportsProps> = ({
   onUpdateSettings,
   currentUser
 }) => {
+  const canEditSaleMetadata = currentUser?.role === 'OWNER' || currentUser?.permissions.canEditSaleBeforeClose === true;
+  const canEditSaleAmounts = currentUser?.role === 'OWNER';
+  const canExportFullData = currentUser?.role === 'OWNER' || hasPermission(currentUser ?? null, 'canExportData');
+  const canCancelSales = currentUser?.role === 'OWNER' || hasPermission(currentUser ?? null, 'canCancelSale');
+
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [customDate, setCustomDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all');
@@ -302,6 +307,19 @@ const Reports: React.FC<ReportsProps> = ({
     e.preventDefault();
     if (!editingSale || !onUpdateSale) return;
 
+    if (!canEditSaleAmounts) {
+      const metadataOnlySale: Sale = {
+        ...editingSale,
+        customerName: editCustomerName.trim() || '',
+        customerPhone: editCustomerPhone.trim() || '',
+        paymentMethod: editPaymentMethod,
+        notes: editNotes.trim() || '',
+      };
+      onUpdateSale(metadataOnlySale, editingSale, false);
+      setEditingSale(null);
+      return;
+    }
+
     const subtotal = editItems.reduce((s, i) => s + (Number(i.sellingPrice) || 0), 0);
     const finalTotal = Math.max(0, subtotal - (Number(editDiscount) || 0));
     const finalCost = editItems.reduce((s, i) => s + (Number(i.cost) || 0), 0);
@@ -338,6 +356,7 @@ const Reports: React.FC<ReportsProps> = ({
 
   // Export CSV
   const handleExportCSV = () => {
+    if (!canExportFullData) return;
     const headers = ['رقم الفاتورة,التاريخ,الأصناف,عدد العبوات,الزيت(جم),التكلفة,سعر البيع,الربح,العميل,الهاتف,طريقة الدفع,البائع'];
     const rows = filteredSales.map((s) => {
       const itemsSummary = (s.items || []).map(i => `${i.productName} (${i.bottleSize}مل×${i.quantity || 1})`).join(' + ');
@@ -417,7 +436,7 @@ ${itemsLines}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {onDeleteSale && sales.some((s) => s.isReversed) && (
+          {onDeleteSale && currentUser?.role === 'OWNER' && sales.some((s) => s.isReversed) && (
             <button
               type="button"
               onClick={() => {
@@ -445,7 +464,7 @@ ${itemsLines}
             </button>
           )}
 
-          <button
+          {canExportFullData && <button
             type="button"
             onClick={handleExportCSV}
             className="apple-btn flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-black/[0.08] text-xs font-bold text-[#1D1D1F] shadow-apple-xs hover:bg-black/[0.02] cursor-pointer"
@@ -453,7 +472,7 @@ ${itemsLines}
           >
             <Download size={14} className="text-[#0071E3]" />
             <span>تصدير إكسل (CSV)</span>
-          </button>
+          </button>}
 
           {(canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && (
             <button
@@ -779,17 +798,17 @@ ${itemsLines}
 
                     {/* Control Buttons Row */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-black/[0.05]">
-                      <button
+                      {canEditSaleMetadata && <button
                         type="button"
                         onClick={() => handleQuickSwitchPayment(sale)}
                         title="انقر لتغيير طريقة الدفع فوراً"
                         className="px-2.5 py-1 rounded-lg bg-black/[0.05] hover:bg-black/[0.1] text-[#1D1D1F] text-[11px] font-bold cursor-pointer"
                       >
                         {sale.paymentMethod || 'نقدي'} ↻
-                      </button>
+                      </button>}
 
                       <div className="flex items-center gap-1.5">
-                        {onUpdateSale && (
+                        {onUpdateSale && canEditSaleMetadata && (
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(sale)}
@@ -815,7 +834,7 @@ ${itemsLines}
                         >
                           {copiedInvoiceId === sale.id ? <Check size={13} /> : <Share2 size={13} />}
                         </button>
-                        {onDeleteSale && (
+                        {onDeleteSale && canCancelSales && (
                           <button
                             type="button"
                             onClick={() => {
@@ -934,14 +953,14 @@ ${itemsLines}
                         </td>
 
                         <td className="py-3 px-3">
-                          <button
+                          {canEditSaleMetadata && <button
                             type="button"
                             onClick={() => handleQuickSwitchPayment(sale)}
                             title="انقر لتبديل طريقة الدفع مباشرة"
                             className="px-2.5 py-1 rounded-xl bg-[#F5F5F7] hover:bg-[#0071E3] hover:text-white text-[11px] font-bold text-[#1D1D1F] transition-all cursor-pointer"
                           >
                             {sale.paymentMethod || 'نقدي'} ↻
-                          </button>
+                          </button>}
                         </td>
 
                         <td className="py-3 px-3 font-mono font-black text-sm text-[#1D1D1F]">
@@ -956,7 +975,7 @@ ${itemsLines}
 
                         <td className="py-3 px-3 text-left">
                           <div className="flex items-center justify-end gap-1">
-                            {onUpdateSale && (
+                            {onUpdateSale && canEditSaleMetadata && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenEditModal(sale)}
@@ -1004,7 +1023,7 @@ ${itemsLines}
                               <Printer size={14} />
                             </button>
 
-                            {onDeleteSale && (
+                            {onDeleteSale && canCancelSales && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1092,7 +1111,7 @@ ${itemsLines}
                 </div>
                 <div>
                   <h3 className="text-base font-black text-[#1D1D1F]">
-                    تعديل الفاتورة والتحكم الكامل #{editingSale.id.slice(-6)}
+                    {canEditSaleAmounts ? 'تعديل الفاتورة والتحكم الكامل' : 'تعديل بيانات الفاتورة'} #{editingSale.id.slice(-6)}
                   </h3>
                   <span className="text-[11px] text-[#86868B] font-mono">
                     تاريخ الإصدار: {new Date(editingSale.date).toLocaleString('ar-EG')}
@@ -1146,7 +1165,7 @@ ${itemsLines}
               </div>
 
               {/* Invoice Items Editor */}
-              <div className="space-y-2.5">
+              {canEditSaleAmounts && <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="font-black text-[#1D1D1F]">الأصناف والعبوات داخل الفاتورة:</span>
                   <div className="flex items-center gap-1.5">
@@ -1233,11 +1252,10 @@ ${itemsLines}
                     </div>
                   ))}
                 </div>
-              </div>
-
+              </div>}
               {/* Discount & Notes */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                <div>
+                {canEditSaleAmounts && <div>
                   <label className="font-bold text-[#1D1D1F] block mb-1">خصم على الفاتورة ({settings.currency}):</label>
                   <input
                     type="number"
@@ -1246,7 +1264,7 @@ ${itemsLines}
                     onChange={(e) => setEditDiscount(Math.max(0, Number(e.target.value) || 0))}
                     className="w-full h-10 px-3 rounded-xl bg-[#F5F5F7] border border-black/[0.08] font-mono font-bold outline-none focus:bg-white"
                   />
-                </div>
+                </div>}
                 <div>
                   <label className="font-bold text-[#1D1D1F] block mb-1">ملاحظات الفاتورة:</label>
                   <input
@@ -1260,7 +1278,7 @@ ${itemsLines}
               </div>
 
               {/* Automatic Stock Adjustment Toggle */}
-              <label className="flex items-center justify-between p-3 rounded-2xl bg-[#34C759]/10 border border-[#34C759]/25 cursor-pointer">
+              {canEditSaleAmounts && <label className="flex items-center justify-between p-3 rounded-2xl bg-[#34C759]/10 border border-[#34C759]/25 cursor-pointer">
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -1273,17 +1291,15 @@ ${itemsLines}
                   </span>
                 </div>
                 <span className="text-[10px] font-bold text-[#248A3D]">تحديث ذكي</span>
-              </label>
-
+              </label>}
               {/* Live Updated Total Bar */}
               <div className="p-3.5 rounded-2xl bg-[#1D1D1F] text-white flex items-center justify-between">
                 <div>
                   <span className="text-[11px] text-zinc-400 block">الإجمالي الجديد بعد التعديل:</span>
                   <span className="text-lg font-black font-mono text-amber-400">
-                    {Math.max(
-                      0,
-                      editItems.reduce((s, i) => s + (Number(i.sellingPrice) || 0), 0) - (Number(editDiscount) || 0)
-                    ).toLocaleString('ar-EG')}{' '}
+                    {(canEditSaleAmounts
+                      ? Math.max(0, editItems.reduce((s, i) => s + (Number(i.sellingPrice) || 0), 0) - (Number(editDiscount) || 0))
+                      : editingSale.totalPrice).toLocaleString('ar-EG')}{' '}
                     {settings.currency}
                   </span>
                 </div>
@@ -1329,7 +1345,7 @@ ${itemsLines}
       {/* ======================================================== */}
       {/* DELETE / REVERSE SALE CONFIRMATION MODAL                 */}
       {/* ======================================================== */}
-      {saleToDelete && (
+      {saleToDelete && canCancelSales && (
         <div className="fixed inset-0 z-[130] bg-black/50 backdrop-blur-sm smart-modal-overlay animate-in fade-in duration-150">
           <div className="apple-glass-card smart-modal-window rounded-[28px] w-full max-w-md overflow-hidden p-5 text-center space-y-3.5 shadow-apple-lg border border-black/[0.08] bg-white/95">
             <div className="w-14 h-14 rounded-2xl bg-red-100 text-[#FF3B30] flex items-center justify-center mx-auto">
@@ -1385,7 +1401,7 @@ ${itemsLines}
             )}
 
             <div className="space-y-2 pt-2">
-              <button
+              {currentUser?.role === 'OWNER' && <button
                 type="button"
                 onClick={() => {
                   if (onDeleteSale) {
@@ -1409,7 +1425,7 @@ ${itemsLines}
                     ? 'حذف الفاتورة نهائياً + استرجاع الزيوت للمخزون'
                     : 'حذف الفاتورة نهائياً (بدون إرجاع المخزون)'}
                 </span>
-              </button>
+              </button>}
 
               <div className="grid grid-cols-2 gap-2">
                 {!saleToDelete.isReversed && (

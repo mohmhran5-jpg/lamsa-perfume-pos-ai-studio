@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   AppUser, 
   UserRole, 
@@ -9,7 +9,6 @@ import {
   INVENTORY_KEEPER_PERMISSIONS,
   AuditLogRecord
 } from '../types';
-import { hashPassword } from '../services/authService';
 import { 
   Users, 
   UserPlus, 
@@ -25,15 +24,33 @@ import {
   EyeOff, 
   UserX, 
   CheckCircle2,
-  Sliders
+  Sliders,
+  Smartphone,
+  Tablet,
+  Monitor,
+  Clock3
 } from 'lucide-react';
+import { subscribeToDevicePresence } from '../services/firebase';
+import type { DevicePresenceRecord, ConfidentialMigrationResult, ConfidentialMigrationStatus } from '../services/firebase';
 
 interface UsersManagementProps {
   users: AppUser[];
   currentUser: AppUser | null;
-  onSaveUser: (user: AppUser) => void;
+  onSaveUser: (user: AppUser) => Promise<void> | void;
   onAddAuditLog: (log: AuditLogRecord) => void;
+  migrationStatus: ConfidentialMigrationStatus | null;
+  onResumeMigration: () => Promise<ConfidentialMigrationResult>;
 }
+
+const OWNER_ONLY_PERMISSION_KEYS = new Set<keyof UserPermissions>([
+  'canEditProductCost', 'canOverridePrice', 'canViewProfits', 'canViewCostAndProfit',
+  'canViewProfitAndCosts', 'canViewExecutiveDashboard', 'canViewVaults',
+  'canRequestWithdrawal', 'canApproveWithdrawal', 'canInjectCapital',
+  'canTransferBetweenVaults', 'canWithdrawOwnerProfit', 'canEditBudget',
+  'canEditSalaries', 'canEditCommissions', 'canViewExpenses', 'canManageSettings',
+  'canManageUsers', 'canViewAuditLog', 'canViewAuditLogs', 'canAccessOperationsSystem',
+  'canEditSettingsAndBudgets', 'canExportData', 'canDeleteInvoices',
+]);
 
 const PERMISSION_LABELS: Partial<Record<keyof UserPermissions, { label: string; group: string }>> = {
   // Sales & POS
@@ -74,11 +91,19 @@ const PERMISSION_LABELS: Partial<Record<keyof UserPermissions, { label: string; 
   canExportData: { label: 'تصدير البيانات والتقارير', group: 'النظام والأمان' },
   // Administrative Confidentiality & Trade Secrets (أسرار الإدارة والسرية)
   canViewProfits: { label: 'الاطلاع على هوامش وصافي الأرباح (سر إداري)', group: 'أسرار الإدارة والسرية' },
-  canViewCosts: { label: 'الاطلاع على تكلفة الخامات وسعر الجملة (سر تجاري)', group: 'أسرار الإدارة والسرية' },
+  canViewCosts: { label: 'عرض تكلفة الخامات والعبوات (دون تعديل)', group: 'التكاليف التشغيلية' },
   canViewExpenses: { label: 'الاطلاع على المصروفات والرواتب والإيجارات', group: 'أسرار الإدارة والسرية' },
   canViewReports: { label: 'الاطلاع على التقارير المحاسبية التنفيذية', group: 'أسرار الإدارة والسرية' },
   canManageSettings: { label: 'التحكم بإعدادات النظام والتسعير', group: 'أسرار الإدارة والسرية' },
   canAccessOperationsSystem: { label: 'الوصول لنظام التارجت والموازنة المعتمدة', group: 'أسرار الإدارة والسرية' },
+};
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  OWNER: 'مالك (تحكم كامل)',
+  STORE_MANAGER: 'مسؤول تشغيل',
+  CASHIER: 'كاشير ومبيعات',
+  SALES_REP: 'بائع ومسوق ميداني',
+  INVENTORY_KEEPER: 'أمين مخزون وخامات',
 };
 
 const UsersManagement: React.FC<UsersManagementProps> = ({
@@ -86,19 +111,49 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
   currentUser,
   onSaveUser,
   onAddAuditLog,
+  migrationStatus,
+  onResumeMigration,
 }) => {
   const isOwner = currentUser?.role === 'OWNER';
+  const isMigrationComplete = migrationStatus?.status === 'complete' && migrationStatus.version === 3;
 
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [isResumingMigration, setIsResumingMigration] = useState(false);
+  const [migrationActionError, setMigrationActionError] = useState<string | null>(null);
 
   // Form State
   const [formDisplayName, setFormDisplayName] = useState('');
   const [formUsername, setFormUsername] = useState('');
+  const [formAuthEmail, setFormAuthEmail] = useState('');
   const [formRole, setFormRole] = useState<UserRole>('CASHIER');
-  const [formPassword, setFormPassword] = useState('');
-  const [formPermissions, setFormPermissions] = useState<UserPermissions>(TAREK_OPERATIONAL_PERMISSIONS);
+  const [formPermissions, setFormPermissions] = useState<UserPermissions>(CASHIER_STANDARD_PERMISSIONS);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [devices, setDevices] = useState<DevicePresenceRecord[]>([]);
+  const [deviceClock, setDeviceClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isOwner) {
+      setDevices([]);
+      return;
+    }
+    return subscribeToDevicePresence(setDevices);
+  }, [isOwner]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setDeviceClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const isDeviceOnline = (device: DevicePresenceRecord) =>
+    device.lastSeenAt.toMillis() >= deviceClock - 5 * 60_000;
+  const formatDeviceLastSeen = (device: DevicePresenceRecord) => {
+    const ageMs = Math.max(0, deviceClock - device.lastSeenAt.toMillis());
+    if (ageMs < 60_000) return 'الآن';
+    if (ageMs < 60 * 60_000) return `منذ ${Math.floor(ageMs / 60_000)} دقيقة`;
+    if (ageMs < 24 * 60 * 60_000) return `منذ ${Math.floor(ageMs / (60 * 60_000))} ساعة`;
+    return device.lastSeenAt.toDate().toLocaleString('ar-EG');
+  };
 
   // Open Edit Modal for a User
   const handleEditUser = (user: AppUser) => {
@@ -106,8 +161,8 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
     setIsCreatingNew(false);
     setFormDisplayName(user.displayName);
     setFormUsername(user.username);
+    setFormAuthEmail(user.authEmail || '');
     setFormRole(user.role);
-    setFormPassword('');
     setFormPermissions({ ...user.permissions });
     setStatusMessage(null);
   };
@@ -118,14 +173,15 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
     setIsCreatingNew(true);
     setFormDisplayName('');
     setFormUsername('');
+    setFormAuthEmail('');
     setFormRole('CASHIER');
-    setFormPassword('');
-    setFormPermissions({ ...TAREK_OPERATIONAL_PERMISSIONS });
+    setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
     setStatusMessage(null);
   };
 
   // Toggle Single Permission
   const togglePermission = (key: keyof UserPermissions) => {
+    if (formRole !== 'OWNER' && OWNER_ONLY_PERMISSION_KEYS.has(key)) return;
     setFormPermissions(prev => ({
       ...prev,
       [key]: !prev[key]
@@ -142,7 +198,10 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
     } else if (role === 'INVENTORY_KEEPER') {
       setFormPermissions({ ...INVENTORY_KEEPER_PERMISSIONS });
     } else {
-      setFormPermissions({ ...TAREK_OPERATIONAL_PERMISSIONS });
+      setFormPermissions({
+        ...TAREK_OPERATIONAL_PERMISSIONS,
+        canViewCosts: formUsername.trim().toLowerCase() === 'tarek',
+      });
     }
   };
 
@@ -154,27 +213,40 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
       return;
     }
 
+    const normalizedEmail = formAuthEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      alert('أدخل بريد Google صحيحاً لهذا الموظف.');
+      return;
+    }
+    if (users.some(u => u.id !== selectedUser?.id && (u.authEmail || '').toLowerCase() === normalizedEmail)) {
+      alert('هذا البريد مرتبط بالفعل بحساب موظف آخر.');
+      return;
+    }
+    if (formRole !== 'OWNER' && !isMigrationComplete) {
+      alert('لا يمكن حفظ أو تفعيل حساب موظف محدود قبل اكتمال عزل البيانات الخاصة بالإصدار 3.');
+      return;
+    }
+
+    const safePermissions = formRole === 'OWNER'
+      ? { ...OWNER_FULL_PERMISSIONS }
+      : { ...formPermissions, ...Object.fromEntries([...OWNER_ONLY_PERMISSION_KEYS].map(key => [key, false])) } as UserPermissions;
+
     try {
       if (isCreatingNew) {
-        if (!formPassword.trim()) {
-          alert('يرجى إدخال كلمة مرور أولية للموظف الجديد.');
-          return;
-        }
-
-        const hashed = await hashPassword(formPassword.trim());
         const newUser: AppUser = {
           id: `user-${formUsername.trim().toLowerCase()}-${Date.now().toString(36)}`,
           username: formUsername.trim().toLowerCase(),
           displayName: formDisplayName.trim(),
+          authEmail: normalizedEmail,
           role: formRole,
-          passwordHash: hashed,
-          requiresPasswordChange: true, // Forces change on first login
-          isActive: true,
+          passwordHash: '',
+          requiresPasswordChange: false,
+          isActive: false,
           createdAt: new Date().toISOString(),
-          permissions: formPermissions,
+          permissions: safePermissions,
         };
 
-        onSaveUser(newUser);
+        await onSaveUser(newUser);
 
         onAddAuditLog({
           id: `audit-user-add-${Date.now()}`,
@@ -193,24 +265,18 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
         setStatusMessage(`تمت إضافة الموظف ${newUser.displayName} بنجاح.`);
         setIsCreatingNew(false);
       } else if (selectedUser) {
-        let updatedHash = selectedUser.passwordHash;
-        let requiresChange = selectedUser.requiresPasswordChange;
-
-        if (formPassword.trim()) {
-          updatedHash = await hashPassword(formPassword.trim());
-          requiresChange = true;
-        }
-
         const updated: AppUser = {
           ...selectedUser,
           displayName: formDisplayName.trim(),
+          username: formUsername.trim().toLowerCase(),
+          authEmail: normalizedEmail,
           role: formRole,
-          passwordHash: updatedHash,
-          requiresPasswordChange: requiresChange,
-          permissions: formPermissions,
+          passwordHash: '',
+          requiresPasswordChange: false,
+          permissions: safePermissions,
         };
 
-        onSaveUser(updated);
+        await onSaveUser(updated);
 
         onAddAuditLog({
           id: `audit-user-edit-${Date.now()}`,
@@ -222,7 +288,7 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
           entityName: updated.displayName,
           oldValue: selectedUser.permissions,
           newValue: updated.permissions,
-          reason: formPassword.trim() ? 'تحديث الصلاحيات وكلمة المرور' : 'تحديث صلاحيات الموظف',
+          reason: 'تحديث بريد Google والدور والصلاحيات',
           category: 'مستخدمين_وأمان'
         });
 
@@ -236,9 +302,13 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
   };
 
   // Toggle Active / Freeze Account
-  const handleToggleFreeze = (user: AppUser) => {
+  const handleToggleFreeze = async (user: AppUser) => {
     if (user.role === 'OWNER') {
       alert('لا يمكن إيقاف حساب المالك الأساسي.');
+      return;
+    }
+    if (!user.isActive && !isMigrationComplete) {
+      setStatusMessage('لا يمكن تفعيل الموظف قبل اكتمال الترحيل والتحقق من الإصدار 1.');
       return;
     }
 
@@ -247,7 +317,13 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
       isActive: !user.isActive
     };
 
-    onSaveUser(updated);
+    try {
+      await onSaveUser(updated);
+      setStatusMessage(updated.isActive ? `تم تفعيل ${updated.displayName}.` : `تم إيقاف ${updated.displayName}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'تعذّر تحديث حالة الموظف.');
+      return;
+    }
 
     onAddAuditLog({
       id: `audit-user-freeze-${Date.now()}`,
@@ -262,6 +338,24 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
       reason: updated.isActive ? 'إعادة تفعيل حساب الموظف' : 'إيقاف حساب الموظف مؤقتاً',
       category: 'مستخدمين_وأمان'
     });
+  };
+
+  const handleResumeMigration = async () => {
+    if (!isOwner || isMigrationComplete || isResumingMigration) return;
+    const isLegacyRunning = migrationStatus?.status === 'running' && !migrationStatus.leaseId;
+    if (isLegacyRunning && !window.confirm('الترحيل الحالي بدأ بنسخة قديمة لا تملك قفلاً لمنع التشغيل المتوازي. أغلق التطبيق في جميع التبويبات والأجهزة الأخرى، ثم اختر موافق لاستئنافه بأمان.')) return;
+    setIsResumingMigration(true);
+    setMigrationActionError(null);
+    try {
+      const result = await onResumeMigration();
+      if (result.skippedReason) {
+        setMigrationActionError('يوجد ترحيل نشط بالفعل. اتركه يكمل ثم أعد فحص الحالة.');
+      }
+    } catch (error) {
+      setMigrationActionError(error instanceof Error ? error.message : 'تعذّر استئناف الترحيل.');
+    } finally {
+      setIsResumingMigration(false);
+    }
   };
 
   // Group permissions by category
@@ -321,17 +415,46 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
         </div>
       )}
 
+      <section className={`p-4 rounded-2xl border space-y-2 ${isMigrationComplete ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`} aria-live="polite">
+        <div className="flex items-center gap-2 text-sm font-black text-[#1D1D1F]">
+          {isMigrationComplete ? <CheckCircle2 size={17} className="text-emerald-700" /> : <Shield size={17} className="text-amber-700" />}
+          <span>حالة عزل بيانات المالك</span>
+        </div>
+        {isMigrationComplete ? (
+          <p className="text-xs text-emerald-900">اكتمل الإصدار 1. يمكنك الآن تفعيل الموظفين وتعديل صلاحياتهم؛ وتظل التكلفة والميزانية والأرباح محصورة بالمالك.</p>
+        ) : (
+          <>
+            <p className="text-xs text-amber-950">الحالة: {migrationStatus?.status === 'running' ? 'قيد الترحيل' : migrationStatus?.status === 'error' ? 'توقف بخطأ' : migrationStatus?.status === 'unavailable' ? 'تعذّر قراءة الحالة' : 'لم يكتمل'}{migrationStatus?.version ? ` — الإصدار ${migrationStatus.version}` : ''}</p>
+            {migrationStatus?.status === 'running' && migrationStatus.leaseId && (
+              <p className="text-[11px] text-amber-900">جارٍ العمل على {migrationStatus.currentCollection || 'البيانات'}؛ أُنجز {migrationStatus.migratedDocuments || 0} من {migrationStatus.totalDocuments || 0} سجل.</p>
+            )}
+            {migrationStatus?.status === 'running' && !migrationStatus.leaseId && (
+              <p className="text-[11px] text-amber-900">هذه علامة تشغيل قديمة بلا تقدّم موثوق. لن يُفعّل أي موظف حتى يكتمل الترحيل.</p>
+            )}
+            {migrationStatus?.status === 'error' && (
+              <p className="text-[11px] text-rose-800">تعذّر الترحيل ({migrationStatus.errorCode || 'خطأ غير محدد'}). يمكن الاستئناف مع الحفاظ على النسخ الخاصة المنقولة.</p>
+            )}
+            <p className="text-xs text-amber-950">لا يمكن تفعيل طارق أو أي حساب محدود قبل ظهور الحالة «مكتمل — الإصدار 1».</p>
+            {migrationActionError && <p role="alert" className="text-xs font-bold text-rose-700">{migrationActionError}</p>}
+            <button type="button" onClick={handleResumeMigration} disabled={isResumingMigration} className="px-3 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 disabled:opacity-60 text-white text-xs font-bold">
+              {isResumingMigration ? 'جارٍ الاستئناف…' : migrationStatus?.status === 'running' || migrationStatus?.status === 'error' ? 'استئناف الترحيل الآمن' : 'بدء الترحيل الآمن'}
+            </button>
+          </>
+        )}
+      </section>
+
       {/* Users List Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {users.map(u => {
           const isOwnerUser = u.role === 'OWNER';
           const isCurrent = currentUser?.id === u.id;
+          const effectiveActive = isOwnerUser || isMigrationComplete ? u.isActive : false;
 
           return (
             <div 
               key={u.id}
               className={`p-5 rounded-3xl border transition-all ${
-                u.isActive 
+                effectiveActive
                   ? 'bg-white border-black/[0.08] shadow-apple' 
                   : 'bg-black/[0.02] border-black/[0.04] opacity-75'
               }`}
@@ -345,13 +468,14 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                         أنت
                       </span>
                     )}
-                    {!u.isActive && (
+                    {!effectiveActive && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-bold">
-                        موقوف
+                        {!isOwnerUser && !isMigrationComplete ? 'محجوب مؤقتاً' : 'موقوف'}
                       </span>
                     )}
                   </div>
                   <span className="text-xs text-[#86868B] font-mono block">@{u.username}</span>
+                  <span dir="ltr" className="text-[11px] text-[#6B7280] font-mono block text-right">{u.authEmail || 'البريد غير محدد'}</span>
                 </div>
 
                 <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
@@ -359,7 +483,7 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                     ? 'bg-amber-100 text-amber-900 border border-amber-300' 
                     : 'bg-blue-50 text-blue-800 border border-blue-200'
                 }`}>
-                  {isOwnerUser ? 'مالك (تحكم كامل)' : 'مسؤول تشغيل'}
+                  {ROLE_LABELS[u.role]}
                 </span>
               </div>
 
@@ -373,8 +497,8 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                 </span>
                 <span>
                   الحالة:{' '}
-                  <strong className={u.isActive ? 'text-emerald-700' : 'text-rose-700'}>
-                    {u.isActive ? 'نشط ويعمل' : 'موقوف مؤقتاً'}
+                  <strong className={effectiveActive ? 'text-emerald-700' : 'text-rose-700'}>
+                    {!isOwnerUser && !isMigrationComplete ? 'محجوب حتى اكتمال العزل' : u.isActive ? 'نشط ويعمل' : 'موقوف مؤقتاً'}
                   </strong>
                 </span>
               </div>
@@ -399,9 +523,10 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                         ? 'bg-rose-50 hover:bg-rose-100 text-rose-700' 
                         : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700'
                     }`}
+                    disabled={!u.isActive && !isMigrationComplete}
                   >
                     {u.isActive ? <UserX size={14} /> : <CheckCircle2 size={14} />}
-                    <span>{u.isActive ? 'إيقاف الموظف' : 'تفعيل'}</span>
+                    <span>{u.isActive ? 'إيقاف الموظف' : isMigrationComplete ? 'تفعيل' : 'بانتظار العزل'}</span>
                   </button>
                 )}
               </div>
@@ -409,6 +534,60 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
           );
         })}
       </div>
+
+      <section className="p-4 rounded-2xl bg-white border border-black/[0.08] shadow-apple space-y-4" aria-live="polite">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
+              <Smartphone size={18} />
+            </div>
+            <div>
+              <h2 className="text-sm font-black text-[#1D1D1F]">الأجهزة والمتصفحات المسجلة</h2>
+              <p className="text-[11px] text-[#86868B]">{devices.length} سجل · {devices.filter(isDeviceOnline).length} نشط خلال آخر 5 دقائق</p>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-[11px] leading-relaxed text-[#5F6368] bg-slate-50 border border-slate-200 rounded-xl p-3">
+          يعرض هذا القسم نوع الجهاز وآخر ظهور فقط؛ يُحدّث الظهور كل دقيقتين أثناء فتح التطبيق وظهوره على الشاشة، ويُعد غير متصل بعد 5 دقائق بلا تحديث. لا يُجمع الموقع الجغرافي أو عنوان IP أو الشاشة الحالية، ولا يتيح هذا العرض إيقاف الجلسة عن بُعد.
+        </p>
+
+        {devices.length === 0 ? (
+          <div className="py-6 text-center text-xs text-[#86868B]">
+            لم تُسجّل أجهزة بعد. سيظهر الجهاز بعد دخول حساب Google معتمد وفتح التطبيق.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {devices.map((device) => {
+              const employee = users.find((user) => (user.authEmail || '').trim().toLowerCase() === device.email.trim().toLowerCase());
+              const online = isDeviceOnline(device);
+              const DeviceIcon = device.deviceType === 'phone'
+                ? Smartphone
+                : device.deviceType === 'tablet'
+                  ? Tablet
+                  : Monitor;
+              return (
+                <div key={device.id} className="p-3 rounded-2xl border border-black/[0.08] bg-white flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 shrink-0 rounded-xl bg-black/[0.03] text-[#5F6368] flex items-center justify-center">
+                      <DeviceIcon size={19} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-[#1D1D1F] truncate">{employee?.displayName || device.displayName}</div>
+                      <div dir="ltr" className="text-[10px] font-mono text-[#86868B] truncate text-right">{employee?.authEmail || device.email}</div>
+                      <div className="text-[10px] text-[#86868B] mt-1">{device.deviceType === 'phone' ? 'هاتف' : device.deviceType === 'tablet' ? 'جهاز لوحي' : 'حاسوب'} · <Clock3 size={10} className="inline" /> {formatDeviceLastSeen(device)}</div>
+                    </div>
+                  </div>
+                  <span className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold ${online ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                    {online ? 'نشط الآن' : 'غير متصل'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* CREATE / EDIT USER MODAL */}
       {(isCreatingNew || selectedUser) && (
@@ -476,26 +655,26 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                     value={formRole}
                     onChange={(e) => handleRolePreset(e.target.value as UserRole)}
                     className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-right font-bold"
+                    disabled={!isCreatingNew && selectedUser?.role === 'OWNER'}
                   >
                     <option value="CASHIER">كاشير ومبيعات</option>
                     <option value="STORE_MANAGER">مسؤول تشغيل (مثل طارق)</option>
                     <option value="SALES_REP">بائع ومسوق ميداني</option>
                     <option value="INVENTORY_KEEPER">أمين مخزون وخامات</option>
-                    <option value="OWNER">مالك (صلاحية كاملة)</option>
+                    {!isCreatingNew && selectedUser?.role === 'OWNER' && <option value="OWNER">مالك (صلاحية كاملة)</option>}
                   </select>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-bold text-[#1D1D1F] block text-right">
-                    {isCreatingNew ? 'كلمة المرور:' : 'كلمة مرور جديدة:'}
-                  </label>
+                  <label className="font-bold text-[#1D1D1F] block text-right">بريد حساب Google:</label>
                   <input
-                    type="password"
-                    value={formPassword}
-                    onChange={(e) => setFormPassword(e.target.value)}
-                    placeholder={isCreatingNew ? 'كلمة المرور...' : 'اختياري...'}
-                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-right font-mono"
-                    required={isCreatingNew}
+                    type="email"
+                    value={formAuthEmail}
+                    onChange={(e) => setFormAuthEmail(e.target.value)}
+                    placeholder="name@gmail.com"
+                    autoComplete="email"
+                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-left font-mono"
+                    required
                   />
                 </div>
               </div>
@@ -520,13 +699,14 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                       </span>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {permKeys.map(permKey => {
-                          const isAllowed = formRole === 'OWNER' ? true : !!formPermissions[permKey];
+                          const isLocked = formRole !== 'OWNER' && OWNER_ONLY_PERMISSION_KEYS.has(permKey);
+                          const isAllowed = formRole === 'OWNER' ? true : !isLocked && !!formPermissions[permKey];
                           const info = PERMISSION_LABELS[permKey];
 
                           return (
                             <label
                               key={permKey}
-                              className={`px-2 py-1.5 rounded-xl border text-[11px] flex items-center justify-between cursor-pointer transition-colors ${
+                              className={`px-2 py-1.5 rounded-xl border text-[11px] flex items-center justify-between transition-colors ${isLocked ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${
                                 isAllowed
                                   ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 font-bold'
                                   : 'bg-white border-black/[0.06] text-[#86868B]'
@@ -536,10 +716,11 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
                                 <input
                                   type="checkbox"
                                   checked={isAllowed}
-                                  disabled={formRole === 'OWNER'}
+                                  disabled={formRole === 'OWNER' || isLocked}
                                   onChange={() => togglePermission(permKey)}
                                   className="w-3.5 h-3.5 rounded text-[#0071E3] focus:ring-0 shrink-0"
                                 />
+                                {isLocked && <Lock size={11} className="shrink-0 text-amber-700" />}
                                 <span className="truncate">{info.label}</span>
                               </div>
                             </label>

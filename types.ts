@@ -3987,6 +3987,7 @@ export interface AppUser {
   username: string; // e.g. "mohamed", "tarek"
   displayName: string; // e.g. "د. محمد", "طارق"
   fullName?: string; // Alias for displayName
+  authEmail?: string; // Verified Google identity bound to this app role
   role: UserRole;
   passwordHash: string; // Hashed password (never plain text)
   requiresPasswordChange: boolean; // Enforce change on first login
@@ -4038,20 +4039,20 @@ export const OWNER_FULL_PERMISSIONS: UserPermissions = {
 
 // Default Operational Permissions for Tarek (Store & Sales Manager)
 // Empowered across all operational, sales, customer CRM, formulation, stock, and target modules,
-// while STRICTLY isolating Owner Settings, User Management, Financial Vaults, Fixed Expenses, Raw Costs & Net Profits!
+// while isolating Owner Settings, User Management, Financial Vaults, Fixed Expenses & Net Profits; operational costs are view-only.
 export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canRecordSale: true,
   canEditSaleBeforeClose: true,
   canCancelSale: true, // With audit log reason
   canReturnSale: true,
   canApplyDiscount: true,
-  canOverridePrice: true, // Empowered to customize blend prices (selling below cost still requires Owner 5188)
+  canOverridePrice: false, // Tarek may use approved prices and safe discounts, not override item prices.
   canManageCustomers: true, // Full CRM, loyalty & WhatsApp follow-up
   canViewStock: true,
   canRecordShortage: true,
   canStockCheck: true,
   canCreatePurchaseRequest: true,
-  canEditProductCost: false, // STRICTLY FORBIDDEN (سر تجاري - تكلفة الخامات)
+  canEditProductCost: false, // View-only cost access; editing underlying costs remains owner-only.
   canEditProductPrice: false, // STRICTLY FORBIDDEN (سر تجاري - تسعير النظام الأساسي)
   canOpenDay: true,
   canCloseDay: true,
@@ -4071,7 +4072,7 @@ export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canViewAuditLog: false, // STRICTLY FORBIDDEN (سجل الرقابة الخاص بالمالك)
   canExportData: false, // STRICTLY FORBIDDEN (النسخ الاحتياطي الشامل وقاعدة البيانات)
   canViewProfits: false, // STRICTLY FORBIDDEN (أسرار الأرباح الصافية للمالك)
-  canViewCosts: false, // STRICTLY FORBIDDEN (أسرار التكلفة وسعر الجملة)
+  canViewCosts: true, // Cost visibility is explicitly allowed; editing costs remains owner-only.
   canViewExpenses: false, // STRICTLY FORBIDDEN (رواتب الإدارة والمصاريف الحساسة)
   canViewReports: true, // Empowered to access Sales & Invoices Ledger (with Cost/Profit columns hidden)
   canManageSettings: false, // STRICTLY FORBIDDEN (إعدادات النظام الحساسة)
@@ -4157,32 +4158,6 @@ export const INVENTORY_KEEPER_PERMISSIONS: UserPermissions = {
   canManageSettings: false,
   canAccessOperationsSystem: false,
 };
-
-// Default bootstrap users with direct 5188 (Owner) and 12345 (Tarek) support
-export const DEFAULT_USERS: AppUser[] = [
-  {
-    id: 'user-mohamed',
-    username: 'mohamed',
-    displayName: 'د. محمد (المالك)',
-    role: 'OWNER',
-    passwordHash: '5188',
-    requiresPasswordChange: false,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    permissions: OWNER_FULL_PERMISSIONS,
-  },
-  {
-    id: 'user-tarek',
-    username: 'tarek',
-    displayName: 'طارق (مسؤول ومدير المبيعات)',
-    role: 'STORE_MANAGER',
-    passwordHash: '12345',
-    requiresPasswordChange: false,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    permissions: TAREK_OPERATIONAL_PERMISSIONS,
-  },
-];
 
 // ========================================================
 // DAY OPERATIONS & SHIFT CLOSURE (فتح وإغلاق اليوم التشغيلي)
@@ -5348,5 +5323,3 @@ export function run20MandatoryAcceptanceTests(): AcceptanceTestResult[] {
     dataClassification: 'TEST' as const,
   }));
 }
-
-

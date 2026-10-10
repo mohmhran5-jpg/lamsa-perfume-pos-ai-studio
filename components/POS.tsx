@@ -182,6 +182,9 @@ const POS: React.FC<POSProps> = ({
   onSaveMix,
   onDeleteMix
 }) => {
+  const canOverrideSalePrice = currentUser?.role === 'OWNER' || currentUser?.permissions.canOverridePrice === true;
+  const canApplyManualDiscount = currentUser?.role === 'OWNER' || currentUser?.permissions.canApplyDiscount === true;
+
   // Navigation & Catalogue Filtering (including Quick Side Filter Menu: صيفي، شتوي، نيش، مسك، عود، فرنسي)
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<PerfumeType | 'all'>('all');
@@ -323,6 +326,18 @@ const POS: React.FC<POSProps> = ({
   const [showThirdComponentPanel, setShowThirdComponentPanel] = useState<boolean>(false);
   const [showSaveLibraryModal, setShowSaveLibraryModal] = useState<boolean>(false);
   const [libraryCustomerRating, setLibraryCustomerRating] = useState<number>(5);
+
+  useEffect(() => {
+    if (!canOverrideSalePrice) {
+      setCustomPrice('');
+      setMixCustomPrice('');
+    }
+    if (!canApplyManualDiscount) {
+      setOrderDiscount(0);
+      setDiscountPercentInput('');
+      setActiveCartDrawer((current) => current === 'discount' ? 'none' : current);
+    }
+  }, [canApplyManualDiscount, canOverrideSalePrice]);
   const [libraryTestResult, setLibraryTestResult] = useState<'ممتاز' | 'ناجح' | 'جيد' | 'تحت الاختبار'>('ممتاز');
   const [libraryLongevityNotes, setLibraryLongevityNotes] = useState<string>('ثبات ممتاز ومتوازن');
   const [librarySillageNotes, setLibrarySillageNotes] = useState<string>('فوحان واضح ومتناغم');
@@ -1072,7 +1087,9 @@ const POS: React.FC<POSProps> = ({
     return configPriceCheck.price;
   }, [configuringProduct, selectedBottle, configPriceCheck]);
 
-  const configItemFinalPrice = customPrice === '' ? configItemSuggestedPrice : Number(customPrice);
+  const configItemFinalPrice = !canOverrideSalePrice || customPrice === ''
+    ? configItemSuggestedPrice
+    : Number(customPrice);
   // Roll-ons have 0% commission; spray bottles use rounded 5% commission per Section 10 of Reference
   const configItemCommission = selectedBottle.isRollOn ? 0 : Math.round(configItemFinalPrice * (settings.commissionRate || 0.05));
   const configItemNetProfit = configItemFinalPrice - configItemCost - configItemCommission;
@@ -1195,7 +1212,7 @@ const POS: React.FC<POSProps> = ({
       bottle: mixBottle,
       components: mixComponents,
       isColoredBottle: mixIsColoredBottle,
-      customSellingPrice: mixCustomPrice,
+      customSellingPrice: canOverrideSalePrice ? mixCustomPrice : '',
       settings,
     });
   }, [mixBottle, mixComponents, mixIsColoredBottle, mixCustomPrice, settings]);
@@ -3362,19 +3379,29 @@ const POS: React.FC<POSProps> = ({
                       </span>
                     </div>
 
-                    <div className="p-2.5 rounded-xl bg-[#F5F5F7] border border-black/[0.05]">
-                      <span className="text-[10px] text-[#86868B] block">صافي المساهمة:</span>
-                      <span
-                        className={`font-mono font-black text-sm ${
-                          mixAccounting.netContributionEgp >= 10 ? 'text-emerald-700' : 'text-rose-600'
-                        }`}
-                      >
-                        {mixAccounting.netContributionEgp >= 0 ? `+${mixAccounting.netContributionEgp}` : mixAccounting.netContributionEgp} {settings.currency}
-                      </span>
-                      <span className="text-[9px] text-[#86868B] block mt-0.5">
-                        {mixAccounting.netContributionEgp >= 10 ? 'مساهمة آمنة (≥ 10ج) ✓' : 'تحت الحد الأدنى ⚠️'}
-                      </span>
-                    </div>
+                    {canViewProfits(currentUser) ? (
+                      <div className="p-2.5 rounded-xl bg-[#F5F5F7] border border-black/[0.05]">
+                        <span className="text-[10px] text-[#86868B] block">صافي المساهمة:</span>
+                        <span
+                          className={`font-mono font-black text-sm ${
+                            mixAccounting.netContributionEgp >= 10 ? 'text-emerald-700' : 'text-rose-600'
+                          }`}
+                        >
+                          {mixAccounting.netContributionEgp >= 0 ? `+${mixAccounting.netContributionEgp}` : mixAccounting.netContributionEgp} {settings.currency}
+                        </span>
+                        <span className="text-[9px] text-[#86868B] block mt-0.5">
+                          {mixAccounting.netContributionEgp >= 10 ? 'مساهمة آمنة (≥ 10ج) ✓' : 'تحت الحد الأدنى ⚠️'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 rounded-xl bg-[#F5F5F7] border border-black/[0.05]">
+                        <span className="text-[10px] text-[#86868B] block">حالة الخصم:</span>
+                        <span className={`font-black text-sm ${mixAccounting.netContributionEgp >= 10 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                          {mixAccounting.netContributionEgp >= 10 ? 'آمن ✓' : 'غير مسموح ⚠️'}
+                        </span>
+                        <span className="text-[9px] text-[#86868B] block mt-0.5">دون إظهار صافي الربح</span>
+                      </div>
+                    )}
 
                     <div className="p-2.5 rounded-xl bg-[#F5F5F7] border border-black/[0.05]">
                       <span className="text-[10px] text-[#86868B] block">نقاط الولاء:</span>
@@ -3393,15 +3420,21 @@ const POS: React.FC<POSProps> = ({
                       سعر بيع زجاجة الميكس (المقترح الموزون: {mixAccounting.suggestedSellingPriceEgp} {settings.currency}):
                     </span>
                     <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        placeholder={`${mixAccounting.suggestedSellingPriceEgp}`}
-                        value={mixCustomPrice}
-                        onChange={(e) => setMixCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-24 h-8 px-2 rounded-xl bg-white border border-black/[0.1] text-center font-mono font-black text-xs outline-none focus:border-[#0071E3]"
-                      />
+                      {canOverrideSalePrice ? (
+                        <input
+                          type="number"
+                          placeholder={`${mixAccounting.suggestedSellingPriceEgp}`}
+                          value={mixCustomPrice}
+                          onChange={(e) => setMixCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="w-24 h-8 px-2 rounded-xl bg-white border border-black/[0.1] text-center font-mono font-black text-xs outline-none focus:border-[#0071E3]"
+                        />
+                      ) : (
+                        <span className="w-24 h-8 flex items-center justify-center rounded-xl bg-white border border-black/[0.06] font-mono font-black text-xs">
+                          {mixAccounting.suggestedSellingPriceEgp}
+                        </span>
+                      )}
                       <span className="font-mono text-[10px] text-[#86868B]">{settings.currency}</span>
-                      {mixCustomPrice !== '' && (
+                      {canOverrideSalePrice && mixCustomPrice !== '' && (
                         <button
                           type="button"
                           onClick={() => setMixCustomPrice('')}
@@ -4759,7 +4792,7 @@ const POS: React.FC<POSProps> = ({
                     <span>🎁 التغليف ({selectedPackaging.type === 'basic' ? 'أساسي' : selectedPackaging.name})</span>
                   </button>
 
-                  <button
+                  {canApplyManualDiscount && <button
                     type="button"
                     onClick={() => setActiveCartDrawer(activeCartDrawer === 'discount' ? 'none' : 'discount')}
                     className={`py-1.5 px-2.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
@@ -4771,7 +4804,7 @@ const POS: React.FC<POSProps> = ({
                     }`}
                   >
                     <span>🏷️ خصم الفاتورة {totalAppliedDiscount > 0 ? `(-${totalAppliedDiscount} ج)` : ''}</span>
-                  </button>
+                  </button>}
                 </div>
 
                 {/* Expandable Packaging Drawer */}
@@ -4830,7 +4863,7 @@ const POS: React.FC<POSProps> = ({
                 )}
 
                 {/* Expandable Discount & Profit Safety Drawer */}
-                {activeCartDrawer === 'discount' && (
+                {canApplyManualDiscount && activeCartDrawer === 'discount' && (
                   <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5 text-xs animate-in fade-in duration-150">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-slate-900 font-bold text-[11px]">آلية احتساب الخصم:</span>
@@ -5828,13 +5861,19 @@ const POS: React.FC<POSProps> = ({
                       السعر ({configItemSuggestedPrice} ج):
                     </span>
                     <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        placeholder={`${configItemSuggestedPrice}`}
-                        value={customPrice}
-                        onChange={(e) => setCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-full h-7 px-2 rounded-xl bg-white border border-black/[0.08] focus:border-[#0071E3] font-mono text-xs font-black text-center outline-none"
-                      />
+                      {canOverrideSalePrice ? (
+                        <input
+                          type="number"
+                          placeholder={`${configItemSuggestedPrice}`}
+                          value={customPrice}
+                          onChange={(e) => setCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="w-full h-7 px-2 rounded-xl bg-white border border-black/[0.08] focus:border-[#0071E3] font-mono text-xs font-black text-center outline-none"
+                        />
+                      ) : (
+                        <span className="w-full h-7 px-2 rounded-xl bg-white border border-black/[0.06] font-mono text-xs font-black text-center flex items-center justify-center">
+                          {configItemSuggestedPrice}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

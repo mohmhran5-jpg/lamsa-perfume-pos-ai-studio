@@ -7,7 +7,8 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:security": "firebase emulators:exec --only firestore --project demo-lamsa-security \"node --test security-tests/firestore.rules.test.mjs\""
   },
   "dependencies": {
     "@google/genai": "^1.38.0",
@@ -18,8 +19,10 @@
     "recharts": "^3.7.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "firebase-tools": "^15.33.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vite-plugin-pwa": "^2.0.0"

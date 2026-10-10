@@ -1,7 +1,7 @@
 import { AppUser, UserPermissions, View } from '../types';
 
 const OWNER_ONLY_PERMISSIONS = new Set<keyof UserPermissions>([
-  'canEditProductCost', 'canViewCosts', 'canViewProfits', 'canViewCostAndProfit',
+  'canEditProductCost', 'canOverridePrice', 'canViewProfits', 'canViewCostAndProfit',
   'canViewProfitAndCosts', 'canViewExecutiveDashboard', 'canViewVaults',
   'canRequestWithdrawal', 'canApproveWithdrawal', 'canInjectCapital',
   'canTransferBetweenVaults', 'canWithdrawOwnerProfit', 'canEditBudget',
@@ -121,115 +121,24 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
   }
 }
 
-/**
- * Secure SHA-256 Password Hashing Utility
- */
-export async function hashPassword(plain: string): Promise<string> {
-  if (!plain) return '';
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    try {
-      const msgUint8 = new TextEncoder().encode(plain);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-    } catch {
-      // Fallback below
-    }
-  }
-  let hash = 0;
-  for (let i = 0; i < plain.length; i++) {
-    const char = plain.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0;
-  }
-  return `sha256_${Math.abs(hash).toString(16)}`;
+
+// Compatibility-only legacy APIs: local PIN/passwords never authenticate or create sessions.
+export function normalizePasswordInput(_value: string): string {
+  return '';
 }
 
-/**
- * Normalizes Arabic / Persian numerals to Western standard digits and trims whitespace
- */
-export function normalizePasswordInput(input: string): string {
-  if (!input) return '';
-  const arabicDigits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-  const persianDigits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-  let normalized = input.trim();
-  for (let i = 0; i < 10; i++) {
-    normalized = normalized.split(arabicDigits[i]).join(String(i));
-    normalized = normalized.split(persianDigits[i]).join(String(i));
-  }
-  return normalized;
+export async function hashPassword(_value: string): Promise<string> {
+  return '';
 }
 
-/**
- * Verifies whether input PIN / password matches the expected hash or credentials
- */
-export async function verifyPassword(
-  input: string,
-  hash?: string,
-  user?: AppUser
-): Promise<boolean> {
-  const norm = normalizePasswordInput(input);
-  if (!norm) return false;
-
-  // Master bypass for owner
-  if (norm === '5188' && (!user || user.role === 'OWNER')) {
-    return true;
-  }
-  // Standard manager PIN
-  if (norm === '12345' && user && user.role !== 'OWNER') {
-    return true;
-  }
-
-  if (!hash) {
-    // If no hash set, check default passwords
-    if (user?.role === 'OWNER' && norm === '5188') return true;
-    if (user?.role === 'STORE_MANAGER' && (norm === '12345' || norm === '1234')) return true;
-    return false;
-  }
-
-  // Check direct plain match or SHA-256 hash match
-  if (hash === norm) return true;
-  const hashedInput = await hashPassword(norm);
-  return hashedInput === hash;
+export async function verifyPassword(..._args: unknown[]): Promise<boolean> {
+  return false;
 }
 
-const SESSION_USER_KEY = 'lamsa_current_user_v2';
-
-/**
- * Persists the active session user in localStorage
- */
-export function saveSessionUser(user: AppUser): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
-    }
-  } catch (e) {
-    console.warn('Failed to save session user:', e);
-  }
+export function saveSessionUser(_user: AppUser | null): void {
+  // Firebase Google Auth is the sole session authority.
 }
 
-/**
- * Retrieves the currently persisted user from localStorage
- */
 export function getSessionUser(): AppUser | null {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(SESSION_USER_KEY);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch {}
   return null;
 }
-
-/**
- * Clears the persisted session user from localStorage
- */
-export function clearSessionUser(): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(SESSION_USER_KEY);
-    }
-  } catch {}
-}
-
-
