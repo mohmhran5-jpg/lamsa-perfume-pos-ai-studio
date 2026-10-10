@@ -1506,6 +1506,12 @@ export interface OwnerStaffBroadcast {
   requiresAcknowledgement?: boolean;
   acknowledgedBy?: Array<{ employeeName: string; timestamp: string }>;
   isArchived?: boolean;
+  repeatMode?: 'none' | 'daily' | 'weekly'; // تكرار التنبيه: يومي أو أسبوعي
+  repeatDayOfWeek?: number; // 0: الأحد, 1: الإثنين, 2: الثلاثاء, 3: الأربعاء, 4: الخميس, 5: الجمعة, 6: السبت
+  repeatStartDate?: string; // تاريخ بدء التكرار YYYY-MM-DD
+  repeatEndDate?: string; // تاريخ نهاية التكرار YYYY-MM-DD
+  repeatTime?: string; // توقيت التنبيه باليوم HH:mm
+  repeatDurationWeeks?: number; // مدة استمرار التكرار بالأسابيع (مثلاً 1, 2, 4, 12, أو 0 للدائم)
 }
 
 export type ProductStockHealthStatus = 'critical' | 'low' | 'healthy';
@@ -1641,6 +1647,7 @@ export enum View {
   USERS_MANAGEMENT = 'USERS_MANAGEMENT',
   AUDIT_LOGS = 'AUDIT_LOGS',
   DAY_OPERATIONS = 'DAY_OPERATIONS',
+  STAFF_ENTITLEMENTS = 'STAFF_ENTITLEMENTS',
 }
 
 export interface CustomerLoyaltyLog {
@@ -1806,7 +1813,8 @@ export const APPROVED_FIXED_BUDGET_ITEMS: FixedBudgetItem[] = [
   { id: 'transport', name: '🚚 النقل', category: 'utilities', monthlyAmount: 300, dailyRate: 12, icon: 'Truck' },
   { id: 'operations', name: '📦 مصاريف تشغيل أخرى', category: 'utilities', monthlyAmount: 300, dailyRate: 12, icon: 'Box' },
   { id: 'salary_owner', name: '👤 مخصص الإدارة والإشراف العام', category: 'salaries', monthlyAmount: 10000, dailyRate: 400, icon: 'UserCheck' },
-  { id: 'salary_tarek', name: '👤 مخصص التشغيل والمبيعات الأساسي', category: 'salaries', monthlyAmount: 1500, dailyRate: 60, icon: 'User' },
+  { id: 'salary_tarek', name: '👤 مخصص راتب طارق المعتمد', category: 'salaries', monthlyAmount: 1000, dailyRate: 40, icon: 'User' },
+  { id: 'reserve_incentives', name: '🎁 احتياطي حوافز ومكافآت الموظفين', category: 'salaries', monthlyAmount: 500, dailyRate: 20, icon: 'Award' },
   { id: 'reserve_spoilage', name: '🛡️ احتياطي (هالك/تالف/فاقد)', category: 'contingency', monthlyAmount: 300, dailyRate: 12, icon: 'ShieldAlert' },
 ];
 
@@ -1927,7 +1935,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   monthlyTargetRevenue: 28000,
   monthlyFixedBudget: 15000, // 15,000 EGP Approved Safe Monthly Budget
   monthlyWorkDays: 25, // 25 Days Planning Basis
-  employeeBaseSalary: 1500, // Tarek Base Salary
+  employeeBaseSalary: 1000, // Tarek Approved Base Salary (1,000 EGP)
   ownerSalary: 10000, // Dr. Mohamed
   commissionRate: 0.05, // 5%
   tieredCommissionRate: 0.07, // 7%
@@ -4849,7 +4857,8 @@ export interface FixedMonthlyBudgetItem {
  */
 export const DEFAULT_FIXED_MONTHLY_BUDGET_ITEMS: FixedMonthlyBudgetItem[] = [
   { id: 'budget-owner', title: 'مرتب الدكتور (المالك)', monthlyAmount: 10000, dailyShare25Days: 400, category: 'رواتب' },
-  { id: 'budget-tarek', title: 'مرتب طارق الأساسي', monthlyAmount: 1500, dailyShare25Days: 60, category: 'رواتب' },
+  { id: 'budget-tarek', title: 'مرتب طارق الأساسي المعتمد', monthlyAmount: 1000, dailyShare25Days: 40, category: 'رواتب' },
+  { id: 'budget-incentives', title: 'احتياطي حوافز ومكافآت الموظفين', monthlyAmount: 500, dailyShare25Days: 20, category: 'حوافز ومكافآت', isReserve: true },
   { id: 'budget-rent', title: 'إيجار المحل', monthlyAmount: 1200, dailyShare25Days: 48, category: 'إيجار' },
   { id: 'budget-electricity', title: 'الكهرباء', monthlyAmount: 800, dailyShare25Days: 32, category: 'فواتير ومرافق' },
   { id: 'budget-internet', title: 'الإنترنت', monthlyAmount: 300, dailyShare25Days: 12, category: 'فواتير ومرافق' },
@@ -5353,5 +5362,170 @@ export function run20MandatoryAcceptanceTests(): AcceptanceTestResult[] {
     dataClassification: 'TEST' as const,
   }));
 }
+
+// ============================================================================
+// MODULE: STAFF ENTITLEMENTS, SALARIES, COMMISSIONS & SETTLEMENTS (مستحقات العاملين)
+// ============================================================================
+
+export interface CommissionPolicy {
+  id: string;
+  policyName: string;
+  baseRate: number; // e.g., 0.05 (5%)
+  tieredRate: number; // e.g., 0.07 (7%)
+  tierThresholdBottles: number; // e.g., 10
+  eligibleTypes: PerfumeType[];
+  isRollOnEligible: boolean; // default false
+  effectiveStartDate: string; // YYYY-MM-DD
+  effectiveEndDate?: string;
+  approvedBy: string;
+  approvedAt: string;
+  reason: string;
+  isActive: boolean;
+}
+
+export interface StaffBaseSalaryConfig {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  monthlySalaryEgp: number; // default 1500 for Tarek
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  payPeriodFrequency: 'monthly' | 'weekly' | 'custom';
+  approvedBy: string;
+  notes?: string;
+}
+
+export interface StaffIncentive {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  incentiveType: 'حافز أداء' | 'مكافأة' | 'مبلغ تشجيعي' | 'بدل إضافي' | 'أخرى';
+  date: string; // YYYY-MM-DD
+  relevantPeriodStr: string; // YYYY-MM
+  reason: string;
+  notes?: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'مصروف' | 'ملغى';
+  createdAt: string;
+}
+
+export interface StaffDeduction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  deductionType: 'خصم تأخير' | 'خصم غياب' | 'جزاء إداري' | 'تسوية عجز' | 'أخرى';
+  date: string;
+  relevantPeriodStr: string;
+  reason: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'منفذ' | 'ملغى';
+  createdAt: string;
+}
+
+export interface StaffAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  date: string; // YYYY-MM-DD
+  reason: string;
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي' | 'آخر';
+  approvedBy: string;
+  repaymentPlan: string;
+  settledAmountEgp: number;
+  remainingAmountEgp: number;
+  status: 'نشطة' | 'مسواة بالكامل' | 'ملغاة';
+  vaultTransactionId?: string;
+  createdAt: string;
+}
+
+export interface StaffSettlementTransaction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string; // ISO string
+  transactionType: 'سحب_من_المستحقات' | 'سلفة' | 'صرف_راتب' | 'صرف_عمولة' | 'صرف_حافز' | 'تسوية_شاملة';
+  totalAmountEgp: number;
+  breakdown: {
+    commissionEgp?: number;
+    salaryEgp?: number;
+    incentiveEgp?: number;
+    advanceEgp?: number;
+    deductionEgp?: number;
+  };
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي';
+  vaultId?: string;
+  executedBy: string;
+  approvedBy: string;
+  reason: string;
+  notes?: string;
+  status: 'مسودة' | 'بانتظار_الاعتماد' | 'معتمدة_للصرف' | 'تم_الصرف' | 'مرفوضة' | 'ملغاة_بقيد_عكسي';
+  receiptReference?: string;
+  reversalReason?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+}
+
+export interface DailyCommissionAuditRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  employeeId: string;
+  employeeName: string;
+  eligibleSalesCount: number;
+  sprayBottlesCount: number;
+  rollOnBottlesCount: number;
+  bottlesAt5Percent: number;
+  bottlesAt7Percent: number;
+  eligibleNetRevenueEgp: number;
+  calculatedCommissionEgp: number;
+  tier1CommissionEgp: number;
+  tier2CommissionEgp: number;
+  adjustmentsAndReturnsEgp: number;
+  policyIdUsed: string;
+  recordedInEntitlementsEgp: number;
+  alreadyPaidEgp: number;
+  remainingDueEgp: number;
+  auditState: 'معتمدة' | 'تحتاج_مراجعة' | 'فرق_غير_معتمد' | 'لم_تُحتسب_بعد';
+  discrepancyDeltaEgp: number;
+  lastCalculatedAt: string;
+  lastApprovedBy?: string;
+  notes?: string;
+}
+
+export interface CommissionAuditLog {
+  id: string;
+  date: string;
+  employeeName: string;
+  previousCommissionEgp: number;
+  newCorrectCommissionEgp: number;
+  differenceDeltaEgp: number;
+  reason: string;
+  triggeringSaleId?: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface StaffMemberEntitlementSummary {
+  employeeId: string;
+  employeeName: string;
+  monthlyBaseSalaryEgp: number;
+  dailySalaryRateEgp: number;
+  elapsedWorkDaysPeriod: number;
+  isCurrentOngoingPeriod: boolean;
+  earnedSalaryPeriodEgp: number;
+  earnedCommissionsPeriodEgp: number;
+  approvedIncentivesPeriodEgp: number;
+  approvedAdditionsEgp: number;
+  outstandingAdvancesEgp: number;
+  approvedDeductionsEgp: number;
+  totalPreviouslyPaidEgp: number;
+  totalEntitlementsGrossEgp: number;
+  netRemainingBalanceDueEgp: number;
+  pendingApprovalsCount: number;
+  discrepanciesAlertCount: number;
+}
+
 
 

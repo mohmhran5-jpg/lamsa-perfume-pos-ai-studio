@@ -29,6 +29,7 @@ import InteractiveTypingController from './components/InteractiveTypingControlle
 import OwnerLiveAlertsRadarModal from './components/OwnerLiveAlertsRadarModal';
 import PWAInstallModal from './components/PWAInstallModal';
 import ConnectedDevicesSyncModal from './components/ConnectedDevicesSyncModal';
+import StaffEntitlements from './components/StaffEntitlements';
 import { soundAlertService } from './services/soundAlertService';
 import { browserNotificationService } from './services/browserNotificationService';
 import { 
@@ -152,8 +153,8 @@ import {
   sendOwnerBroadcastCloud,
   acknowledgeOwnerBroadcastCloud,
 } from './services/firebase';
-import { getSessionUser, saveSessionUser, canAccessView } from './services/authService';
-import { Lock, Radio, CheckCircle2, X, Sparkles, Star, Clock, Hourglass, ExternalLink } from 'lucide-react';
+import { getSessionUser, saveSessionUser, canAccessView, hasPermission, logRejectedAccessAttempt } from './services/authService';
+import { Lock, Radio, CheckCircle2, X, Sparkles, Star, Clock, Hourglass, ExternalLink, Repeat } from 'lucide-react';
 
 // Seed Data
 const INITIAL_PRODUCTS: Product[] = [
@@ -508,6 +509,12 @@ const App: React.FC = () => {
     if (session) return sanitizeUserAccount(session);
     return DEFAULT_USERS[0]; // Default to Dr. Mohamed (Owner)
   });
+
+  // Owner Preview Mode & Security State (معاينة الواجهة وتتبع الصلاحيات)
+  const [previewModeUser, setPreviewModeUser] = useState<AppUser | null>(null);
+  const [rejectedAttemptsCount, setRejectedAttemptsCount] = useState<number>(0);
+
+  const effectiveUser = previewModeUser || currentUser;
 
   // Apple Top Dynamic Island Notifications State
   const [topNotifications, setTopNotifications] = useState<AppleNotificationItem[]>([]);
@@ -1833,8 +1840,16 @@ const App: React.FC = () => {
   };
 
   const handleDismissBroadcast = (broadcastId: string) => {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const targetBroadcast = ownerBroadcasts.find(b => b.id === broadcastId);
     setDismissedBroadcastIds(prev => {
-      const next = new Set([...prev, broadcastId]);
+      const next = new Set(prev);
+      // For recurring alerts, dismiss only for today specifically so it will repeat tomorrow/next week
+      if (targetBroadcast?.repeatMode && targetBroadcast.repeatMode !== 'none') {
+        next.add(`${broadcastId}_${todayKey}`);
+      } else {
+        next.add(broadcastId);
+      }
       persistDataDurable('lamsa_dismissed_broadcasts_v2', Array.from(next));
       return next;
     });
@@ -1870,19 +1885,41 @@ const App: React.FC = () => {
     handleDismissBroadcast(broadcastId);
   };
 
-  // Active broadcast to display in UI for current user (auto-expires after 8 hours by default)
+  // Active broadcast to display in UI for current user (handles auto-expiration, recurrence, and dismissal)
   const activeBroadcastForDisplay = useMemo(() => {
     const now = Date.now();
+    const today = new Date();
+    const todayDateStr = today.toISOString().slice(0, 10);
+    const currentDayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
     return ownerBroadcasts.find(b => {
       if (b.isArchived) return false;
-      if (dismissedBroadcastIds.has(b.id)) return false;
 
-      // Auto-expiration check: Default 8 hours unless custom expiresAt or marked important
-      if (b.expiresAt) {
-        if (new Date(b.expiresAt).getTime() <= now) return false;
-      } else if (!b.isImportant && b.createdAt) {
-        const age = now - new Date(b.createdAt).getTime();
-        if (age > 8 * 3600 * 1000) return false; // Expired after 8 hours default
+      // Recurrence Evaluation (إعادة التنبيه كل يوم أو كل أسبوع)
+      if (b.repeatMode && b.repeatMode !== 'none') {
+        // If dismissed for today specifically, hide it for today
+        if (dismissedBroadcastIds.has(`${b.id}_${todayDateStr}`)) return false;
+
+        // Check start date window
+        if (b.repeatStartDate && todayDateStr < b.repeatStartDate) return false;
+        // Check end date window
+        if (b.repeatEndDate && todayDateStr > b.repeatEndDate) return false;
+
+        // If weekly, verify day of week matches
+        if (b.repeatMode === 'weekly' && b.repeatDayOfWeek !== undefined && b.repeatDayOfWeek !== currentDayOfWeek) {
+          return false;
+        }
+      } else {
+        // Non-recurring: standard dismissal check
+        if (dismissedBroadcastIds.has(b.id)) return false;
+
+        // Auto-expiration check: Default 8 hours unless custom expiresAt or marked important
+        if (b.expiresAt) {
+          if (new Date(b.expiresAt).getTime() <= now) return false;
+        } else if (!b.isImportant && b.createdAt) {
+          const age = now - new Date(b.createdAt).getTime();
+          if (age > 8 * 3600 * 1000) return false; // Expired after 8 hours default
+        }
       }
 
       // Target matching: 'all' or specific employee name or role
@@ -2565,24 +2602,30 @@ const App: React.FC = () => {
   const dailyCoveredExpense = settings.dailyExpenseCoverageGoal || 600;
 
   const renderView = () => {
-    // Strictly isolate confidential areas from unauthorized employees
-    if (!canAccessView(currentUser, currentView)) {
+    // Strictly isolate confidential areas from unauthorized employees (Rules 1, 2, 3, 6, 9)
+    if (!canAccessView(effectiveUser, currentView)) {
+      logRejectedAccessAttempt(effectiveUser, currentView, undefined, 'محاولة وصول مباشر لصفحة غير مصرح بها');
+
       return (
-        <div className="p-6 sm:p-12 max-w-xl mx-auto my-12 text-center animate-in fade-in duration-200">
-          <div className="apple-glass-card rounded-3xl p-8 border border-black/[0.08] shadow-apple-lg space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto">
+        <div className="p-6 sm:p-12 max-w-xl mx-auto my-12 text-center animate-in fade-in duration-200" dir="rtl">
+          <div className="apple-glass-card rounded-3xl p-8 border border-rose-500/30 shadow-apple-lg space-y-4 bg-rose-50/10 backdrop-blur-xl">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
               <Lock size={32} />
             </div>
-            <h2 className="text-xl font-black text-[#1D1D1F]">منطقة إدارية مقيدة</h2>
+            <h2 className="text-xl font-black text-[#1D1D1F]">عفواً، لا تتوفر صلاحية للوصول إلى هذه الصفحة</h2>
             <p className="text-xs text-[#86868B] leading-relaxed">
-              عذراً، هذا القسم يندرج تحت سرية الإدارة والحسابات التنفيذية. حسابك الحالي لا يمتلك الصلاحية المطلوبة للوصول إلى هذه البيانات وفقاً لسياسات الأمان المعمول بها.
+              تتطلب هذه الشاشة صلاحيات إدارية حصرية من المالك (د. محمد) وفقاً لسياسة حماية الأسرار التجارية والمالية.
             </p>
+            <div className="p-3 rounded-2xl bg-slate-100 text-slate-700 text-[11px] font-mono border border-slate-200">
+              المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'طارق'} ({effectiveUser?.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : effectiveUser?.role})</strong>
+            </div>
             <div className="pt-2">
               <button
+                type="button"
                 onClick={() => setCurrentView(View.POS)}
-                className="apple-btn px-6 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-sm"
+                className="apple-btn px-6 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-md cursor-pointer transition-all"
               >
-                العودة إلى شاشة المبيعات (الكاشير)
+                العودة إلى الصفحة الرئيسية المسموح بها (الكاشير)
               </button>
             </div>
           </div>
@@ -2680,6 +2723,7 @@ const App: React.FC = () => {
               setFormulationProduct(product || null);
               setCurrentView(View.FORMULATION_ENGINE);
             }}
+            onNavigate={(v) => setCurrentView(v)}
           />
         );
       case View.CUSTOMERS_LOYALTY:
@@ -2741,9 +2785,21 @@ const App: React.FC = () => {
         return (
           <UsersManagement
             users={users}
-            currentUser={currentUser}
+            currentUser={effectiveUser}
             onSaveUser={handleSaveUser}
             onAddAuditLog={handleAddAuditLog}
+            onPreviewUserPermissions={(previewUser) => {
+              setPreviewModeUser(previewUser);
+              if (previewUser) {
+                pushTopNotification(
+                  'info',
+                  `🔍 وضع المعاينة نشط كـ: ${previewUser.name}`,
+                  'يمكنك الآن استكشاف القوائم الشاشات والأزرار المتاحة لهذا الموظف (العمليات الحقيقية معطلة)',
+                  'معاينة الصلاحيات'
+                );
+                setCurrentView(View.POS);
+              }
+            }}
           />
         );
       case View.AUDIT_LOGS:
@@ -2754,7 +2810,7 @@ const App: React.FC = () => {
             products={products}
             bottleSizes={bottleSizes}
             settings={settings}
-            currentUser={currentUser}
+            currentUser={effectiveUser}
             onUpdateSale={handleUpdateSale}
             onDeleteSale={handleDeleteSale}
             onAddAuditLog={handleAddAuditLog}
@@ -2793,6 +2849,21 @@ const App: React.FC = () => {
               setVaults(updatedList);
               saveAllVaultsCloud(updatedList).catch(console.error);
             }}
+          />
+        );
+      case View.STAFF_ENTITLEMENTS:
+        return (
+          <StaffEntitlements
+            sales={sales}
+            vaults={vaults}
+            currentUser={currentUser}
+            users={users}
+            settings={settings}
+            onUpdateVaults={(updatedList) => {
+              setVaults(updatedList);
+              saveAllVaultsCloud(updatedList).catch(console.error);
+            }}
+            onAddExpense={(newExp) => handleSetExpenses(prev => [newExp, ...prev])}
           />
         );
       case View.EXPENSES:
@@ -2930,6 +3001,25 @@ const App: React.FC = () => {
       {/* Interactive Typing Shake, Color Sparkle & Acoustic Controller */}
       <InteractiveTypingController settings={settings} />
 
+      {/* Owner Preview Mode Active Banner (Rule 8: معاينة الواجهة والصلاحيات دون تنفيذ عمليات مالية) */}
+      {previewModeUser && (
+        <div className="bg-[#FF9500] text-slate-950 px-4 py-2 text-xs font-black flex flex-wrap items-center justify-between gap-2 shadow-apple-md sticky top-0 z-50 animate-in slide-in-from-top duration-200" dir="rtl">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-ping shrink-0" />
+            <span>🔍 وضع معاينة الواجهة نشط · تعاين النظام الآن بصلاحيات الموظف: <strong>{previewModeUser.displayName || previewModeUser.fullName} ({previewModeUser.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : previewModeUser.role})</strong></span>
+            <span className="bg-slate-950/15 text-slate-950 px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-950/20">العمليات المالية حقيقية معطلة لحماية البيانات</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPreviewModeUser(null)}
+            className="px-3 py-1 rounded-xl bg-slate-950 text-white hover:bg-slate-800 text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+          >
+            <span>إلغاء المعاينة والعودة لصلاحيات د. محمد</span>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Apple Dynamic Island Top Notification Banner (Strictly at the Top) */}
       <AppleTopNotificationBanner
         notifications={topNotifications}
@@ -2943,7 +3033,7 @@ const App: React.FC = () => {
         products={products}
         settings={settings}
         isCloudConnected={isCloudConnected}
-        currentUser={currentUser}
+        currentUser={effectiveUser}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onLogout={handleLogout}
         onOpenDayOperations={() => setIsDayOpsModalOpen(true)}
@@ -2966,7 +3056,7 @@ const App: React.FC = () => {
       <main className="min-h-screen w-full max-w-full overflow-x-hidden relative z-0 md:pr-72 pt-2 sm:pt-3 md:pt-4 transition-all duration-200">
         {/* Unified Sleek Top Header Bar & Smart Color-Coded Notification Ticker */}
         <ExecutiveHeaderBar
-          currentUser={currentUser}
+          currentUser={effectiveUser}
           users={users}
           onSwitchUser={handleLoginSuccess}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
@@ -3041,6 +3131,19 @@ const App: React.FC = () => {
                     }`}>
                       {activeBroadcastForDisplay.category === 'urgent' ? '🚨 عاجل وهام' : activeBroadcastForDisplay.category === 'target' ? '🎯 تارجت ومبيعات' : activeBroadcastForDisplay.category === 'reward' ? '🎁 مكافأة وتقدير' : '📋 تعليمات'}
                     </span>
+
+                    {/* Recurrence Indicator Pill (تكرار التنبيه) */}
+                    {activeBroadcastForDisplay.repeatMode && activeBroadcastForDisplay.repeatMode !== 'none' && (
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-900 dark:text-blue-200 border border-blue-400/40 flex items-center gap-1 font-mono">
+                        <Repeat size={10} className="text-blue-600 dark:text-blue-300" />
+                        <span>
+                          {activeBroadcastForDisplay.repeatMode === 'daily'
+                            ? `🔄 يتكرر يومياً${activeBroadcastForDisplay.repeatTime ? ` (${activeBroadcastForDisplay.repeatTime})` : ''}`
+                            : `🔄 يتكرر كل ${activeBroadcastForDisplay.repeatDayOfWeek !== undefined ? ['أحد','إثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'][activeBroadcastForDisplay.repeatDayOfWeek] : 'أسبوع'}${activeBroadcastForDisplay.repeatTime ? ` (${activeBroadcastForDisplay.repeatTime})` : ''}`
+                          }
+                        </span>
+                      </span>
+                    )}
 
                     {/* Expiration Countdown Badge (Default 8 Hours) */}
                     {(() => {

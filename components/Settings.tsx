@@ -949,6 +949,118 @@ export const Settings: React.FC<SettingsProps> = ({
       )}
 
       {/* ======================================================== */}
+      {/* 2. MASTER CONTROL ROADMAP (خريطة وأقسام مركز التحكم الإداري) */}
+      {/* ======================================================== */}
+      <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-[#1D1D1F] via-[#2A2A2E] to-[#121215] text-white border border-white/10 shadow-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
+              <Crown size={18} className="text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                <span>خريطة مركز التحكم الإداري الشامل لمحل «لمسة عطر»</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-bold">11 قسماً تنفيذاً</span>
+              </h2>
+              <p className="text-xs text-gray-300 mt-0.5">
+                دليل سريع للوصول لكافة أدوات الإدارة، الموازنة، التسعير، الفواتير، والأمان بنقرة واحدة
+              </p>
+            </div>
+          </div>
+          <div className="text-[11px] text-gray-400 font-mono">
+            {isOwner ? '👤 الحساب الحالي: د. محمد (مدير النظام والمالك)' : '👤 الحساب الحالي: الكاشير (صلاحيات تشغيلية)'}
+          </div>
+        </div>
+
+        {/* 4 Group Roadmap Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          {/* Group 1: Themes & Layout */}
+          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-amber-400/40 transition-colors">
+            <div className="flex items-center gap-2 text-amber-400 font-black">
+              <Palette size={16} />
+              <span>1. الواجهات والمظهر (3 أقسام)</span>
+            </div>
+            <div className="space-y-1 text-gray-300">
+              <button type="button" onClick={() => setActiveSection('dashboard_layout')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• تخصيص بطاقات اللوحة</span>
+                <span className="text-[10px] font-mono text-amber-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('themes')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• الخطوط والسمات والألوان</span>
+                <span className="text-[10px] font-mono text-amber-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('identity')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
+                <span>• هوية المتجر والواتساب</span>
+                <span className="text-[10px] font-mono text-amber-400">انتقال ←</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Group 2: Budget & Pricing */}
+          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-emerald-400/40 transition-colors">
+            <div className="flex items-center gap-2 text-emerald-400 font-black">
+              <Target size={16} />
+              <span>2. التسعير والموازنة (3 أقسام)</span>
+            </div>
+            <div className="space-y-1 text-gray-300">
+              <button type="button" onClick={() => setActiveSection('budget')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• الموازنة والعمولات (15k)</span>
+                <span className="text-[10px] font-mono text-emerald-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('pricing')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• تسعير العبوات والتركيبات</span>
+                <span className="text-[10px] font-mono text-emerald-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('vaults')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
+                <span>• الخزائن ومسحوبات المالك</span>
+                <span className="text-[10px] font-mono text-emerald-400">انتقال ←</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Group 3: Receipts & Loyalty AI */}
+          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-blue-400/40 transition-colors">
+            <div className="flex items-center gap-2 text-blue-400 font-black">
+              <Receipt size={16} />
+              <span>3. الفواتير والولاء الذكي (2 قسم)</span>
+            </div>
+            <div className="space-y-1 text-gray-300">
+              <button type="button" onClick={() => setActiveSection('pos_receipts')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• استوديو الفواتير والطباعة</span>
+                <span className="text-[10px] font-mono text-blue-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('loyalty_ai')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
+                <span>• نقاط الولاء الذكية وربح اليوم</span>
+                <span className="text-[10px] font-mono text-blue-400">انتقال ←</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Group 4: Security & Inventory */}
+          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 hover:border-purple-400/40 transition-colors">
+            <div className="flex items-center gap-2 text-purple-400 font-black">
+              <ShieldCheck size={16} />
+              <span>4. الأمان والمخزون (3 أقسام)</span>
+            </div>
+            <div className="space-y-1 text-gray-300">
+              <button type="button" onClick={() => setActiveSection('privacy')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• حجب التكاليف وحماية السرية</span>
+                <span className="text-[10px] font-mono text-purple-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('inventory')} className="w-full text-right hover:text-white flex items-center justify-between py-1 border-b border-white/5 cursor-pointer">
+                <span>• المخزون وحد النقص</span>
+                <span className="text-[10px] font-mono text-purple-400">انتقال ←</span>
+              </button>
+              <button type="button" onClick={() => setActiveSection('security_backup')} className="w-full text-right hover:text-white flex items-center justify-between py-1 cursor-pointer">
+                <span>• النسخ الاحتياطي وكلمة المرور</span>
+                <span className="text-[10px] font-mono text-purple-400">انتقال ←</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ======================================================== */}
       {/* 2. MAIN 2-COLUMN LAYOUT: INDEXED SIDEBAR + ACTIVE PANEL  */}
       {/* ======================================================== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

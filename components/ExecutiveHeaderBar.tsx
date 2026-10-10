@@ -38,6 +38,7 @@ import {
   Info, 
   Palette, 
   Radio,
+  Award,
   Search,
   Clock,
   ChevronDown,
@@ -712,16 +713,40 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 )}
               </button>
 
-              {/* 3. Labeled Notifications Capsule */}
+              {/* 3. Labeled Notifications Capsule (رادار المالك للمالك - وقسم العمولات لطارق) */}
+              {isOwner ? (
+                <button
+                  type="button"
+                  onClick={onOpenLiveAlertsRadar}
+                  className="apple-pill-btn halo-emerald h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
+                  title="رادار التنبيهات والتزامن الحي لمدير النظام د. محمد"
+                >
+                  <Bell size={15} className="text-[#34C759] shrink-0" strokeWidth={2} />
+                  <span className="hidden sm:inline">رادار التنبيهات</span>
+                  <span className="w-2 h-2 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse shrink-0" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onNavigate && onNavigate(View.STAFF_ENTITLEMENTS)}
+                  className="apple-pill-btn halo-blue h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
+                  title="قسم مستحقات طارق وعمولات اليوم وتوجيهات العمل"
+                >
+                  <Award size={15} className="text-[#0071E3] shrink-0" strokeWidth={2} />
+                  <span className="hidden sm:inline">عمولاتي ومستحقاتي</span>
+                  <span className="w-2 h-2 rounded-full bg-[#0071E3] ring-2 ring-white animate-pulse shrink-0" />
+                </button>
+              )}
+
+              {/* 4. Settings & Control Hub Capsule */}
               <button
                 type="button"
-                onClick={onOpenLiveAlertsRadar}
-                className="apple-pill-btn halo-emerald h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
-                title="رادار التنبيهات والتزامن الحي"
+                onClick={() => onNavigate?.(View.SETTINGS)}
+                className={`apple-pill-btn halo-amber h-11 px-3 sm:px-3.5 text-xs font-bold relative ${currentView === View.SETTINGS ? 'bg-[#1D1D1F] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
+                title="مركز التحكم والإعدادات الإدارية"
               >
-                <Bell size={15} className="text-[#34C759] shrink-0" strokeWidth={2} />
-                <span className="hidden sm:inline">التنبيهات</span>
-                <span className="w-2 h-2 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse shrink-0" />
+                <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
+                <span className="hidden sm:inline">الإعدادات والتحكم</span>
               </button>
 
               {/* 4. CONSOLIDATED TOOLS MENU CAPSULE (دمج الأزرار في قائمة موحدة لمنع الزحام) */}

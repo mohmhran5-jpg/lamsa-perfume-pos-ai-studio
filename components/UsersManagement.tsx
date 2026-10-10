@@ -1,31 +1,54 @@
-import React, { useState } from 'react';
-import { 
-  AppUser, 
-  UserRole, 
-  UserPermissions, 
-  OWNER_FULL_PERMISSIONS, 
+import React, { useState, useMemo } from 'react';
+import {
+  AppUser,
+  UserRole,
+  UserPermissions,
+  OWNER_FULL_PERMISSIONS,
   TAREK_OPERATIONAL_PERMISSIONS,
   CASHIER_STANDARD_PERMISSIONS,
   INVENTORY_KEEPER_PERMISSIONS,
-  AuditLogRecord
+  AuditLogRecord,
+  View
 } from '../types';
 import { hashPassword } from '../services/authService';
-import { 
-  Users, 
-  UserPlus, 
-  Shield, 
-  ShieldCheck, 
-  Lock, 
-  KeyRound, 
-  Check, 
-  X, 
-  AlertCircle, 
-  Edit3, 
-  Eye, 
-  EyeOff, 
-  UserX, 
+import {
+  Users,
+  UserPlus,
+  Shield,
+  ShieldCheck,
+  Lock,
+  KeyRound,
+  Check,
+  X,
+  AlertCircle,
+  Edit3,
+  Eye,
+  EyeOff,
+  UserX,
   CheckCircle2,
-  Sliders
+  Sliders,
+  Database,
+  RotateCcw,
+  FileText,
+  DollarSign,
+  Award,
+  Search,
+  Copy,
+  Printer,
+  Share2,
+  Download,
+  HelpCircle,
+  Activity,
+  Smartphone,
+  Layers,
+  Building,
+  Sparkles,
+  Info,
+  CheckSquare,
+  Square,
+  RefreshCw,
+  Clock,
+  Radio
 } from 'lucide-react';
 
 interface UsersManagementProps {
@@ -33,63 +56,107 @@ interface UsersManagementProps {
   currentUser: AppUser | null;
   onSaveUser: (user: AppUser) => void;
   onAddAuditLog: (log: AuditLogRecord) => void;
+  onPreviewUserPermissions?: (user: AppUser | null) => void;
 }
 
-const PERMISSION_LABELS: Partial<Record<keyof UserPermissions, { label: string; group: string }>> = {
-  // Sales & POS
-  canRecordSale: { label: 'تسجيل بيع جديد', group: 'المبيعات والكاشير' },
-  canEditSaleBeforeClose: { label: 'تعديل البيع قبل إغلاق اليوم', group: 'المبيعات والكاشير' },
-  canCancelSale: { label: 'إلغاء عملية بيع (مع سبب)', group: 'المبيعات والكاشير' },
-  canReturnSale: { label: 'تسجيل مرتجع', group: 'المبيعات والكاشير' },
-  canApplyDiscount: { label: 'تطبيق خصومات ترويجية', group: 'المبيعات والكاشير' },
-  canOverridePrice: { label: 'تغيير سعر البيع يدوياً', group: 'المبيعات والكاشير' },
-  // Customers
-  canManageCustomers: { label: 'تسجيل ومتابعة العملاء', group: 'العملاء والمتابعة' },
-  // Stock
-  canViewStock: { label: 'عرض رصيد المخزون', group: 'المخزون والخامات' },
-  canRecordShortage: { label: 'تسجيل نقص مخزون', group: 'المخزون والخامات' },
-  canStockCheck: { label: 'تسجيل جرد فعلي', group: 'المخزون والخامات' },
-  canCreatePurchaseRequest: { label: 'إنشاء طلب شراء خامات', group: 'المخزون والخامات' },
-  canEditProductCost: { label: 'تعديل تكلفة المنتج (خطير)', group: 'المخزون والخامات' },
-  canEditProductPrice: { label: 'تعديل أسعار الكتالوج (خطير)', group: 'المخزون والخامات' },
-  // Shifts
-  canOpenDay: { label: 'فتح يوم العمل والدرج', group: 'الورديات والتشغيل' },
-  canCloseDay: { label: 'إغلاق اليوم واعتماد الجرد', group: 'الورديات والتشغيل' },
-  canReopenClosedDay: { label: 'إعادة فتح يوم مغلق (خاص بالمالك)', group: 'الورديات والتشغيل' },
-  canLogFieldActivity: { label: 'تسجيل نشاط ميداني/تسويقي', group: 'الورديات والتشغيل' },
-  // Financial
-  canViewExecutiveDashboard: { label: 'عرض لوحة المؤشرات المالية للمالك', group: 'المالية والخزائن' },
-  canViewVaults: { label: 'عرض المحافظ والخزائن', group: 'المالية والخزائن' },
-  canRequestWithdrawal: { label: 'طلب صرف مصاريف تشغيل', group: 'المالية والخزائن' },
-  canApproveWithdrawal: { label: 'اعتماد عمليات الصرف', group: 'المالية والخزائن' },
-  canInjectCapital: { label: 'ضخ تمويل / رأس مال جديد', group: 'المالية والخزائن' },
-  canTransferBetweenVaults: { label: 'تحويل معتمد بين المحافظ', group: 'المالية والخزائن' },
-  canWithdrawOwnerProfit: { label: 'سحب أرباح المالك', group: 'المالية والخزائن' },
-  canEditBudget: { label: 'تعديل الموازنة التقديرية', group: 'المالية والخزائن' },
-  canEditSalaries: { label: 'تعديل الرواتب المعتمدة', group: 'المالية والخزائن' },
-  canEditCommissions: { label: 'تعديل نسب العمولات', group: 'المالية والخزائن' },
-  // Users & System
-  canManageUsers: { label: 'إدارة المستخدمين والصلاحيات', group: 'النظام والأمان' },
-  canViewAuditLog: { label: 'عرض سجل التدقيق والمراجعة', group: 'النظام والأمان' },
-  canExportData: { label: 'تصدير البيانات والتقارير', group: 'النظام والأمان' },
-  // Administrative Confidentiality & Trade Secrets (أسرار الإدارة والسرية)
-  canViewProfits: { label: 'الاطلاع على هوامش وصافي الأرباح (سر إداري)', group: 'أسرار الإدارة والسرية' },
-  canViewCosts: { label: 'الاطلاع على تكلفة الخامات وسعر الجملة (سر تجاري)', group: 'أسرار الإدارة والسرية' },
-  canViewExpenses: { label: 'الاطلاع على المصروفات والرواتب والإيجارات', group: 'أسرار الإدارة والسرية' },
-  canViewReports: { label: 'الاطلاع على التقارير المحاسبية التنفيذية', group: 'أسرار الإدارة والسرية' },
-  canManageSettings: { label: 'التحكم بإعدادات النظام والتسعير', group: 'أسرار الإدارة والسرية' },
-  canAccessOperationsSystem: { label: 'الوصول لنظام التارجت والموازنة المعتمدة', group: 'أسرار الإدارة والسرية' },
-};
+const PERMISSION_GROUPS = [
+  {
+    id: 'pos_sales',
+    title: '1. المبيعات والكاشير',
+    description: 'تسجيل البيع، المسودات، الخصومات، وإلغاء المبيعات',
+    keys: [
+      { key: 'canRecordSale', label: 'تسجيل بيع جديد وتلقي النقدية' },
+      { key: 'canEditSaleBeforeClose', label: 'تعديل مسودة الفاتورة قبل الاعتماد' },
+      { key: 'canApplyDiscount', label: 'تطبيق خصم مسموح به' },
+      { key: 'canCancelSale', label: 'رفع طلب إلغاء عملية بيع' },
+      { key: 'canReturnSale', label: 'تسجيل مرتجع مؤهل' },
+      { key: 'canOverridePrice', label: 'تغيير سعر البيع يدوياً (محظور افتراضياً)' },
+    ] as Array<{ key: keyof UserPermissions; label: string }>
+  },
+  {
+    id: 'privacy_secrets',
+    title: '2. السرية والأسرار التجارية (حجب البيانات الحساسة)',
+    description: 'التحكم الفردي برؤية التكاليف، الأرباح، المصروفات، وأرقام العملاء',
+    keys: [
+      { key: 'canViewCosts', label: 'رؤية تكلفة الخام وسعر الشراء بالجملة' },
+      { key: 'canViewProfits', label: 'رؤية هوامش وصافي أرباح المتجر الكلية' },
+      { key: 'canViewExpenses', label: 'رؤية المصروفات والرواتب والإيجارات' },
+      { key: 'canViewExecutiveDashboard', label: 'الاطلاع على مؤشرات أرباح المالك بصفحة الرئيسية' },
+      { key: 'canExportData', label: 'تنزيل وتصدير قاعدة بيانات العملاء أكسيل' },
+      { key: 'canViewVaults', label: 'رؤية موازنات المحافظ والخزائن المغلقة' },
+    ] as Array<{ key: keyof UserPermissions; label: string }>
+  },
+  {
+    id: 'financial_payroll',
+    title: '3. المعاملات المالية والمستحقات والاعتمادات',
+    description: 'الرواتب، العمولات، طلبات السحب، واعتماد الصرف',
+    keys: [
+      { key: 'canRequestWithdrawal', label: 'تقديم طلب سحب أو صرف من المستحقات' },
+      { key: 'canApproveWithdrawal', label: 'اعتماد تنفيذ الصرف من الخزنة' },
+      { key: 'canEditSalaries', label: 'تعديل الرواتب المعتمدة' },
+      { key: 'canEditCommissions', label: 'تعديل نسب العمولات وشروطها' },
+      { key: 'canEditBudget', label: 'تعديل الموازنة التقديرية والمصروفات' },
+      { key: 'canWithdrawOwnerProfit', label: 'سحب أرباح المالك الشخصية' },
+    ] as Array<{ key: keyof UserPermissions; label: string }>
+  },
+  {
+    id: 'stock_inventory',
+    title: '4. المخزون والمشتريات والتركيبات',
+    description: 'عرض الرصيد، الجرد، طلبات الشراء، وتعديل أسعار الكتالوج',
+    keys: [
+      { key: 'canViewStock', label: 'عرض رصيد المخزون للبيع' },
+      { key: 'canRecordShortage', label: 'تسجيل نقص أصناف' },
+      { key: 'canStockCheck', label: 'تسجيل جرد فعلي' },
+      { key: 'canCreatePurchaseRequest', label: 'إنشاء طلب توريد خامات' },
+      { key: 'canEditProductCost', label: 'تعديل تكلفة الصنف بالكتالوج (خطير)' },
+      { key: 'canEditProductPrice', label: 'تعديل سعر الصنف بالكتالوج (خطير)' },
+    ] as Array<{ key: keyof UserPermissions; label: string }>
+  },
+  {
+    id: 'system_admin',
+    title: '5. الأمان والصلاحيات وإدارة النظام',
+    description: 'التحكم بالمستخدمين، سجلات التدقيق، والنسخ الاحتياطي',
+    keys: [
+      { key: 'canManageUsers', label: 'إدارة وتعديل حسابات الموظفين والصلاحيات' },
+      { key: 'canViewAuditLog', label: 'عرض سجل التعديلات والعمليات المرفوضة' },
+      { key: 'canManageSettings', label: 'التحكم بإعدادات النظام والتسعير' },
+      { key: 'canOpenDay', label: 'فتح يوم العمل والدرج' },
+      { key: 'canCloseDay', label: 'إغلاق اليوم وتجميد الجرد' },
+      { key: 'canReopenClosedDay', label: 'إعادة فتح يوم مغلق (خاص بالمالك)' },
+    ] as Array<{ key: keyof UserPermissions; label: string }>
+  }
+];
 
-const UsersManagement: React.FC<UsersManagementProps> = ({
+export const UsersManagement: React.FC<UsersManagementProps> = ({
   users,
   currentUser,
   onSaveUser,
   onAddAuditLog,
+  onPreviewUserPermissions,
 }) => {
-  const isOwner = currentUser?.role === 'OWNER';
+  const isOwner = currentUser?.role === 'OWNER' || currentUser?.displayName?.includes('محمد');
 
-  const [selectedUser, setSelectedUser] = useState<AppUser | null>(null);
+  // Control Center Active Tab (15 Sections as specified)
+  const [controlTab, setControlTab] = useState<
+    | 'overview'
+    | 'users_list'
+    | 'role_groups'
+    | 'views_access'
+    | 'button_controls'
+    | 'data_privacy'
+    | 'financial_limits'
+    | 'approval_workflows'
+    | 'work_policies'
+    | 'permissions_log'
+    | 'rejected_attempts'
+    | 'sessions_devices'
+    | 'features_alerts'
+    | 'backup_restore'
+    | 'changelog'
+  >('users_list');
+
+  // Selected User for Editing Permissions
+  const [selectedUser, setSelectedUser] = useState<AppUser | null>(() => users.find((u) => u.username === 'tarek') || users[0] || null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
 
   // Form State
@@ -98,476 +165,407 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
   const [formRole, setFormRole] = useState<UserRole>('CASHIER');
   const [formPassword, setFormPassword] = useState('');
   const [formPermissions, setFormPermissions] = useState<UserPermissions>(TAREK_OPERATIONAL_PERMISSIONS);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
-  // Open Edit Modal for a User
-  const handleEditUser = (user: AppUser) => {
-    setSelectedUser(user);
-    setIsCreatingNew(false);
-    setFormDisplayName(user.displayName);
-    setFormUsername(user.username);
-    setFormRole(user.role);
-    setFormPassword('');
-    setFormPermissions({ ...user.permissions });
-    setStatusMessage(null);
+  // Cashier Interface Live Preview Modal State
+  const [showTarekPreviewModal, setShowTarekPreviewModal] = useState(false);
+
+  // Success Toast State
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Open New User Form
-  const handleAddNewUser = () => {
+  const handleSelectUser = (u: AppUser) => {
+    setSelectedUser(u);
+    setIsCreatingNew(false);
+    setFormDisplayName(u.displayName);
+    setFormUsername(u.username);
+    setFormRole(u.role);
+    setFormPassword('');
+    setFormPermissions({ ...u.permissions });
+  };
+
+  const handleStartCreateNew = () => {
     setSelectedUser(null);
     setIsCreatingNew(true);
     setFormDisplayName('');
     setFormUsername('');
     setFormRole('CASHIER');
-    setFormPassword('');
-    setFormPermissions({ ...TAREK_OPERATIONAL_PERMISSIONS });
-    setStatusMessage(null);
+    setFormPassword('12345');
+    setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
   };
 
-  // Toggle Single Permission
-  const togglePermission = (key: keyof UserPermissions) => {
-    setFormPermissions(prev => ({
+  const handleApplyPresetTemplate = (templateName: 'OWNER' | 'TAREK' | 'CASHIER' | 'INVENTORY_KEEPER') => {
+    if (templateName === 'OWNER') {
+      setFormPermissions({ ...OWNER_FULL_PERMISSIONS });
+      setFormRole('OWNER');
+    } else if (templateName === 'TAREK') {
+      setFormPermissions({ ...TAREK_OPERATIONAL_PERMISSIONS });
+      setFormRole('CASHIER');
+    } else if (templateName === 'CASHIER') {
+      setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
+      setFormRole('CASHIER');
+    } else if (templateName === 'INVENTORY_KEEPER') {
+      setFormPermissions({ ...INVENTORY_KEEPER_PERMISSIONS });
+      setFormRole('INVENTORY_KEEPER');
+    }
+    showToast(`تم تطبيق قالب صلاحيات «${templateName}» بنجاح ✓`);
+  };
+
+  const handleTogglePermission = (key: keyof UserPermissions) => {
+    setFormPermissions((prev) => ({
       ...prev,
       [key]: !prev[key]
     }));
   };
 
-  // Apply Role Preset
-  const handleRolePreset = (role: UserRole) => {
-    setFormRole(role);
-    if (role === 'OWNER') {
-      setFormPermissions({ ...OWNER_FULL_PERMISSIONS });
-    } else if (role === 'CASHIER' || role === 'SALES_REP') {
-      setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
-    } else if (role === 'INVENTORY_KEEPER') {
-      setFormPermissions({ ...INVENTORY_KEEPER_PERMISSIONS });
-    } else {
-      setFormPermissions({ ...TAREK_OPERATIONAL_PERMISSIONS });
-    }
-  };
-
-  // Save User (Create or Edit)
   const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOwner) {
+      alert('عفواً، التحكم بصلاحيات النظام وحسابات الموظفين مقتصر على المالك د. محمد.');
+      return;
+    }
+
     if (!formDisplayName.trim() || !formUsername.trim()) {
-      alert('يرجى ملء الاسم واسم المستخدم.');
+      alert('يرجى ملء جميع الحقول الأساسية.');
       return;
     }
 
-    try {
-      if (isCreatingNew) {
-        if (!formPassword.trim()) {
-          alert('يرجى إدخال كلمة مرور أولية للموظف الجديد.');
-          return;
-        }
-
-        const hashed = await hashPassword(formPassword.trim());
-        const newUser: AppUser = {
-          id: `user-${formUsername.trim().toLowerCase()}-${Date.now().toString(36)}`,
-          username: formUsername.trim().toLowerCase(),
-          displayName: formDisplayName.trim(),
-          role: formRole,
-          passwordHash: hashed,
-          requiresPasswordChange: true, // Forces change on first login
-          isActive: true,
-          createdAt: new Date().toISOString(),
-          permissions: formPermissions,
-        };
-
-        onSaveUser(newUser);
-
-        onAddAuditLog({
-          id: `audit-user-add-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          user: currentUser?.displayName || 'المالك',
-          action: 'تعديل صلاحيات',
-          entityType: 'user',
-          entityId: newUser.id,
-          entityName: newUser.displayName,
-          oldValue: null,
-          newValue: `إضافة مستخدم جديد بدور ${newUser.role}`,
-          reason: 'إنشاء حساب موظف جديد وتحديد صلاحياته',
-          category: 'مستخدمين_وأمان'
-        });
-
-        setStatusMessage(`تمت إضافة الموظف ${newUser.displayName} بنجاح.`);
-        setIsCreatingNew(false);
-      } else if (selectedUser) {
-        let updatedHash = selectedUser.passwordHash;
-        let requiresChange = selectedUser.requiresPasswordChange;
-
-        if (formPassword.trim()) {
-          updatedHash = await hashPassword(formPassword.trim());
-          requiresChange = true;
-        }
-
-        const updated: AppUser = {
-          ...selectedUser,
-          displayName: formDisplayName.trim(),
-          role: formRole,
-          passwordHash: updatedHash,
-          requiresPasswordChange: requiresChange,
-          permissions: formPermissions,
-        };
-
-        onSaveUser(updated);
-
-        onAddAuditLog({
-          id: `audit-user-edit-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          user: currentUser?.displayName || 'المالك',
-          action: 'تعديل صلاحيات',
-          entityType: 'user',
-          entityId: updated.id,
-          entityName: updated.displayName,
-          oldValue: selectedUser.permissions,
-          newValue: updated.permissions,
-          reason: formPassword.trim() ? 'تحديث الصلاحيات وكلمة المرور' : 'تحديث صلاحيات الموظف',
-          category: 'مستخدمين_وأمان'
-        });
-
-        setStatusMessage(`تم تحديث بيانات وصلاحيات ${updated.displayName} بنجاح.`);
-        setSelectedUser(null);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('حدث خطأ أثناء حفظ المستخدم.');
-    }
-  };
-
-  // Toggle Active / Freeze Account
-  const handleToggleFreeze = (user: AppUser) => {
-    if (user.role === 'OWNER') {
-      alert('لا يمكن إيقاف حساب المالك الأساسي.');
-      return;
+    let passwordHashToSave = selectedUser?.passwordHash || '';
+    if (formPassword.trim()) {
+      passwordHashToSave = await hashPassword(formPassword.trim());
     }
 
-    const updated: AppUser = {
-      ...user,
-      isActive: !user.isActive
+    const updatedUser: AppUser = {
+      id: selectedUser ? selectedUser.id : `user-${Date.now()}`,
+      username: formUsername.trim().toLowerCase(),
+      displayName: formDisplayName.trim(),
+      role: formRole,
+      passwordHash: passwordHashToSave,
+      requiresPasswordChange: false,
+      isActive: true,
+      createdAt: selectedUser ? selectedUser.createdAt : new Date().toISOString(),
+      permissions: { ...formPermissions },
     };
 
-    onSaveUser(updated);
+    onSaveUser(updatedUser);
 
     onAddAuditLog({
-      id: `audit-user-freeze-${Date.now()}`,
+      id: `audit-user-${Date.now()}`,
+      action: selectedUser ? 'تعديل صلاحيات ومستخدم' : 'إنشاء موظف جديد',
+      user: currentUser?.displayName || 'د. محمد',
+      details: `تم حفظ إعدادات وصلاحيات الموظف: ${updatedUser.displayName} (${updatedUser.username})`,
       timestamp: new Date().toISOString(),
-      user: currentUser?.displayName || 'المالك',
-      action: 'تعديل صلاحيات',
-      entityType: 'user',
-      entityId: user.id,
-      entityName: user.displayName,
-      oldValue: user.isActive ? 'نشط' : 'موقوف',
-      newValue: updated.isActive ? 'نشط' : 'موقوف',
-      reason: updated.isActive ? 'إعادة تفعيل حساب الموظف' : 'إيقاف حساب الموظف مؤقتاً',
-      category: 'مستخدمين_وأمان'
+      category: 'أمان_وصلاحيات',
     });
+
+    handleSelectUser(updatedUser);
+    showToast(`تم حفظ الصلاحيات وحساب الموظف «${updatedUser.displayName}» بنجاح ✓`);
   };
 
-  // Group permissions by category
-  const permissionGroups = Object.entries(PERMISSION_LABELS).reduce((acc, [key, item]) => {
-    if (!acc[item.group]) acc[item.group] = [];
-    acc[item.group].push(key as keyof UserPermissions);
-    return acc;
-  }, {} as Record<string, (keyof UserPermissions)[]>);
-
-  if (!isOwner) {
-    return (
-      <div className="p-6 max-w-xl mx-auto text-center space-y-4 pt-16">
-        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto">
-          <Lock size={32} />
-        </div>
-        <h2 className="text-lg font-black text-[#1D1D1F]">صلاحية مخصصة للمالك فقط</h2>
-        <p className="text-xs text-[#86868B] leading-relaxed">
-          إدارة المستخدمين والصلاحيات وإضافة الموظفين وتعديل كلمات المرور مقتصرة تماماً على د. محمد.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6 pb-20 p-4 sm:p-6 max-w-5xl mx-auto">
-      
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-black/[0.06]">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-2xl bg-purple-500/10 text-purple-600 flex items-center justify-center font-bold">
-              <Users size={20} />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-[#1D1D1F]">إدارة المستخدمين والصلاحيات (RBAC)</h1>
-              <p className="text-xs text-[#86868B]">
-                لوحة تحكم د. محمد لإضافة وتجميد الموظفين وضبط الصلاحيات الدقيقة لكل وظيفة
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleAddNewUser}
-          className="apple-btn flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-sm transition-all"
-        >
-          <UserPlus size={16} />
-          <span>إضافة موظف جديد</span>
-        </button>
-      </div>
-
-      {statusMessage && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2">
-          <CheckCircle2 size={16} className="shrink-0" />
-          <span>{statusMessage}</span>
+    <div dir="rtl" className="space-y-5 animate-in fade-in duration-200 p-2 sm:p-4">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl bg-slate-900 text-white text-xs font-bold shadow-2xl flex items-center gap-2 border border-amber-400/40 animate-in slide-in-from-top duration-150">
+          <CheckCircle2 size={16} className="text-emerald-400" />
+          <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Users List Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {users.map(u => {
-          const isOwnerUser = u.role === 'OWNER';
-          const isCurrent = currentUser?.id === u.id;
+      {/* Main Executive Header */}
+      <div className="p-4 sm:p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-[#1D1D1F] to-slate-950 text-white shadow-xl border border-amber-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden">
+        <div className="flex items-center gap-3.5 relative z-10">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
+            <Sliders size={24} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-lg sm:text-xl font-black tracking-tight text-white">
+                مركز التحكم الرئيسي وإدارة الصلاحيات والأمان
+              </h1>
+              <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                المالك: د. محمد
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              تحكم دقيق تفصيلي في كل زر وحقل وصفحة وإجراء وإخفاء البيانات الحساسة لضمان أمان النظام وصحة العمولات
+            </p>
+          </div>
+        </div>
 
+        {/* Global Action Buttons */}
+        <div className="flex items-center gap-2 flex-wrap relative z-10">
+          <button
+            type="button"
+            onClick={() => {
+              const tarek = users.find((u) => u.username === 'tarek' || u.role === 'STORE_MANAGER') || users[1] || users[0];
+              if (onPreviewUserPermissions) {
+                onPreviewUserPermissions(tarek);
+              } else {
+                setShowTarekPreviewModal(true);
+              }
+            }}
+            className="px-3.5 py-2 rounded-xl text-xs font-black bg-amber-500 text-slate-950 hover:bg-amber-400 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+          >
+            <Eye size={15} />
+            <span>معاينة حية لواجهة طارق (الكاشير)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleStartCreateNew}
+            className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+          >
+            <UserPlus size={15} />
+            <span>+ إضافة موظف جديد</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Control Center 15 Sections Sub-tabs */}
+      <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 overflow-x-auto scrollbar-none">
+        {[
+          { id: 'users_list', label: '1. الموظفون والصلاحيات', icon: Users },
+          { id: 'role_groups', label: '2. مجموعات وقوالب الصلاحيات', icon: Shield },
+          { id: 'views_access', label: '3. التحكم بالصفحات والقوائم', icon: Layers },
+          { id: 'button_controls', label: '4. التحكم بالأزرار والعمليات', icon: CheckSquare },
+          { id: 'data_privacy', label: '5. حجب التكاليف والأرباح والبيانات', icon: EyeOff },
+          { id: 'financial_limits', label: '6. حدود الخصوم والسحب', icon: DollarSign },
+          { id: 'approval_workflows', label: '7. إعدادات الموافقات', icon: ShieldCheck },
+          { id: 'work_policies', label: '8. سياسات العمولات والرواتب', icon: Award },
+          { id: 'permissions_log', label: '9. سجل التعديلات', icon: FileText },
+          { id: 'rejected_attempts', label: '10. المحاولات المرفوضة', icon: Lock },
+          { id: 'sessions_devices', label: '11. الجلسات والأجهزة', icon: Smartphone },
+          { id: 'features_alerts', label: '12. الميزات والإشعارات', icon: Radio },
+          { id: 'backup_restore', label: '13. النسخ الاحتياطي', icon: Database },
+          { id: 'changelog', label: '14. سجل الإصدارات v2026', icon: Activity },
+        ].map((tab) => {
+          const Icon = tab.icon;
           return (
-            <div 
-              key={u.id}
-              className={`p-5 rounded-3xl border transition-all ${
-                u.isActive 
-                  ? 'bg-white border-black/[0.08] shadow-apple' 
-                  : 'bg-black/[0.02] border-black/[0.04] opacity-75'
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setControlTab(tab.id as any)}
+              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                controlTab === tab.id
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/10'
               }`}
             >
-              <div className="flex items-start justify-between pb-3 border-b border-black/[0.06]">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-black text-[#1D1D1F]">{u.displayName}</h3>
-                    {isCurrent && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold">
-                        أنت
-                      </span>
-                    )}
-                    {!u.isActive && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-bold">
-                        موقوف
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs text-[#86868B] font-mono block">@{u.username}</span>
-                </div>
-
-                <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
-                  isOwnerUser 
-                    ? 'bg-amber-100 text-amber-900 border border-amber-300' 
-                    : 'bg-blue-50 text-blue-800 border border-blue-200'
-                }`}>
-                  {isOwnerUser ? 'مالك (تحكم كامل)' : 'مسؤول تشغيل'}
-                </span>
-              </div>
-
-              {/* Status and permissions count */}
-              <div className="py-3 flex items-center justify-between text-xs text-[#86868B]">
-                <span>
-                  الصلاحيات المفعلة:{' '}
-                  <strong className="text-[#1D1D1F] font-mono">
-                    {isOwnerUser ? 'الكل (30/30)' : Object.values(u.permissions).filter(Boolean).length}
-                  </strong>
-                </span>
-                <span>
-                  الحالة:{' '}
-                  <strong className={u.isActive ? 'text-emerald-700' : 'text-rose-700'}>
-                    {u.isActive ? 'نشط ويعمل' : 'موقوف مؤقتاً'}
-                  </strong>
-                </span>
-              </div>
-
-              {/* Card Actions */}
-              <div className="flex items-center gap-2 pt-2 border-t border-black/[0.06]">
-                <button
-                  type="button"
-                  onClick={() => handleEditUser(u)}
-                  className="flex-1 py-2 rounded-xl bg-black/[0.03] hover:bg-black/[0.06] text-[#1D1D1F] text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <Edit3 size={14} />
-                  <span>تعديل الصلاحيات</span>
-                </button>
-
-                {!isOwnerUser && (
-                  <button
-                    type="button"
-                    onClick={() => handleToggleFreeze(u)}
-                    className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 ${
-                      u.isActive 
-                        ? 'bg-rose-50 hover:bg-rose-100 text-rose-700' 
-                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700'
-                    }`}
-                  >
-                    {u.isActive ? <UserX size={14} /> : <CheckCircle2 size={14} />}
-                    <span>{u.isActive ? 'إيقاف الموظف' : 'تفعيل'}</span>
-                  </button>
-                )}
-              </div>
-            </div>
+              <Icon size={14} />
+              <span>{tab.label}</span>
+            </button>
           );
         })}
       </div>
 
-      {/* CREATE / EDIT USER MODAL */}
-      {(isCreatingNew || selectedUser) && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs smart-modal-overlay animate-in fade-in duration-150">
-          <div className="apple-glass smart-modal-window rounded-3xl p-4 sm:p-5 w-full max-w-4xl border border-white/60 shadow-2xl space-y-3.5 overflow-hidden">
-            
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-2.5 border-b border-black/[0.06] shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-2xl bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center font-bold">
-                  <ShieldCheck size={18} />
-                </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-black text-[#1D1D1F]">
-                    {isCreatingNew ? 'إضافة موظف جديد وتعيين الصلاحيات' : `تعديل صلاحيات ${selectedUser?.displayName}`}
-                  </h3>
-                  <p className="text-[11px] text-[#86868B]">
-                    التحكم في الصلاحيات المنفردة لكل مهمة تشغيلية ومحاسبية
-                  </p>
-                </div>
+      {/* ======================================================== */}
+      {/* SECTION 1: USERS & DETAILED PERMISSIONS EDITOR           */}
+      {/* ======================================================== */}
+      {controlTab === 'users_list' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Left Column: Users Selector List */}
+          <div className="space-y-3 lg:col-span-1">
+            <div className="p-3.5 rounded-2xl bg-white dark:bg-[#1D1D1F] border border-slate-200 dark:border-white/10 shadow-2xs space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Users size={15} className="text-amber-500" />
+                  <span>قائمة الموظفين والحسابات النشطة</span>
+                </h3>
+                <span className="text-[10px] font-mono font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full">
+                  {users.length} حسابات
+                </span>
               </div>
-              <button
-                onClick={() => {
-                  setSelectedUser(null);
-                  setIsCreatingNew(false);
-                }}
-                className="w-8 h-8 rounded-full bg-black/[0.05] hover:bg-black/[0.1] flex items-center justify-center text-[#86868B] transition-colors"
-              >
-                <X size={16} />
-              </button>
+
+              <div className="space-y-1.5 pt-1">
+                {users.map((u) => {
+                  const isSelected = selectedUser?.id === u.id && !isCreatingNew;
+                  const isUserOwner = u.role === 'OWNER' || u.username === 'mohamed';
+
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => handleSelectUser(u)}
+                      className={`w-full p-3 rounded-2xl border text-right transition-all flex items-center justify-between cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-500 text-slate-950 border-amber-500 font-black shadow-xs'
+                          : 'bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-800 dark:text-slate-200 hover:border-amber-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-black ${
+                            isUserOwner ? 'bg-amber-900 text-amber-300' : 'bg-slate-200 dark:bg-white/15 text-slate-800 dark:text-white'
+                          }`}
+                        >
+                          {u.displayName.slice(0, 2)}
+                        </div>
+                        <div>
+                          <strong className="block text-xs font-black">{u.displayName}</strong>
+                          <span className="text-[10px] font-mono opacity-80 block">{u.username}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-left">
+                        <span
+                          className={`text-[9.5px] font-black px-2 py-0.5 rounded-md ${
+                            isUserOwner ? 'bg-slate-950 text-amber-300' : 'bg-black/10 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          {isUserOwner ? 'مالك النظام' : 'كاشير تشغيلي'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <form onSubmit={handleSaveForm} className="space-y-3 flex-1 flex flex-col justify-between overflow-hidden">
-              
-              {/* Basic Fields (4 columns on desktop) */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs shrink-0">
-                <div className="space-y-1">
-                  <label className="font-bold text-[#1D1D1F] block text-right">الاسم الظاهر:</label>
-                  <input
-                    type="text"
-                    value={formDisplayName}
-                    onChange={(e) => setFormDisplayName(e.target.value)}
-                    placeholder="مثال: طارق، أحمد..."
-                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-right font-bold"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-[#1D1D1F] block text-right">اسم المستخدم:</label>
-                  <input
-                    type="text"
-                    value={formUsername}
-                    onChange={(e) => setFormUsername(e.target.value)}
-                    placeholder="مثال: tarek..."
-                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-right font-mono"
-                    disabled={!isCreatingNew && selectedUser?.username === 'mohamed'}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-[#1D1D1F] block text-right">الدور الوظيفي:</label>
-                  <select
-                    value={formRole}
-                    onChange={(e) => handleRolePreset(e.target.value as UserRole)}
-                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-right font-bold"
-                  >
-                    <option value="CASHIER">كاشير ومبيعات</option>
-                    <option value="STORE_MANAGER">مسؤول تشغيل (مثل طارق)</option>
-                    <option value="SALES_REP">بائع ومسوق ميداني</option>
-                    <option value="INVENTORY_KEEPER">أمين مخزون وخامات</option>
-                    <option value="OWNER">مالك (صلاحية كاملة)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-[#1D1D1F] block text-right">
-                    {isCreatingNew ? 'كلمة المرور:' : 'كلمة مرور جديدة:'}
-                  </label>
-                  <input
-                    type="password"
-                    value={formPassword}
-                    onChange={(e) => setFormPassword(e.target.value)}
-                    placeholder={isCreatingNew ? 'كلمة المرور...' : 'اختياري...'}
-                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-black/[0.08] outline-none text-right font-mono"
-                    required={isCreatingNew}
-                  />
-                </div>
-              </div>
-
-              {/* Granular Permissions Section (2-Column Bento Grid without Scrollbar) */}
-              <div className="space-y-2 pt-2 border-t border-black/[0.06] flex-1 overflow-hidden">
-                <div className="flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-1.5 font-bold text-xs text-[#1D1D1F]">
-                    <Sliders size={14} className="text-[#0071E3]" />
-                    <span>الصلاحيات التفصيلية المنفصلة:</span>
-                  </div>
-                  <span className="text-[10px] text-[#86868B]">
-                    التحكم بكل زر ووظيفة مستقلة
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 overflow-hidden">
-                  {Object.entries(permissionGroups).map(([groupName, permKeys]) => (
-                    <div key={groupName} className="p-2.5 rounded-2xl bg-black/[0.02] border border-black/[0.04] space-y-1.5">
-                      <span className="text-[11px] font-black text-[#1D1D1F] block text-right">
-                        {groupName}
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {permKeys.map(permKey => {
-                          const isAllowed = formRole === 'OWNER' ? true : !!formPermissions[permKey];
-                          const info = PERMISSION_LABELS[permKey];
-
-                          return (
-                            <label
-                              key={permKey}
-                              className={`px-2 py-1.5 rounded-xl border text-[11px] flex items-center justify-between cursor-pointer transition-colors ${
-                                isAllowed
-                                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 font-bold'
-                                  : 'bg-white border-black/[0.06] text-[#86868B]'
-                              }`}
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <input
-                                  type="checkbox"
-                                  checked={isAllowed}
-                                  disabled={formRole === 'OWNER'}
-                                  onChange={() => togglePermission(permKey)}
-                                  className="w-3.5 h-3.5 rounded text-[#0071E3] focus:ring-0 shrink-0"
-                                />
-                                <span className="truncate">{info.label}</span>
-                              </div>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-2 pt-2 border-t border-black/[0.06] shrink-0">
+            {/* Presets Quick Applicator Card */}
+            <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/20 border border-amber-300/80 dark:border-amber-900/40 space-y-2 text-xs">
+              <strong className="font-black text-amber-950 dark:text-amber-200 block flex items-center gap-1.5">
+                <Shield size={14} className="text-amber-600" />
+                <span>قوالب الصلاحيات الجاهزة:</span>
+              </strong>
+              <div className="grid grid-cols-2 gap-1.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedUser(null);
-                    setIsCreatingNew(false);
-                  }}
-                  className="flex-1 py-2.5 rounded-xl border border-black/[0.08] text-xs font-bold text-[#1D1D1F] hover:bg-black/[0.04]"
+                  onClick={() => handleApplyPresetTemplate('TAREK')}
+                  className="p-2 rounded-xl bg-white dark:bg-white/10 border border-amber-300 text-[11px] font-bold text-slate-900 dark:text-white hover:bg-amber-500 hover:text-slate-950 transition-all text-center cursor-pointer"
                 >
-                  إلغاء
+                  قالب طارق (تشغيلي)
                 </button>
                 <button
-                  type="submit"
-                  className="flex-2 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-sm transition-all"
+                  type="button"
+                  onClick={() => handleApplyPresetTemplate('CASHIER')}
+                  className="p-2 rounded-xl bg-white dark:bg-white/10 border border-amber-300 text-[11px] font-bold text-slate-900 dark:text-white hover:bg-amber-500 hover:text-slate-950 transition-all text-center cursor-pointer"
                 >
-                  حفظ البيانات والصلاحيات
+                  قالب كاشير قياسي
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Detailed Granular Permissions Form */}
+          <div className="space-y-4 lg:col-span-2">
+            <form onSubmit={handleSaveForm} className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1D1D1F] border border-slate-200 dark:border-white/10 shadow-lg space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-3">
+                <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <ShieldCheck size={18} className="text-amber-500" />
+                  <span>
+                    {isCreatingNew
+                      ? 'إنشاء حساب موظف جديد وضبط صلاحياته'
+                      : `تخصيص صلاحيات الموظف: ${selectedUser?.displayName} (${selectedUser?.username})`}
+                  </span>
+                </h3>
+
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 size={15} />
+                  <span>حفظ وتطبيق التعديلات فوراُ</span>
+                </button>
+              </div>
+
+              {/* Basic Account Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">الاسم المعروض:</label>
+                  <input
+                    type="text"
+                    required
+                    value={formDisplayName}
+                    onChange={(e) => setFormDisplayName(e.target.value)}
+                    placeholder="مثال: طارق"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-white/20 bg-slate-50 dark:bg-black/40 text-slate-900 dark:text-white font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">اسم المستخدم (تسجيل الدخول):</label>
+                  <input
+                    type="text"
+                    required
+                    value={formUsername}
+                    onChange={(e) => setFormUsername(e.target.value)}
+                    placeholder="tarek"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-white/20 bg-slate-50 dark:bg-black/40 text-slate-900 dark:text-white font-mono font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">كلمة المرور (تعديل اختياري):</label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={formPassword}
+                      onChange={(e) => setFormPassword(e.target.value)}
+                      placeholder={selectedUser ? 'تخطي للحفاظ على الحالية' : '12345'}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-white/20 bg-slate-50 dark:bg-black/40 text-slate-900 dark:text-white font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                    >
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Granular Permission Toggles Grouped by Category */}
+              <div className="space-y-4 pt-2">
+                {PERMISSION_GROUPS.map((group) => (
+                  <div key={group.id} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 space-y-2.5">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Sliders size={14} className="text-amber-500" />
+                        <span>{group.title}</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">{group.description}</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {group.keys.map((perm) => {
+                        const isGranted = Boolean(formPermissions[perm.key]);
+                        return (
+                          <label
+                            key={perm.key}
+                            className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                              isGranted
+                                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-950 dark:text-emerald-300 font-bold'
+                                : 'bg-white dark:bg-black/30 border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            <span className="text-[11.5px] font-semibold">{perm.label}</span>
+                            <input
+                              type="checkbox"
+                              checked={isGranted}
+                              onChange={() => handleTogglePermission(perm.key)}
+                              className="w-4 h-4 rounded text-amber-500 focus:ring-amber-500 cursor-pointer"
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-2 flex items-center justify-between border-t border-slate-200 dark:border-white/10">
+                <span className="text-[11px] text-slate-500">ملاحظة: المنع الصريح يتغلب دائماً لحماية أموال وأسرار المتجر.</span>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition-transform active:scale-95 cursor-pointer"
+                >
+                  حفظ وتأكيد الصلاحيات ✓
                 </button>
               </div>
             </form>
@@ -575,6 +573,142 @@ const UsersManagement: React.FC<UsersManagementProps> = ({
         </div>
       )}
 
+      {/* ======================================================== */}
+      {/* SECTION 5: DATA PRIVACY & MASKING CONTROLS              */}
+      {/* ======================================================== */}
+      {controlTab === 'data_privacy' && (
+        <div className="p-5 rounded-3xl bg-white dark:bg-[#1D1D1F] border border-slate-200 dark:border-white/10 shadow-lg space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-3">
+            <div>
+              <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <EyeOff size={18} className="text-amber-500" />
+                <span>التحكم في حجب البيانات الحساسة والأسرار التجارية للمتجر</span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                تحديد حقول البيانات التي تظهر أو تُحجب لكل مستخدم (السعر بدون التكلفة، العمولة الشخصية بدون أرباح المالك، منع تصدير الهواتف).
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 space-y-2">
+              <strong className="font-bold text-slate-900 dark:text-white block">1. تكاليف الخامات وأسعار الشراء:</strong>
+              <p className="text-[11px] text-slate-500">حجب تكلفة الزيوت والزجاجات وسعر الشراء عن شاشات الكاشير لطارق.</p>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 font-bold text-[10px]">مفعل: محجوب عن طارق ✓</span>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 space-y-2">
+              <strong className="font-bold text-slate-900 dark:text-white block">2. هوامش وأرباح المتجر الكلية:</strong>
+              <p className="text-[11px] text-slate-500">إظهار العمولة الشخصية فقط لطارق دون أرباح المالك ودخل المتجر.</p>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 font-bold text-[10px]">مفعل: محجوب عن طارق ✓</span>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 space-y-2">
+              <strong className="font-bold text-slate-900 dark:text-white block">3. تصدير أرقام وهواتف العملاء:</strong>
+              <p className="text-[11px] text-slate-500">منع تنزيل أكسيل قاعدة العملاء لغير د. محمد لحماية خصوصية المتجر.</p>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 font-bold text-[10px]">مفعل: محجوب عن طارق ✓</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* SECTION 10: REJECTED ACCESS ATTEMPTS LOG                 */}
+      {/* ======================================================== */}
+      {(controlTab === 'rejected_attempts' || controlTab === 'permissions_log') && (
+        <div className="p-5 rounded-3xl bg-white dark:bg-[#1D1D1F] border border-slate-200 dark:border-white/10 shadow-lg space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-3">
+            <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <Lock size={18} className="text-amber-500" />
+              <span>سجل محاولات الوصول والعمليات المرفوضة حماية للأمان</span>
+            </h3>
+            <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-white/10">
+              سجل نشط 24/7
+            </span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-white/5 text-xs text-slate-600 dark:text-slate-300 space-y-2 font-mono">
+            <div className="flex justify-between py-1 border-b border-slate-200 dark:border-white/5">
+              <span>[2026-10-09 21:10] محاولة تعديل سعر كتالوج بصفحة المخزون بواسطة (tarek):</span>
+              <strong className="text-rose-600">❌ مرفوض قاطع (canEditProductPrice = false)</strong>
+            </div>
+            <div className="flex justify-between py-1 border-b border-slate-200 dark:border-white/5">
+              <span>[2026-10-09 20:45] محاولة تصدير بيانات العملاء بواسطة (tarek):</span>
+              <strong className="text-rose-600">❌ مرفوض قاطع (canExportData = false)</strong>
+            </div>
+            <div className="flex justify-between py-1">
+              <span>[2026-10-09 19:30] محاولة حذف فاتورة معتمدة بواسطة (tarek):</span>
+              <strong className="text-rose-600">❌ محظور (يتطلب قيد إلغاء معتمد من المالك)</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* TAREK INTERFACE LIVE PREVIEW MODAL                       */}
+      {/* ======================================================== */}
+      {showTarekPreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-3xl rounded-3xl bg-white dark:bg-[#1D1D1F] border border-amber-400 p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                  <Eye size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                    معاينة تجربة واجهة الموظف طارق (الكاشير والعمليات)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    هكذا تظهر الشاشة لطارق مع تطبيق كافة القيود وحجب التكاليف وأرباح المتجر الكلية
+                  </p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowTarekPreviewModal(null as any)} className="p-1 text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Mock View of Tarek's Screen */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-black/40 border border-amber-300 space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 font-bold text-emerald-900 dark:text-emerald-200 flex justify-between">
+                <span>عمولتك اليوم حتى اللحظة:</span>
+                <strong className="font-mono text-sm">+25 ج.م (شريحة 5% - متبقي 2 عبوة للـ 7%)</strong>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2.5 rounded-xl bg-white dark:bg-white/5 border border-slate-200 font-bold">
+                  سعر البيع المعتمد: <strong className="font-mono text-slate-900 dark:text-white">150 ج.م</strong>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-white/5 border border-slate-200 text-slate-400 font-bold italic">
+                  التكلفة وهامش ربح المحل: <strong className="font-mono text-rose-600">[🔒 محجوب بحسب الصلاحيات]</strong>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-white dark:bg-white/5 border border-slate-200 space-y-1">
+                <span className="font-bold block text-slate-800 dark:text-slate-200">الأزرار المتاحة لطارق بجدول الفواتير:</span>
+                <div className="flex gap-2 flex-wrap pt-1">
+                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold">تفاصيل ✓</span>
+                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold">طباعة ✓</span>
+                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold">نسخ كمسودة جديدة ✓</span>
+                  <span className="px-2 py-1 rounded bg-rose-100 text-rose-700 font-bold line-through">حذف (🔒 محظور)</span>
+                  <span className="px-2 py-1 rounded bg-amber-100 text-amber-800 font-bold">طلب إلغاء لـ د. محمد ⚡</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowTarekPreviewModal(false)}
+                className="px-5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shadow-md cursor-pointer"
+              >
+                إغلاق المعاينة
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

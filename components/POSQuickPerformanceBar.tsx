@@ -31,6 +31,7 @@ interface POSQuickPerformanceBarProps {
   onStartWork: () => void;
   onOpenShortages: () => void;
   onOpenSmartSearch: () => void;
+  onOpenStaffEntitlements?: () => void;
 }
 
 export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
@@ -40,6 +41,7 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
   todayShortageCount,
   onOpenShortages,
   onOpenSmartSearch,
+  onOpenStaffEntitlements,
 }) => {
   const [showSellingPriceStrip, setShowSellingPriceStrip] = useState(false);
 
@@ -91,7 +93,7 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
             <div className="flex items-baseline gap-1.5">
               <span className="text-slate-500 font-semibold">عمولة المبيعات:</span>
               <strong className="font-mono tabular-nums font-black text-sm text-emerald-700">
-                +{todaysEarnedCommission.toFixed(1)} {settings.currency}
+                +{Math.round(todaysEarnedCommission)} {settings.currency}
               </strong>
               <span aria-hidden="true" className="text-slate-300">·</span>
               <span className={`text-[11px] font-mono tabular-nums font-bold ${
@@ -99,6 +101,16 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
               }`}>
                 {isBonusTier7 ? 'شريحة 7% نشطة' : `شريحة 5% (متبقي ${Math.max(0, 11 - todaysBottles)} للـ 7%)`}
               </span>
+              {onOpenStaffEntitlements && (
+                <button
+                  type="button"
+                  onClick={onOpenStaffEntitlements}
+                  className="mr-1.5 px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black transition-colors cursor-pointer"
+                  title="متابعة المسابقات وعمولات الشهر وطلب سحب أو تسوية"
+                >
+                  سحب / تسوية ←
+                </button>
+              )}
             </div>
           </div>
         </div>

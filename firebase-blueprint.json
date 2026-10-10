@@ -287,7 +287,13 @@
         "importanceCategory": { "type": "string" },
         "soundType": { "type": "string" },
         "requiresAcknowledgement": { "type": "boolean" },
-        "acknowledgedBy": { "type": "array" }
+        "acknowledgedBy": { "type": "array" },
+        "repeatMode": { "type": "string" },
+        "repeatDayOfWeek": { "type": "number" },
+        "repeatStartDate": { "type": "string" },
+        "repeatEndDate": { "type": "string" },
+        "repeatTime": { "type": "string" },
+        "repeatDurationWeeks": { "type": "number" }
       },
       "required": ["id", "title", "message", "category", "senderName", "createdAt"]
     }

@@ -415,7 +415,7 @@ export const OperationsSystem: React.FC<OperationsSystemProps> = ({
             </span>
           </div>
           <div className="text-2xl font-black font-mono text-[#1D1D1F]">
-            +{todaysComm.toFixed(1)} <span className="text-xs font-bold text-amber-700">ج.م عمولة</span>
+            +{Math.round(todaysComm)} <span className="text-xs font-bold text-amber-700">ج.م عمولة</span>
           </div>
           <div className="text-[11px] text-[#86868B] flex items-center justify-between pt-1 border-t border-black/[0.04]">
             <span>العبوات المباعة: <strong className="font-mono text-[#1D1D1F]">{todaysBottles} عبوة</strong></span>

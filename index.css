@@ -1692,7 +1692,7 @@ textarea[data-typing-active="true"][data-typing-bg-shift="true"] {
 /* contrast, razor sharpness, and maximum pop against ANY background!    */
 /* ===================================================================== */
 
-/* Universal Baseline Luminous Edge on all typography */
+/* Universal Baseline Crisp Typography on all typography */
 body,
 p,
 span,
@@ -1702,15 +1702,14 @@ label,
 input,
 select,
 textarea {
-  text-shadow:
-    0 0 1px rgba(255, 255, 255, 0.95),
-    0 0.5px 1.5px rgba(255, 255, 255, 0.85);
-  -webkit-text-stroke: 0.16px rgba(15, 23, 42, 0.14);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  text-shadow: none !important;
+  -webkit-text-stroke: 0px !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
 }
 
-/* Prominent Headings & Metrics: Enhanced Luminous Edge & Aura */
+/* Prominent Headings & Metrics: Razor Sharp Crisp Rendering */
 h1,
 h2,
 h3,
@@ -1721,10 +1720,8 @@ h6,
 .font-bold,
 .font-extrabold,
 .font-mono {
-  text-shadow:
-    0 0 1px rgba(255, 255, 255, 0.98),
-    0 0 3px rgba(0, 113, 227, 0.20);
-  -webkit-text-stroke: 0.22px rgba(15, 23, 42, 0.18);
+  text-shadow: none !important;
+  -webkit-text-stroke: 0px !important;
 }
 
 /* In Dark Mode & on Dark Surfaces: Luminous Ethereal Stroke & Glow */
@@ -1737,11 +1734,8 @@ h6,
 [data-theme-mode="dark"] input,
 [data-theme-mode="dark"] select,
 [data-theme-mode="dark"] textarea {
-  text-shadow:
-    0 0 1px rgba(255, 255, 255, 0.70),
-    0 0 3.5px rgba(96, 165, 250, 0.35),
-    0 0 7px rgba(168, 85, 247, 0.22) !important;
-  -webkit-text-stroke: 0.18px rgba(255, 255, 255, 0.35) !important;
+  text-shadow: none !important;
+  -webkit-text-stroke: 0px !important;
 }
 
 [data-theme-mode="dark"] h1,
@@ -1754,14 +1748,11 @@ h6,
 [data-theme-mode="dark"] .font-bold,
 [data-theme-mode="dark"] .font-extrabold,
 [data-theme-mode="dark"] .font-mono {
-  text-shadow:
-    0 0 1.5px rgba(255, 255, 255, 0.85),
-    0 0 5px rgba(56, 189, 248, 0.48),
-    0 0 10px rgba(168, 85, 247, 0.32) !important;
-  -webkit-text-stroke: 0.26px rgba(255, 255, 255, 0.45) !important;
+  text-shadow: none !important;
+  -webkit-text-stroke: 0px !important;
 }
 
-/* Light Surfaces & Light Cards: Crisp Clean Luminous Silhouette */
+/* Light Surfaces & Light Cards: Clean Crisp Silhouette */
 .light-surface,
 .light-surface p,
 .light-surface span,
@@ -1788,10 +1779,8 @@ h6,
 [class*="bg-[#e6e5ef]"] h2,
 [class*="bg-[#e6e5ef]"] h3,
 [class*="bg-[#e6e5ef]"] button {
-  text-shadow:
-    0 0 1px rgba(255, 255, 255, 0.98),
-    0 0 2.5px rgba(255, 255, 255, 0.85) !important;
-  -webkit-text-stroke: 0.2px rgba(15, 23, 42, 0.20) !important;
+  text-shadow: none !important;
+  -webkit-text-stroke: 0px !important;
 }
 
 /* ======================================================== */
@@ -1837,27 +1826,17 @@ h6,
 /* ======================================================== */
 @keyframes luminousEdgePulse {
   0%, 100% {
-    filter: drop-shadow(0 0 1px rgba(0, 113, 227, 0.20));
-    text-shadow: 0 0 1px rgba(255, 255, 255, 0.95), 0 0 3px rgba(0, 113, 227, 0.18);
-    -webkit-text-stroke: 0.22px rgba(15, 23, 42, 0.18);
-  }
-  50% {
-    filter: drop-shadow(0 0 4px rgba(0, 113, 227, 0.55)) drop-shadow(0 0 7px rgba(196, 151, 70, 0.35));
-    text-shadow: 0 0 2px rgba(255, 255, 255, 1), 0 0 6px rgba(0, 113, 227, 0.45), 0 0 10px rgba(196, 151, 70, 0.30);
-    -webkit-text-stroke: 0.26px rgba(0, 113, 227, 0.35);
+    filter: none;
+    text-shadow: none;
+    -webkit-text-stroke: 0px;
   }
 }
 
 @keyframes luminousEdgePulseDark {
   0%, 100% {
-    filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.30));
-    text-shadow: 0 0 1.5px rgba(255, 255, 255, 0.85), 0 0 5px rgba(56, 189, 248, 0.40);
-    -webkit-text-stroke: 0.26px rgba(255, 255, 255, 0.45);
-  }
-  50% {
-    filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.75)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.50));
-    text-shadow: 0 0 2.5px rgba(255, 255, 255, 1), 0 0 8px rgba(56, 189, 248, 0.70), 0 0 14px rgba(168, 85, 247, 0.55);
-    -webkit-text-stroke: 0.32px rgba(255, 255, 255, 0.75);
+    filter: none;
+    text-shadow: none;
+    -webkit-text-stroke: 0px;
   }
 }
 
@@ -1891,14 +1870,15 @@ h6,
   }
 }
 
-/* Interactive Text Pulse on Hover & Focus */
+/* Interactive Text Hover States (Crisp Clean Text) */
 button:hover span,
 button:hover p,
 a:hover span,
 a:hover p,
 .interactive-luminous:hover,
 [data-luminous-interactive]:hover {
-  animation: luminousEdgePulse 2.4s ease-in-out infinite;
+  text-shadow: none !important;
+  filter: none !important;
 }
 
 [data-theme-mode="dark"] button:hover span,
@@ -1907,7 +1887,8 @@ a:hover p,
 [data-theme-mode="dark"] a:hover p,
 [data-theme-mode="dark"] .interactive-luminous:hover,
 [data-theme-mode="dark"] [data-luminous-interactive]:hover {
-  animation: luminousEdgePulseDark 2.4s ease-in-out infinite !important;
+  text-shadow: none !important;
+  filter: none !important;
 }
 
 /* ======================================================== */
@@ -1915,6 +1896,8 @@ a:hover p,
 /* Frosted glass blur + specular highlight + crisp contrast */
 /* ======================================================== */
 .apple-glass {
+  isolation: isolate;
+  position: relative;
   background-color: var(--apple-card);
   backdrop-filter: blur(var(--apple-blur, 22px)) saturate(185%);
   -webkit-backdrop-filter: blur(var(--apple-blur, 22px)) saturate(185%);
@@ -1929,6 +1912,7 @@ a:hover p,
 }
 
 .apple-glass-card {
+  isolation: isolate;
   position: relative;
   background-color: var(--apple-card);
   backdrop-filter: blur(var(--apple-blur, 22px)) saturate(185%);
@@ -1949,6 +1933,8 @@ a:hover p,
 /* Inspired by iOS Navigation & Control Center Aesthetics    */
 /* ======================================================== */
 .apple-glass-halo {
+  isolation: isolate;
+  position: relative;
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(24px) saturate(190%);
   -webkit-backdrop-filter: blur(24px) saturate(190%);
@@ -2055,6 +2041,8 @@ a:hover p,
 }
 
 .apple-glass-dark {
+  isolation: isolate;
+  position: relative;
   background-color: rgba(29, 29, 31, 0.88);
   backdrop-filter: blur(24px) saturate(190%);
   -webkit-backdrop-filter: blur(24px) saturate(190%);
@@ -2071,6 +2059,7 @@ a:hover p,
 
 /* Apple macOS Sequoia Bento Card */
 .apple-bento-card {
+  isolation: isolate;
   position: relative;
   background-color: var(--apple-card);
   backdrop-filter: blur(var(--apple-blur, 22px)) saturate(185%);
@@ -2092,6 +2081,7 @@ a:hover p,
 
 /* Apple Intelligence Ambient Aura Card */
 .apple-intelligence-card {
+  isolation: isolate;
   position: relative;
   background-color: var(--apple-card);
   backdrop-filter: blur(var(--apple-blur, 22px)) saturate(185%);
@@ -2100,6 +2090,24 @@ a:hover p,
   box-shadow: inset 0 1px 1.5px 0 var(--apple-specular, rgba(255, 255, 255, 0.7)),
               0 6px 20px -4px rgba(0, 0, 0, 0.05);
   transition: background-color 0.25s ease, border-color 0.2s ease, box-shadow 0.25s ease;
+}
+
+/* Fallback for Browsers Without Backdrop-Filter Support */
+@supports not (backdrop-filter: blur(1px)) {
+  .apple-glass,
+  .apple-glass-card,
+  .apple-bento-card,
+  .apple-intelligence-card,
+  .apple-glass-halo {
+    background: rgba(255, 255, 255, 0.96) !important;
+  }
+  [data-theme-mode="dark"] .apple-glass,
+  [data-theme-mode="dark"] .apple-glass-card,
+  [data-theme-mode="dark"] .apple-bento-card,
+  [data-theme-mode="dark"] .apple-intelligence-card,
+  [data-theme-mode="dark"] .apple-glass-halo {
+    background: rgba(28, 28, 30, 0.96) !important;
+  }
 }
 
 .apple-intelligence-card:hover {
@@ -2291,25 +2299,27 @@ a:hover p,
 }
 
 /* Smoothly Scrollable Modal Overlays & Windows with Apple Vibrancy Backdrop */
-.fixed.inset-0,
-.smart-modal-overlay {
+.smart-modal-overlay,
+.fixed.inset-0.modal-backdrop-centered,
+.fixed.inset-0:has(> .smart-modal-window) {
   max-height: 100dvh !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding: clamp(0.5rem, 1.8vmin, 1.5rem) !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   backdrop-filter: blur(20px) saturate(185%) !important;
   -webkit-backdrop-filter: blur(20px) saturate(185%) !important;
   animation: appleModalOverlayFade 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Apple Frosted Sheet & Specular Inner Rim for All Modal Windows */
-.fixed.inset-0 > div,
-.smart-modal-window {
+.smart-modal-window,
+.fixed.inset-0:has(> .smart-modal-window) > div,
+.smart-modal-overlay > div {
   max-height: calc(100dvh - clamp(1rem, 3.5vmin, 2.75rem)) !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;

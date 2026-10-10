@@ -305,7 +305,7 @@ export const AppleWelcomeLockScreen: React.FC<AppleWelcomeLockScreenProps> = ({
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.06] border border-white/[0.1] text-xs font-semibold text-amber-300/90 mb-2">
             <span>{greeting}</span>
           </div>
-          <div className="text-5xl sm:text-7xl font-extralight tracking-tight font-sans text-white/95 drop-shadow-sm select-none">
+          <div className="text-5xl sm:text-7xl font-extralight tracking-tight font-sans text-white/95 select-none">
             {timeFormatted}
           </div>
           <div className="text-xs sm:text-sm text-zinc-400 font-medium">

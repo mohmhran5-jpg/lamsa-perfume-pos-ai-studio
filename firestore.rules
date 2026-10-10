@@ -41,6 +41,29 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Staff Entitlements, Commissions, Advances & Settlements
+    match /staff_entitlements/{id} {
+      allow read, write: if true;
+    }
+    match /commission_policies/{id} {
+      allow read, write: if true;
+    }
+    match /staff_advances/{id} {
+      allow read, write: if true;
+    }
+    match /staff_settlements/{id} {
+      allow read, write: if true;
+    }
+    match /staff_incentives/{id} {
+      allow read, write: if true;
+    }
+    match /staff_deductions/{id} {
+      allow read, write: if true;
+    }
+    match /commission_audit_logs/{id} {
+      allow read, write: if true;
+    }
+
     // Production Batches
     match /production_batches/{batchId} {
       allow read, write: if true;

@@ -41,7 +41,12 @@ import {
   Zap,
   Radio,
   User,
+  Clock,
+  Timer,
+  History,
+  CalendarDays,
 } from 'lucide-react';
+import { getSaleRelativeTime } from '../services/relativeTimeService';
 
 export interface ThermalReceiptLiveViewProps {
   sale: Sale;
@@ -1757,11 +1762,24 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                    <div className="p-2 rounded-xl bg-white border border-black/[0.05]">
-                      <span className="text-[9.5px] text-[#86868B] block">رقم الفاتورة والتوقيت</span>
-                      <strong className="font-mono text-[#1D1D1F] block mt-0.5 truncate">
+                    <div className="p-2 rounded-xl bg-white border border-black/[0.05] space-y-1">
+                      <span className="text-[9.5px] text-[#86868B] block">رقم وتوقيت بيع الفاتورة</span>
+                      <strong className="font-mono text-[#1D1D1F] block truncate text-[11px]">
                         #{sale.id.slice(-6)} · {formattedTime}
                       </strong>
+                      {(() => {
+                        const rel = getSaleRelativeTime(sale.date);
+                        return (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border ${rel.badgeClass}`}>
+                            {rel.iconType === 'zap' && <Zap size={9} className="fill-current text-emerald-600" />}
+                            {rel.iconType === 'timer' && <Timer size={9} className="text-sky-600" />}
+                            {rel.iconType === 'clock' && <Clock size={9} className="text-blue-600" />}
+                            {rel.iconType === 'history' && <History size={9} className="text-amber-600" />}
+                            {rel.iconType === 'calendar' && <CalendarDays size={9} className="text-slate-600" />}
+                            <span>{rel.label}</span>
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     <div className="p-2 rounded-xl bg-white border border-black/[0.05]">

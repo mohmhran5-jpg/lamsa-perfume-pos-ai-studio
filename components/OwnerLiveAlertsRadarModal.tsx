@@ -29,7 +29,9 @@ import {
   Check,
   Lock,
   ChevronDown,
-  Filter
+  Filter,
+  RotateCcw,
+  Repeat
 } from 'lucide-react';
 import { soundAlertService } from '../services/soundAlertService';
 import { browserNotificationService } from '../services/browserNotificationService';
@@ -107,6 +109,13 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
   const [customHoursInput, setCustomHoursInput] = useState<string>('');
   const [isCustomDuration, setIsCustomDuration] = useState<boolean>(false);
 
+  // Recurrence & Scheduling State (إعادة التنبيه كل يوم أو كل أسبوع مع تحديد اليوم والتاريخ ومدة التكرار)
+  const [repeatMode, setRepeatMode] = useState<'none' | 'daily' | 'weekly'>('none');
+  const [repeatDayOfWeek, setRepeatDayOfWeek] = useState<number>(() => new Date().getDay());
+  const [repeatStartDate, setRepeatStartDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [repeatTime, setRepeatTime] = useState<string>('09:00');
+  const [repeatDurationWeeks, setRepeatDurationWeeks] = useState<number>(4); // Default 4 weeks (1 month)
+
   // Filter & Search states for Important tab
   const [importantFilter, setImportantFilter] = useState<'all' | 'hours' | 'days' | 'months' | 'permanent'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -172,6 +181,21 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
     return `⏳ متبقي: ${minutes} دقيقة`;
   };
 
+  // Helper: format recurrence details badge (تكرار التنبيه كل يوم أو كل أسبوع)
+  const formatRecurrenceBadge = (b: OwnerStaffBroadcast): string | null => {
+    if (!b.repeatMode || b.repeatMode === 'none') return null;
+    const daysMap = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    const dayName = b.repeatDayOfWeek !== undefined ? daysMap[b.repeatDayOfWeek] : '';
+    const timeStr = b.repeatTime ? ` الساعة ${b.repeatTime}` : '';
+    if (b.repeatMode === 'daily') {
+      return `🔄 يتكرر يومياً${timeStr}`;
+    }
+    if (b.repeatMode === 'weekly') {
+      return `🔄 يتكرر أسبوعياً (كل ${dayName})${timeStr}`;
+    }
+    return null;
+  };
+
   // Helper: copy message text
   const handleCopyText = (text: string, id: string) => {
     navigator.clipboard?.writeText?.(text);
@@ -220,7 +244,7 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
     return broadcasts.filter((b) => b.isImportant).length;
   }, [broadcasts]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !isOwner) return null;
 
   const handleToggleSound = () => {
     const next = !soundEnabled;
@@ -286,6 +310,12 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
         importanceCategory = 'hours';
       }
 
+      let repeatEndDate: string | undefined = undefined;
+      if (repeatMode !== 'none' && repeatDurationWeeks > 0) {
+        const startMs = new Date(repeatStartDate || new Date().toISOString().slice(0, 10)).getTime();
+        repeatEndDate = new Date(startMs + repeatDurationWeeks * 7 * 86400000).toISOString().slice(0, 10);
+      }
+
       const newBroadcast: OwnerStaffBroadcast = {
         id: `ob-${Date.now()}`,
         title: broadcastTitle.trim(),
@@ -301,6 +331,12 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
         soundType,
         requiresAcknowledgement,
         acknowledgedBy: [],
+        repeatMode,
+        repeatDayOfWeek: repeatMode === 'weekly' ? repeatDayOfWeek : undefined,
+        repeatStartDate: repeatMode !== 'none' ? repeatStartDate : undefined,
+        repeatEndDate: repeatMode !== 'none' ? repeatEndDate : undefined,
+        repeatTime: repeatMode !== 'none' ? repeatTime : undefined,
+        repeatDurationWeeks: repeatMode !== 'none' ? repeatDurationWeeks : undefined,
       };
 
       if (onSendBroadcast) {
@@ -538,6 +574,14 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
                             }`}>
                               {formatRemainingDuration(b)}
                             </span>
+
+                            {/* Recurrence Badge (تكرار التنبيه) */}
+                            {formatRecurrenceBadge(b) && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-300 border border-blue-200 dark:border-blue-700/50 flex items-center gap-1 font-mono">
+                                <Repeat size={10} className="text-[#0071E3]" />
+                                <span>{formatRecurrenceBadge(b)}</span>
+                              </span>
+                            )}
                           </div>
 
                           <h4 className="text-sm font-black text-slate-900 dark:text-white pt-0.5">{b.title}</h4>
@@ -691,6 +735,13 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300">
                             {formatRemainingDuration(b)}
                           </span>
+
+                          {formatRecurrenceBadge(b) && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-300 border border-blue-200 dark:border-blue-700/50 flex items-center gap-1 font-mono">
+                              <Repeat size={10} className="text-[#0071E3]" />
+                              <span>{formatRecurrenceBadge(b)}</span>
+                            </span>
+                          )}
 
                           <span className="text-[10px] font-mono text-slate-400">
                             {b.createdAt ? new Date(b.createdAt).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'سابق'}
@@ -929,6 +980,132 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
                         />
                       )}
                     </div>
+                  </div>
+
+                  {/* 3. Recurrence & Scheduling Section (إعادة التنبيه كل يوم أو كل أسبوع مع تحديد اليوم والتاريخ ومدة التكرار) */}
+                  <div className="p-3 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <RotateCcw size={13} className="text-amber-500" />
+                        <span>جدولة وإعادة تكرار التنبيه:</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-0.5 rounded-full border border-amber-300 dark:border-amber-700/50">
+                        {repeatMode === 'none' ? 'مرة واحدة فقط' : repeatMode === 'daily' ? '🔄 يتكرر يومياً' : '📅 يتكرر أسبوعياً'}
+                      </span>
+                    </div>
+
+                    {/* Recurrence Mode Selector */}
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { id: 'none', label: 'بدون تكرار' },
+                        { id: 'daily', label: '🔄 كل يوم (يومي)' },
+                        { id: 'weekly', label: '📅 كل أسبوع (أسبوعي)' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setRepeatMode(m.id as any)}
+                          className={`p-2 rounded-xl text-xs font-bold border transition-all text-center cursor-pointer ${
+                            repeatMode === m.id
+                              ? 'bg-amber-500 text-slate-950 border-amber-500 font-black shadow-xs'
+                              : 'bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/10 hover:border-amber-400'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Day of Week Selector when Weekly is selected */}
+                    {repeatMode === 'weekly' && (
+                      <div className="space-y-1 pt-1 animate-in fade-in duration-150">
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                          تحديد يوم التكرار في الأسبوع:
+                        </label>
+                        <div className="grid grid-cols-4 sm:grid-cols-7 gap-1">
+                          {[
+                            { day: 6, label: 'السبت' },
+                            { day: 0, label: 'الأحد' },
+                            { day: 1, label: 'الإثنين' },
+                            { day: 2, label: 'الثلاثاء' },
+                            { day: 3, label: 'الأربعاء' },
+                            { day: 4, label: 'الخميس' },
+                            { day: 5, label: 'الجمعة' },
+                          ].map((d) => (
+                            <button
+                              key={d.day}
+                              type="button"
+                              onClick={() => setRepeatDayOfWeek(d.day)}
+                              className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center cursor-pointer ${
+                                repeatDayOfWeek === d.day
+                                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-black shadow-xs'
+                                  : 'bg-white dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-white/10 hover:border-amber-400'
+                              }`}
+                            >
+                              {d.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Start Date & Time + Duration Controls (when recurring) */}
+                    {repeatMode !== 'none' && (
+                      <div className="space-y-2 pt-1 animate-in fade-in duration-150 border-t border-slate-200/60 dark:border-white/10">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                              تاريخ بدء التكرار:
+                            </label>
+                            <input
+                              type="date"
+                              value={repeatStartDate}
+                              onChange={(e) => setRepeatStartDate(e.target.value)}
+                              className="w-full p-2 rounded-xl border border-slate-300 dark:border-white/20 text-xs font-bold font-mono text-slate-800 dark:text-white bg-white dark:bg-black/40 focus:ring-2 focus:ring-amber-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                              توقيت إظهار التنبيه:
+                            </label>
+                            <input
+                              type="time"
+                              value={repeatTime}
+                              onChange={(e) => setRepeatTime(e.target.value)}
+                              className="w-full p-2 rounded-xl border border-slate-300 dark:border-white/20 text-xs font-bold font-mono text-slate-800 dark:text-white bg-white dark:bg-black/40 focus:ring-2 focus:ring-amber-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                            مدة استمرار التكرار:
+                          </label>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 text-[10.5px]">
+                            {[
+                              { weeks: 1, label: 'أسبوع (7 أيام)' },
+                              { weeks: 2, label: 'أسبوعين' },
+                              { weeks: 4, label: 'شهر (4 أسابيع)' },
+                              { weeks: 12, label: '3 أشهر (موسمي)' },
+                              { weeks: 0, label: 'دائم ومستمر' },
+                            ].map((w) => (
+                              <button
+                                key={w.weeks}
+                                type="button"
+                                onClick={() => setRepeatDurationWeeks(w.weeks)}
+                                className={`p-1.5 rounded-lg font-bold border transition-all text-center cursor-pointer ${
+                                  repeatDurationWeeks === w.weeks
+                                    ? 'bg-amber-500 text-slate-950 border-amber-500 font-black'
+                                    : 'bg-white dark:bg-white/5 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-white/10 hover:border-amber-400'
+                                }`}
+                              >
+                                {w.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* 3. Sound Effect Selector */}
