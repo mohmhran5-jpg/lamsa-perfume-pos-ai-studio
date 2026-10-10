@@ -94,39 +94,43 @@ service cloud.firestore {
 
     // Strictly Restricted Administrative & Financial Collections (Owner Role Enforcement)
     match /vaults/{vaultId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read, write: if isOwner();
     }
 
     match /settings/{settingId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read: if true;
+      allow write: if isOwner();
     }
 
     match /expenses/{expenseId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read, write: if isOwner();
     }
 
     match /withdrawals/{withdrawalId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read, write: if isOwner();
     }
 
     match /audit_logs/{logId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow create: if true;
+      allow read, update, delete: if isOwner();
     }
 
     match /app_users/{userId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read: if true;
+      allow write: if isOwner();
     }
 
     match /daily_closures/{closureId} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read, write: if isOwner();
     }
 
     match /commission_policies/{id} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read: if true;
+      allow write: if isOwner();
     }
 
     match /commission_audit_logs/{id} {
-      allow read, write: if isOwner() || !isAuthenticated();
+      allow read, write: if isOwner();
     }
 
     // Diagnostics & Connection Check
