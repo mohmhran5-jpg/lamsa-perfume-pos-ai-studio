@@ -415,7 +415,7 @@ export function auditHistoricalCommissionsPeriod(
     // Calculate payouts already executed for this date if tracked
     const paidForDate = (settlements || [])
       .filter((s) => s.employeeName === targetEmployee && s.status === 'تم_الصرف' && s.date.startsWith(dateIso))
-      .reduce((sum, s) => sum + (s.breakdown.commissionEgp || 0), 0);
+      .reduce((sum, s) => sum + (s.breakdown?.commissionEgp || 0), 0);
 
     const recordedVal = existing ? existing.recordedInEntitlementsEgp : (existing ? existing.calculatedCommissionEgp : calc.totalCommissionEgp);
     const delta = Math.round(calc.totalCommissionEgp - recordedVal);
