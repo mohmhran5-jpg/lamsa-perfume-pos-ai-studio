@@ -88,6 +88,7 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
   const [executedBy, setExecutedBy] = useState<string>('د. محمد (المالك)');
   const [transNotes, setTransNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formErrorMessage, setFormErrorMessage] = useState<string | null>(null);
 
   // Printed Voucher State
   const [printedTransaction, setPrintedTransaction] = useState<WithdrawalTransaction | null>(null);
@@ -307,17 +308,18 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
     if (!currentActiveVault || !transAmount || Number(transAmount) <= 0) return;
 
     const amount = Number(transAmount);
+    setFormErrorMessage(null);
 
     // STRICT VALIDATION 1: Cannot withdraw more than available in the specific vault
     if (modalMode === 'withdrawal') {
       if (amount > currentActiveVault.currentBalance) {
-        alert(`❌ ممنوع تجاوز الرصيد المتاح!\n\nالمبلغ المطلوب (${amount} ${settings.currency}) يتجاوز الرصيد المتوفر في هذا البند (${currentActiveVault.currentBalance} ${settings.currency}) بمقدار ${(amount - currentActiveVault.currentBalance).toFixed(1)} ${settings.currency}.\n\nالنظام المالي يمنع السحب بالسالب نهائياً لحماية الموازنة.`);
+        setFormErrorMessage(`❌ ممنوع تجاوز الرصيد المتاح! المبلغ المطلوب (${amount} ${settings.currency}) يتجاوز الرصيد المتوفر في هذا البند (${currentActiveVault.currentBalance} ${settings.currency}) بمقدار ${Math.round(amount - currentActiveVault.currentBalance)} ${settings.currency}.`);
         return;
       }
 
       // STRICT VALIDATION 2: Cannot withdraw profit if fixed budget is not covered
       if (currentActiveVault.id === 'owner_profit' && !financials.isFixedBudgetFullyCovered) {
-        alert(`❌ ممنوع سحب الأرباح قبل اكتمال الموازنة الثابتة!\n\nوفقاً للنظام المالي: لا يوضع ولا يسحب أي ربح إلا بعد توفير تكلفة المخزون والعمولات والموازنة الثابتة (15,000 جنيه).\nالمتبقي لتغطية الموازنة: ${financials.fixedBudgetRemaining.toFixed(1)} جنيه.`);
+        setFormErrorMessage(`❌ ممنوع سحب الأرباح قبل اكتمال الموازنة الثابتة (15,000 جنيه)! المتبقي لتغطية الموازنة: ${Math.round(financials.fixedBudgetRemaining)} جنيه.`);
         return;
       }
     }
@@ -826,7 +828,7 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
               </thead>
               <tbody className="divide-y divide-black/[0.04]">
                 {APPROVED_FIXED_BUDGET_ITEMS.map((item, idx) => {
-                  const percentage = ((item.monthlyAmount / 15000) * 100).toFixed(1);
+                  const percentage = Math.round((item.monthlyAmount / 15000) * 100);
                   return (
                     <tr key={item.id} className="hover:bg-black/[0.015] transition-colors">
                       <td className="py-3 px-3 font-mono text-[#86868B]">{idx + 1}</td>
@@ -1165,12 +1167,22 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
                 </h3>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => {
+                  setFormErrorMessage(null);
+                  setIsModalOpen(false);
+                }}
                 className="w-8 h-8 rounded-full bg-black/[0.05] hover:bg-black/[0.1] flex items-center justify-center text-[#86868B] transition-colors"
               >
                 <X size={16} />
               </button>
             </div>
+
+            {formErrorMessage && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                <AlertOctagon size={16} className="text-rose-600 shrink-0" />
+                <span>{formErrorMessage}</span>
+              </div>
+            )}
 
             {/* Current Balance Banner */}
             <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex items-center justify-between">
@@ -1208,7 +1220,7 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
                   <span>تجاوز مرفوض! المبلغ يتجاوز الرصيد المتاح</span>
                 </div>
                 <p>
-                  المبلغ المطلوب ({Number(transAmount).toLocaleString('ar-EG')} ج.م) يتجاوز الرصيد المتوفر ({currentActiveVault.currentBalance.toLocaleString('ar-EG')} ج.م) بمقدار {(Number(transAmount) - currentActiveVault.currentBalance).toFixed(1)} ج.م. النظام يمنع السحب بالسالب نهائياً.
+                  المبلغ المطلوب ({Number(transAmount).toLocaleString('ar-EG')} ج.م) يتجاوز الرصيد المتوفر ({currentActiveVault.currentBalance.toLocaleString('ar-EG')} ج.م) بمقدار {Math.round(Number(transAmount) - currentActiveVault.currentBalance)} ج.م. النظام يمنع السحب بالسالب نهائياً.
                 </p>
               </div>
             )}

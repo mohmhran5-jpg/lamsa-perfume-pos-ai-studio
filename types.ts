@@ -3851,7 +3851,7 @@ export function calculateSafeLoyaltyRedemption(params: {
   let effectiveMaxPercent = Math.min(60, Math.max(5, Number(s.loyaltyMaxBillDiscountPercent) || 25));
   let effectiveMinMarginEgp = Math.max(10, Number(s.loyaltyMinSafeMarginEgp ?? 10));
 
-  const todayContrib = params.todayNetContribution ?? 600;
+  const todayContrib = params.todayNetContribution ?? 0;
   const breakEvenTarget = params.dailyBreakEvenTarget ?? (s.dailyTargetProfit || 600);
   const isBelowBreakEven = todayContrib < breakEvenTarget;
   const isBreakEvenProtected = Boolean((s.loyaltyProtectBreakEven !== false || s.loyaltyAutoAI !== false) && isBelowBreakEven);
@@ -5359,4 +5359,166 @@ export function run20MandatoryAcceptanceTests(): AcceptanceTestResult[] {
     testCode: `TEST-${String(r.testNumber).padStart(3, '0')}`,
     dataClassification: 'TEST' as const,
   }));
+}
+
+
+// Staff Entitlements, Commissions, Salary & Settlements
+export interface CommissionPolicy {
+  id: string;
+  policyName: string;
+  baseRate: number;
+  tieredRate: number;
+  tierThresholdBottles: number;
+  eligibleTypes: PerfumeType[];
+  isRollOnEligible: boolean;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  approvedBy: string;
+  approvedAt: string;
+  reason: string;
+  isActive: boolean;
+}
+
+export interface StaffBaseSalaryConfig {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  monthlySalaryEgp: number; // Tarek's approved base salary: 1,000 EGP
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  payPeriodFrequency: 'monthly' | 'weekly' | 'custom';
+  approvedBy: string;
+  notes?: string;
+}
+
+export interface StaffIncentive {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  incentiveType: 'حافز أداء' | 'مكافأة' | 'مبلغ تشجيعي' | 'بدل إضافي' | 'أخرى';
+  date: string;
+  relevantPeriodStr: string;
+  reason: string;
+  notes?: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'مصروف' | 'ملغى';
+  createdAt: string;
+}
+
+export interface StaffDeduction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  deductionType: 'خصم تأخير' | 'خصم غياب' | 'جزاء إداري' | 'تسوية عجز' | 'أخرى';
+  date: string;
+  relevantPeriodStr: string;
+  reason: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'منفذ' | 'ملغى';
+  createdAt: string;
+}
+
+export interface StaffAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  date: string;
+  reason: string;
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي' | 'آخر';
+  approvedBy: string;
+  repaymentPlan: string;
+  settledAmountEgp: number;
+  remainingAmountEgp: number;
+  status: 'نشطة' | 'مسواة بالكامل' | 'ملغاة';
+  vaultTransactionId?: string;
+  createdAt: string;
+}
+
+export interface StaffSettlementTransaction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  transactionType: 'سحب_من_المستحقات' | 'سلفة' | 'صرف_راتب' | 'صرف_عمولة' | 'صرف_حافز' | 'تسوية_شاملة';
+  totalAmountEgp: number;
+  breakdown: {
+    commissionEgp?: number;
+    salaryEgp?: number;
+    incentiveEgp?: number;
+    advanceEgp?: number;
+    deductionEgp?: number;
+  };
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي';
+  vaultId?: string;
+  executedBy: string;
+  approvedBy: string;
+  reason: string;
+  notes?: string;
+  status: 'مسودة' | 'بانتظار_الاعتماد' | 'معتمدة_للصرف' | 'تم_الصرف' | 'مرفوضة' | 'ملغاة_بقيد_عكسي';
+  receiptReference?: string;
+  reversalReason?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+}
+
+export interface DailyCommissionAuditRecord {
+  id: string;
+  date: string;
+  employeeId: string;
+  employeeName: string;
+  eligibleSalesCount: number;
+  sprayBottlesCount: number;
+  rollOnBottlesCount: number;
+  bottlesAt5Percent: number;
+  bottlesAt7Percent: number;
+  eligibleNetRevenueEgp: number;
+  calculatedCommissionEgp: number;
+  tier1CommissionEgp: number;
+  tier2CommissionEgp: number;
+  adjustmentsAndReturnsEgp: number;
+  policyIdUsed: string;
+  recordedInEntitlementsEgp: number;
+  alreadyPaidEgp: number;
+  remainingDueEgp: number;
+  auditState: 'معتمدة' | 'تحتاج_مراجعة' | 'فرق_غير_معتمد' | 'لم_تُحتسب_بعد';
+  discrepancyDeltaEgp: number;
+  lastCalculatedAt: string;
+  lastApprovedBy?: string;
+  notes?: string;
+}
+
+export interface CommissionAuditLog {
+  id: string;
+  date: string;
+  employeeName: string;
+  previousCommissionEgp: number;
+  newCorrectCommissionEgp: number;
+  differenceDeltaEgp: number;
+  reason: string;
+  triggeringSaleId?: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface StaffMemberEntitlementSummary {
+  employeeId: string;
+  employeeName: string;
+  monthlyBaseSalaryEgp: number;
+  dailySalaryRateEgp: number;
+  elapsedWorkDaysPeriod: number;
+  isCurrentOngoingPeriod: boolean;
+  earnedSalaryPeriodEgp: number;
+  earnedCommissionsPeriodEgp: number;
+  approvedIncentivesPeriodEgp: number;
+  approvedAdditionsEgp: number;
+  outstandingAdvancesEgp: number;
+  approvedDeductionsEgp: number;
+  totalPreviouslyPaidEgp: number;
+  totalEntitlementsGrossEgp: number;
+  netRemainingBalanceDueEgp: number;
+  pendingApprovalsCount: number;
+  discrepanciesAlertCount: number;
 }

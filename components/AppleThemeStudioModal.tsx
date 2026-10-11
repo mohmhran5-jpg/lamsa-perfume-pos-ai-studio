@@ -319,10 +319,26 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
   const themeBorderRadius = settings.themeBorderRadius || 'rounded';
   const themeContrastLevel = settings.themeContrastLevel || 'standard';
 
+  const PREMIER_THEME_IDS = useMemo(() => new Set([
+    'apple_sonoma_light',
+    'sequoia_midnight_dark',
+    'royal_amber_oud',
+    'neo_precision_2027',
+    'paris_rose_silk',
+    'obsidian_oud_dark'
+  ]), []);
+
+  const [filterToPremierOnly, setFilterToPremierOnly] = useState<boolean>(true);
+
+  const curatedThemePool = useMemo(() => {
+    if (!filterToPremierOnly) return APP_THEMES;
+    return APP_THEMES.filter(t => PREMIER_THEME_IDS.has(t.id));
+  }, [filterToPremierOnly, PREMIER_THEME_IDS]);
+
   const filteredThemes = useMemo(() => {
-    if (selectedCategory === 'all') return APP_THEMES;
-    return APP_THEMES.filter((t) => t.category === selectedCategory);
-  }, [selectedCategory]);
+    if (selectedCategory === 'all') return curatedThemePool;
+    return curatedThemePool.filter((t) => t.category === selectedCategory);
+  }, [selectedCategory, curatedThemePool]);
 
   const fmtPreviewNum = (txt: string) => convertDigitsToSystem(txt, siteNumeralSystem);
 
@@ -1807,10 +1823,26 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
               })}
             </div>
 
-            <span className="text-[11px] font-semibold text-[#86868B] flex items-center gap-1">
-              <Eye size={12} />
-              اضغط على أي بطاقة لتطبيق الثيم فوراً ومعاينته حياً
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFilterToPremierOnly(!filterToPremierOnly)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  filterToPremierOnly
+                    ? 'bg-amber-500/15 text-amber-700 border border-amber-500/30 shadow-2xs'
+                    : 'bg-black/[0.04] text-[#636366] hover:bg-black/[0.08]'
+                }`}
+                title="التبديل بين السمات الستة المعتمدة وعرض جميع السمات"
+              >
+                <Crown size={13} className={filterToPremierOnly ? 'text-amber-600' : 'text-slate-400'} />
+                <span>{filterToPremierOnly ? 'السمات الـ 6 المعتمدة فائقة الوضوح 👑' : 'عرض كافة السمات'}</span>
+              </button>
+
+              <span className="text-[11px] font-semibold text-[#86868B] hidden sm:flex items-center gap-1">
+                <Eye size={12} />
+                معاينة حية فورية
+              </span>
+            </div>
           </div>
 
           {/* Interactive Apple Theme Cards Grid */}

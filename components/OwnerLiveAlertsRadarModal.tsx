@@ -244,7 +244,7 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
     return broadcasts.filter((b) => b.isImportant).length;
   }, [broadcasts]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !isOwner) return null;
 
   const handleToggleSound = () => {
     const next = !soundEnabled;

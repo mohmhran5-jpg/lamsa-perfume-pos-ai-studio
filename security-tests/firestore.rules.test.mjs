@@ -194,6 +194,30 @@ test('the owner retains full access to private financial records', async () => {
   await assertSucceeds(getDoc(doc(owner, 'expenses', 'rent-1')));
 });
 
+test('only the owner can read or write staff salary, commission, and settlement collections', async () => {
+  const owner = googleContext(ownerEmail, 'owner-uid');
+  const tarek = googleContext(tarekEmail, 'tarek-uid');
+  const collections = [
+    'staff_entitlements',
+    'staff_advances',
+    'staff_settlements',
+    'staff_incentives',
+    'staff_deductions',
+    'commission_policies',
+    'commission_audit_logs',
+  ];
+
+  for (const collectionName of collections) {
+    const ownerRef = doc(owner, collectionName, 'private-record');
+    await assertSucceeds(setDoc(ownerRef, { id: 'private-record', amountEgp: 1000 }));
+    await assertSucceeds(getDoc(ownerRef));
+
+    const staffRef = doc(tarek, collectionName, 'private-record');
+    await assertFails(getDoc(staffRef));
+    await assertFails(setDoc(staffRef, { id: 'forged-record', amountEgp: 1 }));
+  }
+});
+
 test('Tarek can use operational sales and stock without accessing owner-only collections', async () => {
   const tarek = googleContext(tarekEmail, 'tarek-uid');
   const sale = await assertSucceeds(getDoc(doc(tarek, 'sales', 'sale-1')));
