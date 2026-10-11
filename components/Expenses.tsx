@@ -158,7 +158,7 @@ const Expenses: React.FC<ExpensesProps> = ({ expenses, setExpenses, settings, sa
   );
   const todaysNetContribution = todaysRevenue - todaysCost - todaysCommission;
   const todaysGrossProfit = todaysNetContribution;
-  const todaysRemainingToBreakEven = hasTodayActualSales ? Math.max(0, dailyFixedExpense - todaysNetContribution) : 0;
+  const todaysRemainingToBreakEven = Math.max(0, dailyFixedExpense - todaysNetContribution);
   const todaysNetProfitAfterExpenses = hasTodayActualSales ? (todaysNetContribution - dailyFixedExpense) : 0;
   const isDailyBreakEvenAchieved = hasTodayActualSales && todaysNetContribution >= dailyFixedExpense;
 
@@ -285,7 +285,7 @@ const Expenses: React.FC<ExpensesProps> = ({ expenses, setExpenses, settings, sa
                 ? 'لا توجد بيانات مبيعات فعلية مسجلة لهذا اليوم. (600 ج هو المخصص التخطيطي اليومي وليس مصروفاً نقدياً يومياً).'
                 : isDailyBreakEvenAchieved 
                   ? `مساهمة اليوم غطت المخصص التخطيطي اليومي (600 ج) وحققت نتيجة تشغيل وفق الموازنة قدرها +${todaysNetProfitAfterExpenses.toFixed(0)} ج.م.`
-                  : `متبقي تحقيق ${todaysRemainingToBreakEven.toFixed(0)} ج.م مساهمة لتغطية المخصص التخطيطي اليومي (600 ج).`}
+                  : `متبقي تحقيق ${Math.max(1, Math.ceil(todaysRemainingToBreakEven))} ج.م مساهمة لتغطية المخصص التخطيطي اليومي (600 ج).`}
             </p>
           </div>
 

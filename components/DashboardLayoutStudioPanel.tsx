@@ -182,7 +182,7 @@ export const DashboardLayoutStudioPanel: React.FC<DashboardLayoutStudioPanelProp
   onNotify,
   onNavigateToDashboard,
 }) => {
-  const isOwner = !currentUser || currentUser.role === 'OWNER';
+  const isOwner = currentUser?.role === 'OWNER';
 
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'مالي' | 'تشغيلي' | 'visible'>('all');
   const [draggedCardId, setDraggedCardId] = useState<DashboardKpiCardId | null>(null);

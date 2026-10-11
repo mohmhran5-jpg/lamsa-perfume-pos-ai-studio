@@ -801,7 +801,10 @@ const POS: React.FC<POSProps> = ({
   // Today's earned commission - ONLY and STRICTLY from successful sales!
   const todaysEarnedCommission = useMemo(() => {
     return todaysSalesList.reduce((sum, s) => {
-      return sum + (s.commissionAmount || (s.totalPrice * ((settings.commissionRate || 5) / 100)));
+      const rate = (settings.commissionRate && settings.commissionRate < 1)
+        ? settings.commissionRate
+        : ((settings.commissionRate || 5) / 100);
+      return sum + (s.commissionAmount !== undefined ? s.commissionAmount : Math.round((s.totalPrice || 0) * rate));
     }, 0);
   }, [todaysSalesList, settings.commissionRate]);
 

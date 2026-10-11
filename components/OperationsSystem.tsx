@@ -273,8 +273,8 @@ export const OperationsSystem: React.FC<OperationsSystemProps> = ({
     (sum, s) => sum + s.items.reduce((acc, it) => acc + (it.quantity || 1), 0),
     0
   );
-  const remainingFor600 = todaysSales.length > 0 ? Math.max(0, 600 - todaysContribution) : 0;
-  const remainingFor1000 = todaysSales.length > 0 ? Math.max(0, 1000 - todaysContribution) : 0;
+  const remainingFor600 = Math.max(0, 600 - todaysContribution);
+  const remainingFor1000 = Math.max(0, 1000 - todaysContribution);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6 pb-12 animate-in fade-in duration-200">
@@ -397,10 +397,14 @@ export const OperationsSystem: React.FC<OperationsSystemProps> = ({
           </div>
           <div className="text-[11px] text-[#86868B] flex items-center justify-between pt-1 border-t border-black/[0.04]">
             <span>
-              {remainingFor600 > 0 ? `متبقي للتعادل: ${Math.round(remainingFor600)} ج` : '✓ تم تأمين التعادل بالكامل'}
+              {todaysSales.length === 0
+                ? 'المستهدف: 600 ج للتعادل'
+                : remainingFor600 > 0
+                ? `متبقي للتعادل: ${Math.max(1, Math.ceil(remainingFor600))} ج`
+                : '✓ تم تأمين التعادل بالكامل'}
             </span>
             <span className="font-mono text-emerald-700 font-bold">
-              للتطويري: {Math.round(remainingFor1000)} ج
+              للتطويري: {Math.max(0, Math.ceil(remainingFor1000))} ج
             </span>
           </div>
         </div>
@@ -432,7 +436,11 @@ export const OperationsSystem: React.FC<OperationsSystemProps> = ({
           </div>
           {remainingFor600 > 0 ? (
             <div className="text-[11px] text-zinc-200 leading-snug space-y-1">
-              <div>لتغطية المتبقي (<strong className="text-amber-300 font-mono">{Math.round(remainingFor600)} ج</strong>) يلزم بيع:</div>
+              <div>
+                {todaysSales.length === 0 ? 'لتغطية تارجت التعادل (' : 'لتغطية المتبقي ('}
+                <strong className="text-amber-300 font-mono">{Math.max(1, Math.ceil(remainingFor600))} ج</strong>
+                ) يلزم بيع:
+              </div>
               <div className="flex flex-wrap gap-1.5 font-mono text-[10px] pt-0.5">
                 <span className="px-2 py-0.5 rounded-lg bg-white/10 text-emerald-300 font-bold">
                   {Math.ceil(remainingFor600 / 46.5)} عبوة 30مل

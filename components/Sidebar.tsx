@@ -269,6 +269,16 @@ const Sidebar: React.FC<SidebarProps> = ({
           iconColor: 'text-[#9A6E23]',
           activeGradient: 'from-[#0F172A] via-[#1E293B] to-[#005A9E]',
         },
+        {
+          id: View.STAFF_ENTITLEMENTS,
+          label: 'مستحقات العاملين والتسويات',
+          shortLabel: 'مستحقات العاملين',
+          icon: Award,
+          badge: 'جديد',
+          iconBg: 'bg-amber-500/15',
+          iconColor: 'text-[#9A6E23]',
+          activeGradient: 'from-[#0F172A] via-[#1E293B] to-[#005A9E]',
+        },
       ],
     },
     {
@@ -282,8 +292,8 @@ const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: View.SETTINGS,
-          label: 'لوحة الإعدادات الشاملة',
-          shortLabel: 'الإعدادات',
+          label: '⚙️ مركز التحكم والإعدادات الإدارية',
+          shortLabel: 'الإعدادات والتحكم',
           icon: Sliders,
           badge: 'المالك',
           iconBg: 'bg-slate-500/10',

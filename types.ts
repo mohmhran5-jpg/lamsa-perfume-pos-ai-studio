@@ -3851,7 +3851,7 @@ export function calculateSafeLoyaltyRedemption(params: {
   let effectiveMaxPercent = Math.min(60, Math.max(5, Number(s.loyaltyMaxBillDiscountPercent) || 25));
   let effectiveMinMarginEgp = Math.max(10, Number(s.loyaltyMinSafeMarginEgp ?? 10));
 
-  const todayContrib = params.todayNetContribution ?? 600;
+  const todayContrib = params.todayNetContribution ?? 0;
   const breakEvenTarget = params.dailyBreakEvenTarget ?? (s.dailyTargetProfit || 600);
   const isBelowBreakEven = todayContrib < breakEvenTarget;
   const isBreakEvenProtected = Boolean((s.loyaltyProtectBreakEven !== false || s.loyaltyAutoAI !== false) && isBelowBreakEven);

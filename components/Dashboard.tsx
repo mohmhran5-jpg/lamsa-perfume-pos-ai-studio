@@ -248,8 +248,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const progressPhase1 = todaysSales.length > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase1) * 100), 100) : 0;
   const progressPhase2 = todaysSales.length > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase2) * 100), 100) : 0;
 
-  // Remaining money to initial contribution target (only when actual sales exist)
-  const remainingToBreakEven = todaysSales.length > 0 ? Math.max(0, targetPhase1 - netContributionToday) : 0;
+  // Remaining money to initial contribution target (correctly reflects 600 EGP when 0 sales or remaining gap)
+  const remainingToBreakEven = Math.max(0, targetPhase1 - netContributionToday);
   const hasRealProfit = todaysSales.length > 0 && netContributionToday >= targetPhase1;
 
   // Essence consumed today
@@ -663,12 +663,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </span>
                 <span className="text-[11px] font-semibold text-slate-500">{dynamicGreeting.salute}</span>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border ${
-                  hasRealProfit
+                  isBreakEvenCovered
                     ? 'bg-emerald-500/10 text-emerald-800 border-emerald-500/25'
                     : 'bg-amber-500/10 text-amber-900 border-amber-500/25'
                 }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${hasRealProfit ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <span>{hasRealProfit ? 'منطقة الربح الصافي' : `متبقي ${remainingToBreakEven.toFixed(0)} ج للتعادل`}</span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${isBreakEvenCovered ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span>
+                    {isBreakEvenCovered
+                      ? (netContributionToday > targetPhase1
+                          ? `منطقة الربح الصافي (+${Math.round(netContributionToday - targetPhase1)} ج)`
+                          : 'تم تحقيق نقطة التعادل بالكامل')
+                      : (todaysSales.length === 0
+                          ? 'المستهدف 600 ج للتعادل'
+                          : `متبقي ${Math.max(1, Math.ceil(remainingToBreakEven))} ج للتعادل`)}
+                  </span>
                 </span>
 
                 {/* Real-time Multi-Device Sync Badge in Owner's Dashboard */}
@@ -834,7 +842,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     ? 'bg-amber-100 text-amber-900'
                     : 'bg-emerald-100 text-emerald-800'
                 }`}>
-                  {aiInsight?.statusBadge || (!hasRealProfit ? 'تحت نقطة التعادل' : 'ربحية آمنة')}
+                  {aiInsight?.statusBadge || (!isBreakEvenCovered ? (todaysSales.length === 0 ? 'مرحلة بدء التشغيل' : 'تحت نقطة التعادل') : 'ربحية آمنة')}
                 </span>
 
                 <button
@@ -852,17 +860,19 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="pt-4 space-y-3.5">
               <div className="space-y-1">
                 <h3 className={`text-sm sm:text-base font-black ${
-                  !hasRealProfit ? 'text-rose-700' : 'text-emerald-800'
+                  !isBreakEvenCovered ? 'text-rose-700' : 'text-emerald-800'
                 }`}>
-                  {aiInsight?.statusTitle || (!hasRealProfit 
+                  {aiInsight?.statusTitle || (!isBreakEvenCovered 
                     ? '⚠️ تركيز الأولوية: تغطية تارجت المساهمة اليومي الثابت (600 ج.م)'
                     : '🎉 أداء متوازن: تم تغطية التعادل والانتقال لتارجت النمو (1,000 ج.م)')}
                 </h3>
                 <p className="text-xs text-[#3A3A3C] leading-relaxed font-medium">
                   {aiInsight?.mainMessage || (
-                    !hasRealProfit 
-                      ? `المتجر يحتاج إلى ${remainingToBreakEven.toFixed(0)} ج.م مساهمة صافية إضافية لتغطية تكلفة تشغيل يوم ${arabicDayName} (حوالي ${Math.max(1, Math.ceil(remainingToBreakEven / 42))} عبوة من حجم 30 أو 50 مل). ركز على ترقية الأحجام والبيع التكميلي لتحقيق التارجت سريعاً.`
-                      : `تم تأمين مصاريف اليوم بالكامل! الفائض المتحقق الآن (+${netProfitAfterDailyExpenses.toFixed(0)} ج.م) يمثل ربحاً حقيقياً خالصاً، والتركيز الآن على بلوغ تارجت الـ 1,000 ج.م ومضاعفة عمولة المبيعات لـ 7%.`
+                    !isBreakEvenCovered 
+                      ? (todaysSales.length === 0
+                          ? `بداية يوم التشغيل (${arabicDayName}): يستهدف المتجر تحقيق 600 ج.م مساهمة صافية لتغطية مخصص المصاريف اليومية الثابتة. ابدأ بتسجيل مبيعات اليوم لتحقيق التارجت.`
+                          : `المتجر يحتاج إلى ${Math.max(1, Math.ceil(remainingToBreakEven))} ج.م مساهمة صافية إضافية لتغطية تكلفة تشغيل يوم ${arabicDayName} (حوالي ${Math.max(1, Math.ceil(remainingToBreakEven / 42))} عبوة من حجم 30 أو 50 مل). ركز على ترقية الأحجام والبيع التكميلي لتحقيق التارجت سريعاً.`)
+                      : `تم تأمين مصاريف اليوم بالكامل! الفائض المتحقق الآن (+${Math.max(0, netProfitAfterDailyExpenses).toFixed(0)} ج.م) يمثل ربحاً حقيقياً خالصاً، والتركيز الآن على بلوغ تارجت الـ 1,000 ج.م ومضاعفة عمولة المبيعات لـ 7%.`
                   )}
                 </p>
               </div>
@@ -973,8 +983,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="p-3 rounded-2xl bg-white/95 border border-[#d8cce8] space-y-2 text-[11px] shadow-2xs">
               <div className="flex items-center justify-between">
                 <span className="text-[#0F172A] font-black">
-                  {!hasRealProfit
-                    ? `متبقي لتغطية تارجت الـ 600 ج: ${Math.round(remainingToBreakEven)} ${settings.currency}`
+                  {!isBreakEvenCovered
+                    ? (todaysSales.length === 0
+                        ? `المستهدف لتغطية التعادل: 600 ${settings.currency}`
+                        : `متبقي لتغطية تارجت الـ 600 ج: ${Math.max(1, Math.ceil(remainingToBreakEven))} ${settings.currency}`)
                     : `تم تغطية الـ 600 ج! متبقي لتارجت الـ 1,000 ج: ${Math.max(0, Math.round(targetPhase2 - netContributionToday))} ${settings.currency}`}
                 </span>
                 <span className="font-mono font-black text-emerald-800">
@@ -1269,10 +1281,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     المخصص التخطيطي اليومي (600 ج) ليس مصروفاً نقدياً ولا يسجل عجزاً قبل بدء المبيعات الفعلية
                                   </p>
                                 </>
-                              ) : hasRealProfit ? (
+                              ) : isBreakEvenCovered ? (
                                 <>
                                   <div className="text-2xl sm:text-3xl font-black text-emerald-600 font-mono">
-                                    +{netProfitAfterDailyExpenses.toFixed(0)}{' '}
+                                    +{Math.max(0, netProfitAfterDailyExpenses).toFixed(0)}{' '}
                                     <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
                                   </div>
                                   <p className="text-[10px] text-emerald-800 mt-1 font-bold">
@@ -1282,7 +1294,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                               ) : (
                                 <>
                                   <div className="text-xl sm:text-2xl font-black text-rose-700 font-mono">
-                                    -{remainingToBreakEven.toFixed(0)} {settings.currency}
+                                    -{Math.max(1, Math.ceil(remainingToBreakEven))} {settings.currency}
                                   </div>
                                   <p className="text-[10px] text-rose-900 mt-1 font-bold">
                                     المساهمة ({netContributionToday.toFixed(0)} ج) ← المخصص التخطيطي (600 ج)
@@ -1294,7 +1306,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                               className={`mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold ${
                                 todaysSales.length === 0
                                   ? 'text-slate-600'
-                                  : hasRealProfit
+                                  : isBreakEvenCovered
                                   ? 'text-emerald-700'
                                   : 'text-rose-700'
                               }`}
@@ -1572,7 +1584,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* LOSS WARNING & MOTIVATIONAL STORE ACTIVATION BANNER     */}
       {/* Displayed strictly when actual sales exist and daily break-even is not reached */}
       {/* ======================================================== */}
-      {todaysSales.length > 0 && !hasRealProfit && isSectionVisible('loss_warning_banner') && (
+      {todaysSales.length > 0 && !isBreakEvenCovered && isSectionVisible('loss_warning_banner') && (
         <div className={`${getSectionOrderClass('loss_warning_banner')} rounded-3xl p-5 sm:p-6 bg-gradient-to-r from-rose-900 via-[#1D1D1F] to-slate-900 text-white shadow-apple-lg border border-rose-500/30 space-y-4`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -1600,7 +1612,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex flex-col items-center sm:items-end gap-2 shrink-0">
               <div className="text-center sm:text-left bg-white/10 p-3 rounded-2xl border border-white/10">
                 <span className="text-[10px] text-gray-400 block font-sans">المتبقي لكسر الخسارة:</span>
-                <span className="font-mono font-black text-2xl text-rose-400">{remainingToBreakEven.toFixed(0)} {settings.currency}</span>
+                <span className="font-mono font-black text-2xl text-rose-400">{Math.max(1, Math.ceil(remainingToBreakEven))} {settings.currency}</span>
                 <span className="text-[10px] text-amber-300 block font-semibold">≈ {bottlesRemainingToBreakEven} زجاجات عطر فقط</span>
               </div>
 
@@ -1816,7 +1828,9 @@ const Dashboard: React.FC<DashboardProps> = ({
               <span>
                 {isBreakEvenCovered 
                   ? `🎉 ممتاز! تم تخطي نقطة التعادل وتغطية مصاريف اليوم بالكامل. يتبقى ${Math.max(0, targetPhase2 - netContributionToday).toFixed(0)} ج.م للوصول للمستهدف الكامل (1000 ج) (~${bottlesRemainingToFullTarget} زجاجات).` 
-                  : `يلزم بيع حوالي ${bottlesRemainingToBreakEven} زجاجات إضافية لتغطية مصاريف اليوم (الـ 600 ج.م).`}
+                  : (todaysSales.length === 0
+                      ? `المستهدف اليومي هو 600 ج.م مساهمة لتغطية المصاريف ونقطة التعادل (~${bottlesRemainingToBreakEven} زجاجة عطر).`
+                      : `يلزم بيع حوالي ${bottlesRemainingToBreakEven} زجاجات إضافية لتغطية مصاريف اليوم (الـ 600 ج.م).`)}
               </span>
               {onNavigate && canAccessView(currentUser ?? null, View.OPERATIONS_SYSTEM) && (
                 <button
