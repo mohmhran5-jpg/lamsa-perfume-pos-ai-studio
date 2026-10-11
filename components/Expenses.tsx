@@ -97,6 +97,7 @@ const Expenses: React.FC<ExpensesProps> = ({ expenses, setExpenses, settings, sa
       'تسويق وإعلان': 0,
       'صيانة ونثريات': 0,
       'مصاريف تشغيل': 0,
+      'رواتب وعمولات': 0,
       'أخرى': 0
     };
     actualPaidExpenses

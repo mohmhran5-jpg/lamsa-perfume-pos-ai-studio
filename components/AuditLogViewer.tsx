@@ -60,6 +60,11 @@ interface AuditLogViewerProps {
   onUpdateSale?: (updatedSale: Sale, previousSale: Sale, adjustStock?: boolean) => void;
   onDeleteSale?: (saleId: string, restoreStock?: boolean, reversalReason?: string, mode?: 'permanent' | 'reverse') => void;
   onAddAuditLog?: (log: AuditLogRecord) => void;
+  hasMoreLogs?: boolean;
+  isLoadingMoreLogs?: boolean;
+  isLoadingAllLogs?: boolean;
+  onLoadMoreLogs?: () => void;
+  onLoadAllLogs?: () => void;
 }
 
 // Rich initial sample audit logs to guarantee rich visualization immediately
@@ -222,7 +227,12 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
   currentUser,
   onUpdateSale,
   onDeleteSale,
-  onAddAuditLog
+  onAddAuditLog,
+  hasMoreLogs = false,
+  isLoadingMoreLogs = false,
+  isLoadingAllLogs = false,
+  onLoadMoreLogs,
+  onLoadAllLogs
 }) => {
   // Navigation & View Mode
   const [viewMode, setViewMode] = useState<'timeline' | 'cards' | 'table'>('timeline');
@@ -535,14 +545,27 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
             </button>
           </div>
 
+          {hasMoreLogs && onLoadAllLogs && (
+            <button
+              type="button"
+              onClick={onLoadAllLogs}
+              disabled={isLoadingAllLogs || isLoadingMoreLogs}
+              className="apple-btn flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-50 text-white text-xs font-bold shadow-2xs transition-all shrink-0"
+              title="تحميل صفحات الأرشيف المتبقية للبحث أو التصدير الكامل"
+            >
+              <Download size={14} />
+              <span>{isLoadingAllLogs ? 'جارٍ تحميل الأرشيف...' : 'تحميل كامل الأرشيف'}</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleExportCSV}
             className="apple-btn flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white border border-black/[0.08] hover:bg-black/[0.04] text-[#1D1D1F] text-xs font-bold shadow-2xs transition-all shrink-0"
-            title="تصدير السجل الكامل بصيغة Excel/CSV"
+            title={hasMoreLogs ? 'يصدّر السجلات المحمّلة فقط؛ حمّل كامل الأرشيف أولاً لتصدير التاريخ كله' : 'تصدير جميع السجلات المحمّلة بصيغة Excel/CSV'}
           >
             <Download size={14} />
-            <span>تصدير CSV</span>
+            <span>{hasMoreLogs ? 'تصدير المعروض' : 'تصدير CSV'}</span>
           </button>
         </div>
       </div>
@@ -565,7 +588,7 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
 
         <div className="flex items-center gap-2 shrink-0">
           <span className="font-mono text-xs font-black text-blue-800 bg-white/90 px-3 py-1.5 rounded-xl border border-blue-200/90 shadow-2xs">
-            {filteredLogs.length} عملية موثقة
+            {filteredLogs.length} عملية مطابقة من السجلات المحمّلة
           </span>
         </div>
       </div>
@@ -587,7 +610,7 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
                 : 'bg-black/[0.04] text-[#86868B] hover:text-[#1D1D1F]'
             }`}
           >
-            الكل ({allLogs.length})
+            الكل ({allLogs.length} محمّلة)
           </button>
 
           <button
@@ -855,6 +878,22 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {(hasMoreLogs || isLoadingMoreLogs) && onLoadMoreLogs && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-2xl bg-blue-50/70 border border-blue-200/70">
+          <p className="text-[11px] text-blue-900 text-center sm:text-right">
+            البحث والتصدير الحاليان يشملان السجلات المحمّلة فقط. استخدم التحميل الكامل للوصول إلى الأرشيف كله.
+          </p>
+          <button
+            type="button"
+            onClick={onLoadMoreLogs}
+            disabled={isLoadingMoreLogs || isLoadingAllLogs}
+            className="px-4 py-2 rounded-xl bg-white hover:bg-blue-100 border border-blue-200 text-blue-900 text-xs font-bold disabled:opacity-50 shrink-0"
+          >
+            {isLoadingMoreLogs ? 'جارٍ تحميل السجلات...' : 'تحميل 100 سجل أقدم'}
+          </button>
         </div>
       )}
 

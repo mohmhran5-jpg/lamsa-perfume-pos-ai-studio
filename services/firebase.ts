@@ -11,6 +11,10 @@ import {
   writeBatch,
   query,
   orderBy,
+  limit,
+  where,
+  startAfter,
+  documentId,
   getDocFromServer
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged, User } from 'firebase/auth';
@@ -753,22 +757,131 @@ export const saveProductionBatchCloud = async (batchRecord: ProductionBatch) => 
 // ========================================================
 // 10. IMMUTABLE AUDIT LOG (سجل التغييرات غير القابل للحذف)
 // ========================================================
-export const subscribeToAuditLogs = (
+const AUDIT_LOG_PAGE_SIZE = 100;
+
+export interface AuditLogPageCursor {
+  timestamp: string;
+  id: string;
+}
+
+export interface AuditLogPage {
+  records: AuditLogRecord[];
+  nextCursor: AuditLogPageCursor | null;
+  hasMore: boolean;
+}
+
+const AUDIT_OPERATING_TIME_ZONE = 'Africa/Cairo';
+const auditOperatingDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: AUDIT_OPERATING_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const getAuditOperatingDateKey = (instant: Date = new Date()): string => {
+  const parts = auditOperatingDateFormatter.formatToParts(instant);
+  const year = parts.find((part) => part.type === 'year')?.value || '0000';
+  const month = parts.find((part) => part.type === 'month')?.value || '01';
+  const day = parts.find((part) => part.type === 'day')?.value || '01';
+  return `${year}-${month}-${day}`;
+};
+
+const getNextAuditOperatingDateKey = (dateKey: string): string => {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+};
+
+const getUtcIsoAtAuditOperatingDayStart = (dateKey: string): string => {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const nominalUtcMidnight = Date.UTC(year, month - 1, day);
+  // Search around nominal UTC midnight for the first instant whose Cairo
+  // calendar date is dateKey. This handles Cairo's UTC+2/+3 offset and DST.
+  let before = nominalUtcMidnight - 36 * 60 * 60 * 1000;
+  let after = nominalUtcMidnight + 36 * 60 * 60 * 1000;
+  while (after - before > 1) {
+    const midpoint = Math.floor((before + after) / 2);
+    if (getAuditOperatingDateKey(new Date(midpoint)) >= dateKey) {
+      after = midpoint;
+    } else {
+      before = midpoint;
+    }
+  }
+  return new Date(after).toISOString();
+};
+
+export const subscribeToTodaysAuditLogs = (
   onUpdate: (logs: AuditLogRecord[]) => void
 ) => {
   const logsCol = collection(db, 'audit_logs');
-  const q = query(logsCol);
+  const attachCurrentOperatingDayListener = () => {
+    const operatingDateKey = getAuditOperatingDateKey();
+    const operatingDayStartUtc = getUtcIsoAtAuditOperatingDayStart(operatingDateKey);
+    const q = query(logsCol, where('timestamp', '>=', operatingDayStartUtc), orderBy('timestamp', 'desc'));
 
-  return onSnapshot(q, (snapshot) => {
-    const list: AuditLogRecord[] = [];
-    snapshot.forEach((docSnap) => {
-      list.push({ ...docSnap.data(), id: docSnap.id } as AuditLogRecord);
+    return onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map((docSnap) => ({
+        ...docSnap.data(),
+        id: docSnap.id,
+      } as AuditLogRecord));
+      onUpdate(list);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'audit_logs');
     });
-    list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
-    onUpdate(list);
-  }, (err) => {
-    handleFirestoreError(err, OperationType.GET, 'audit_logs');
-  });
+  };
+
+  let unsubscribe = attachCurrentOperatingDayListener();
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleOperatingMidnightRefresh = () => {
+    const currentOperatingDate = getAuditOperatingDateKey();
+    const nextOperatingDate = getNextAuditOperatingDateKey(currentOperatingDate);
+    const nextOperatingMidnightUtc = Date.parse(getUtcIsoAtAuditOperatingDayStart(nextOperatingDate));
+    midnightTimer = setTimeout(() => {
+      unsubscribe();
+      unsubscribe = attachCurrentOperatingDayListener();
+      scheduleOperatingMidnightRefresh();
+    }, Math.max(1000, nextOperatingMidnightUtc - Date.now() + 250));
+  };
+  scheduleOperatingMidnightRefresh();
+
+  return () => {
+    if (midnightTimer) clearTimeout(midnightTimer);
+    unsubscribe();
+  };
+};
+
+export const loadAuditLogsPage = async (
+  cursor: AuditLogPageCursor | null = null
+): Promise<AuditLogPage> => {
+  const logsCol = collection(db, 'audit_logs');
+  const q = cursor
+    ? query(
+        logsCol,
+        orderBy('timestamp', 'desc'),
+        orderBy(documentId(), 'desc'),
+        startAfter(cursor.timestamp, cursor.id),
+        limit(AUDIT_LOG_PAGE_SIZE)
+      )
+    : query(
+        logsCol,
+        orderBy('timestamp', 'desc'),
+        orderBy(documentId(), 'desc'),
+        limit(AUDIT_LOG_PAGE_SIZE)
+      );
+  const snapshot = await getDocs(q);
+  const records = snapshot.docs.map((docSnap) => ({
+    ...docSnap.data(),
+    id: docSnap.id,
+  } as AuditLogRecord));
+  const lastDoc = snapshot.docs.at(-1);
+  const lastTimestamp = lastDoc?.get('timestamp');
+
+  return {
+    records,
+    nextCursor: lastDoc
+      ? { timestamp: typeof lastTimestamp === 'string' ? lastTimestamp : String(lastTimestamp ?? ''), id: lastDoc.id }
+      : cursor,
+    hasMore: snapshot.docs.length === AUDIT_LOG_PAGE_SIZE,
+  };
 };
 
 export const addAuditLogCloud = async (logRecord: AuditLogRecord) => {
@@ -1195,37 +1308,61 @@ export const subscribeToConnectedDevices = (
   onUpdate: (devices: ConnectedDeviceRecord[]) => void
 ) => {
   const devicesCol = collection(db, 'connected_devices');
-  return onSnapshot(
+  const activeWindowMs = 3 * 60 * 1000;
+  const queryStartCutoff = Date.now() - activeWindowMs;
+  // Fetch recent presence records on the server. There is no numeric cap, so
+  // every active device remains visible while old presence documents stay untouched.
+  const devicesQuery = query(
     devicesCol,
+    where('lastSeenMs', '>=', queryStartCutoff),
+    orderBy('lastSeenMs', 'desc')
+  );
+  let latestDevices: ConnectedDeviceRecord[] = [];
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const publishActiveDevices = () => {
+    if (expiryTimer) clearTimeout(expiryTimer);
+    const now = Date.now();
+    const activeDevices = latestDevices.filter(
+      (device) => device.isOnline !== false && (device.lastSeenMs || 0) > now - activeWindowMs
+    );
+
+    // Sort with current device first, then newest active.
+    const localId = getLocalDeviceId();
+    activeDevices.sort((a, b) => {
+      if (a.deviceId === localId) return -1;
+      if (b.deviceId === localId) return 1;
+      return (b.lastSeenMs || 0) - (a.lastSeenMs || 0);
+    });
+    onUpdate(activeDevices);
+
+    const nextExpiry = activeDevices.reduce((earliest, device) => {
+      const expiresAt = (device.lastSeenMs || 0) + activeWindowMs;
+      return Math.min(earliest, expiresAt);
+    }, Number.POSITIVE_INFINITY);
+    if (Number.isFinite(nextExpiry)) {
+      expiryTimer = setTimeout(publishActiveDevices, Math.max(250, nextExpiry - Date.now() + 25));
+    }
+  };
+
+  const unsubscribe = onSnapshot(
+    devicesQuery,
     (snapshot) => {
-      const now = Date.now();
-      const cutoff = now - 65 * 1000; // active within the last 65 seconds
-      const activeDevices: ConnectedDeviceRecord[] = [];
-
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as ConnectedDeviceRecord;
-        if (data && data.isOnline !== false && (data.lastSeenMs || 0) > cutoff) {
-          activeDevices.push({
-            ...data,
-            deviceId: docSnap.id,
-          });
-        }
-      });
-
-      // Sort with current device first, then newest active
-      const localId = getLocalDeviceId();
-      activeDevices.sort((a, b) => {
-        if (a.deviceId === localId) return -1;
-        if (b.deviceId === localId) return 1;
-        return (b.lastSeenMs || 0) - (a.lastSeenMs || 0);
-      });
-
-      onUpdate(activeDevices);
+      latestDevices = snapshot.docs.map((docSnap) => ({
+        ...docSnap.data(),
+        deviceId: docSnap.id,
+      } as ConnectedDeviceRecord));
+      publishActiveDevices();
     },
     (err) => {
       handleFirestoreError(err, OperationType.GET, 'connected_devices');
     }
   );
+
+  return () => {
+    if (expiryTimer) clearTimeout(expiryTimer);
+    unsubscribe();
+  };
 };
 
 /**
@@ -1312,9 +1449,5 @@ export const acknowledgeOwnerBroadcastCloud = async (
     }
   }
 };
-
-
-
-
 
 
