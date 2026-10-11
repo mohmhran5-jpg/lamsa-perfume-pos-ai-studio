@@ -1407,8 +1407,8 @@ export interface StoreSettings {
   monthlyTargetRevenue: number; // Target monthly sales
   monthlyFixedBudget: number; // 15,000 EGP safe fixed budget
   monthlyWorkDays: number; // 25 days
-  employeeBaseSalary: number; // 1,500 EGP for Tarek
-  ownerSalary: number; // 10,000 EGP for Dr. Mohamed
+  employeeBaseSalary: number; // 1,000 EGP for Tarek
+  ownerSalary: number; // 10,500 EGP for Dr. Mohamed
   commissionRate: number; // 5%
   tieredCommissionRate: number; // 7% above threshold
   tieredThresholdBottles: number; // 10 spray bottles per day
@@ -1619,7 +1619,7 @@ export interface StaffAttendanceRecord {
   checkOutTime?: string;
   openedStore: boolean; // فتح المتجر وتأكيد الحضور
   status: 'حاضر وفتح المتجر' | 'حاضر' | 'غياب' | 'إجازة';
-  dailyBaseSalary: number; // 60 EGP (1,500 / 25)
+  dailyBaseSalary: number; // 40 EGP (1,000 / 25)
   isSalaryVested: boolean; // true - يستحق الراتب الأساسي بمجرد الحضور وفتح المتجر حتى لو لم تتم أي عملية بيع
   salesCount: number; // عدد عمليات البيع الناجحة لليوم
   todaysSalesTotal: number; // إجمالي مبيعات اليوم
@@ -1754,7 +1754,7 @@ export type VaultType =
   | 'restock'      // ① قسم تكلفة المخزون وإعادة الشراء 🧴 (قيمة البضاعة المباعة - سحب فوري في أي وقت لشراء زيوت وزجاجات)
   | 'commissions'  // ② قسم مخصص العمولات 💸 (تكلفة متغيرة 5% على المبيعات لصرف مستحقات البيع)
   | 'rent'         // ③.1 مخصص الإيجار 🏪 (1,200 ج.م شهرياً / 48 ج.م يومياً)
-  | 'salaries'     // ③.2 مخصص الرواتب 👤 (11,500 ج.م: د. محمد 10,000 + طارق 1,500)
+  | 'salaries'     // ③.2 مخصص الرواتب 👤 (11,500 ج.م: د. محمد 10,500 + طارق 1,000)
   | 'utilities'    // ③.3 فواتير وتشغيل ⚡ (2,000 ج.م: كهرباء 800 + نت 300 + نقل 300 + تشغيل 300 + مياه 100 + خط 100 + نظافة 100)
   | 'contingency'  // ③.4 احتياطي الهالك والتالف 🛡️ (300 ج.م شهرياً / 12 ج.م يومياً)
   | 'owner_profit' // ④ قسم الأرباح الصافية الحرة للمالك 📈 (لا يوضع فيه إلا بعد توفير المخزون والعمولات والموازنة الـ 15,000)
@@ -1811,8 +1811,8 @@ export const APPROVED_FIXED_BUDGET_ITEMS: FixedBudgetItem[] = [
   { id: 'cleaning', name: '🧹 النظافة', category: 'utilities', monthlyAmount: 100, dailyRate: 4, icon: 'Sparkles' },
   { id: 'transport', name: '🚚 النقل', category: 'utilities', monthlyAmount: 300, dailyRate: 12, icon: 'Truck' },
   { id: 'operations', name: '📦 مصاريف تشغيل أخرى', category: 'utilities', monthlyAmount: 300, dailyRate: 12, icon: 'Box' },
-  { id: 'salary_owner', name: '👤 مخصص الإدارة والإشراف العام', category: 'salaries', monthlyAmount: 10000, dailyRate: 400, icon: 'UserCheck' },
-  { id: 'salary_tarek', name: '👤 مخصص التشغيل والمبيعات الأساسي', category: 'salaries', monthlyAmount: 1500, dailyRate: 60, icon: 'User' },
+  { id: 'salary_owner', name: '👤 مخصص الإدارة والإشراف العام', category: 'salaries', monthlyAmount: 10500, dailyRate: 420, icon: 'UserCheck' },
+  { id: 'salary_tarek', name: '👤 مخصص التشغيل والمبيعات الأساسي', category: 'salaries', monthlyAmount: 1000, dailyRate: 40, icon: 'User' },
   { id: 'reserve_spoilage', name: '🛡️ احتياطي (هالك/تالف/فاقد)', category: 'contingency', monthlyAmount: 300, dailyRate: 12, icon: 'ShieldAlert' },
 ];
 
@@ -1933,8 +1933,8 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   monthlyTargetRevenue: 28000,
   monthlyFixedBudget: 15000, // 15,000 EGP Approved Safe Monthly Budget
   monthlyWorkDays: 25, // 25 Days Planning Basis
-  employeeBaseSalary: 1500, // Tarek Base Salary
-  ownerSalary: 10000, // Dr. Mohamed
+  employeeBaseSalary: 1000, // Tarek Base Salary
+  ownerSalary: 10500, // Dr. Mohamed
   commissionRate: 0.05, // 5%
   tieredCommissionRate: 0.07, // 7%
   tieredThresholdBottles: 10,
@@ -4855,8 +4855,8 @@ export interface FixedMonthlyBudgetItem {
  * §1 & §2: جدول المصروفات والالتزامات الثابتة الشهرية المعتمدة (14,700 معلومة + 300 احتياطي = 15,000 ج.م | 600 ج/يوم على 25 يوم عمل)
  */
 export const DEFAULT_FIXED_MONTHLY_BUDGET_ITEMS: FixedMonthlyBudgetItem[] = [
-  { id: 'budget-owner', title: 'مرتب الدكتور (المالك)', monthlyAmount: 10000, dailyShare25Days: 400, category: 'رواتب' },
-  { id: 'budget-tarek', title: 'مرتب طارق الأساسي', monthlyAmount: 1500, dailyShare25Days: 60, category: 'رواتب' },
+  { id: 'budget-owner', title: 'مرتب الدكتور (المالك)', monthlyAmount: 10500, dailyShare25Days: 420, category: 'رواتب' },
+  { id: 'budget-tarek', title: 'مرتب طارق الأساسي', monthlyAmount: 1000, dailyShare25Days: 40, category: 'رواتب' },
   { id: 'budget-rent', title: 'إيجار المحل', monthlyAmount: 1200, dailyShare25Days: 48, category: 'إيجار' },
   { id: 'budget-electricity', title: 'الكهرباء', monthlyAmount: 800, dailyShare25Days: 32, category: 'فواتير ومرافق' },
   { id: 'budget-internet', title: 'الإنترنت', monthlyAmount: 300, dailyShare25Days: 12, category: 'فواتير ومرافق' },

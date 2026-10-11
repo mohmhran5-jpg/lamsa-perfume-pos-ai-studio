@@ -3705,7 +3705,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   }}
                   className="w-full h-10 px-3 rounded-xl bg-white border border-black/[0.08] font-bold"
                 >
-                  <option value="owner_salary">1. راتب مالك (من مخصص الـ 10,000 ج)</option>
+                  <option value="owner_salary">1. راتب مالك (من مخصص الـ 10,500 ج)</option>
                   <option value="owner_profit">2. أرباح مسحوبة (بعد اكتمال الـ 15k)</option>
                   <option value="restock">3. شراء مخزون وخامات (تعويض رأس المال)</option>
                   <option value="utilities">4. مصروف تشغيلي / فواتير</option>

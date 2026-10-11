@@ -806,9 +806,9 @@ const POS: React.FC<POSProps> = ({
     return todaysSalesList.reduce((sum, s) => sum + (s.totalPrice || 0), 0);
   }, [todaysSalesList]);
 
-  // Daily fixed salary for Tarek (60 EGP) - unconditionally earned upon attendance/store opening!
+  // Daily fixed salary for Tarek (40 EGP) - unconditionally earned upon attendance/store opening!
   const dailyBaseSalary = useMemo(() => {
-    const monthlySalary = settings.employeeBaseSalary || 1500;
+    const monthlySalary = settings.employeeBaseSalary || 1000;
     const workDays = settings.monthlyWorkDays || 25;
     return Math.round(monthlySalary / workDays);
   }, [settings.employeeBaseSalary, settings.monthlyWorkDays]);
