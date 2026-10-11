@@ -78,7 +78,7 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
 }) => {
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<'today' | 'important' | 'broadcast' | 'radar' | 'history'>('today');
-  
+
   // Audio & Notification permissions
   const [soundEnabled, setSoundEnabled] = useState<boolean>(soundAlertService.isEnabled());
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
@@ -100,7 +100,7 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
   const [broadcastCategory, setBroadcastCategory] = useState<'urgent' | 'target' | 'instruction' | 'reward'>('urgent');
   const [targetEmployee, setTargetEmployee] = useState('all');
   const [requiresAcknowledgement, setRequiresAcknowledgement] = useState(true);
-  
+
   // Advanced Settings State (Default duration: 8 hours!)
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(true);
   const [durationHours, setDurationHours] = useState<number>(8); // Default 8 hours
@@ -163,10 +163,10 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
     if (b.isImportant && (!b.expiresAt || b.durationHours === 0)) {
       return '♾️ دائم ومثبت للرجوع إليه';
     }
-    const expiry = b.expiresAt 
-      ? new Date(b.expiresAt).getTime() 
+    const expiry = b.expiresAt
+      ? new Date(b.expiresAt).getTime()
       : (b.createdAt ? new Date(b.createdAt).getTime() + (b.durationHours || 8) * 3600 * 1000 : null);
-    
+
     if (!expiry) return '♾️ دائم';
     const remainingMs = expiry - Date.now();
     if (remainingMs <= 0) return '⚠️ انتهت الصلاحية التلقائية';
@@ -211,7 +211,7 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
   const importantBroadcasts = useMemo(() => {
     return broadcasts.filter((b) => {
       if (!b.isImportant && b.category !== 'urgent') return false;
-      
+
       // Filter by duration category if specified
       if (importantFilter !== 'all') {
         const cat = b.importanceCategory;
@@ -289,12 +289,12 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
 
     setIsSending(true);
     try {
-      const finalDuration = isCustomDuration && customHoursInput 
+      const finalDuration = isCustomDuration && customHoursInput
         ? Math.max(1, parseInt(customHoursInput, 10) || 8)
         : durationHours;
 
       // Calculate auto-expiration time (default 8 hours)
-      const expiresAt = finalDuration > 0 
+      const expiresAt = finalDuration > 0
         ? new Date(Date.now() + finalDuration * 3600 * 1000).toISOString()
         : undefined;
 
@@ -364,7 +364,7 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
       setSendSuccessMessage('تم إرسال التنبيه ودفع الإشعار للموظفين بنجاح وتوثيق مدة الصلاحية!');
       setBroadcastTitle('');
       setBroadcastMessage('');
-      
+
       setTimeout(() => {
         setSendSuccessMessage(null);
         setActiveTab(isImportant ? 'important' : 'today');
@@ -568,8 +568,8 @@ export const OwnerLiveAlertsRadarModal: React.FC<OwnerLiveAlertsRadarModalProps>
                             </span>
 
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              isExpired 
-                                ? 'bg-slate-100 dark:bg-white/10 text-slate-500' 
+                              isExpired
+                                ? 'bg-slate-100 dark:bg-white/10 text-slate-500'
                                 : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
                             }`}>
                               {formatRemainingDuration(b)}

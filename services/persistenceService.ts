@@ -151,6 +151,24 @@ export function persistDataDurable<T>(storageKey: string, data: T): void {
   pendingPersistTimers.set(storageKey, timer);
 }
 
+/** Replace a persisted dataset before opening another authenticated account. */
+export async function replaceDataDurable<T>(storageKey: string, data: T): Promise<void> {
+  const existing = pendingPersistTimers.get(storageKey);
+  if (existing) clearTimeout(existing);
+  pendingPersistTimers.delete(storageKey);
+  pendingPersistPayloads.delete(storageKey);
+
+  const serialized = JSON.stringify(data);
+  localStorage.setItem(storageKey, serialized);
+  markLocalWriteTimestamp(storageKey);
+  await idbSet(storageKey, data);
+
+  const persisted = await idbGet<T>(storageKey);
+  if (persisted !== null && JSON.stringify(persisted) !== serialized) {
+    throw new Error(`IndexedDB verification failed for ${storageKey}.`);
+  }
+}
+
 /**
  * Reads data synchronously from localStorage with fallback.
  */

@@ -862,13 +862,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <h3 className={`text-sm sm:text-base font-black ${
                   !isBreakEvenCovered ? 'text-rose-700' : 'text-emerald-800'
                 }`}>
-                  {aiInsight?.statusTitle || (!isBreakEvenCovered 
+                  {aiInsight?.statusTitle || (!isBreakEvenCovered
                     ? '⚠️ تركيز الأولوية: تغطية تارجت المساهمة اليومي الثابت (600 ج.م)'
                     : '🎉 أداء متوازن: تم تغطية التعادل والانتقال لتارجت النمو (1,000 ج.م)')}
                 </h3>
                 <p className="text-xs text-[#3A3A3C] leading-relaxed font-medium">
                   {aiInsight?.mainMessage || (
-                    !isBreakEvenCovered 
+                    !isBreakEvenCovered
                       ? (todaysSales.length === 0
                           ? `بداية يوم التشغيل (${arabicDayName}): يستهدف المتجر تحقيق 600 ج.م مساهمة صافية لتغطية مخصص المصاريف اليومية الثابتة. ابدأ بتسجيل مبيعات اليوم لتحقيق التارجت.`
                           : `المتجر يحتاج إلى ${Math.max(1, Math.ceil(remainingToBreakEven))} ج.م مساهمة صافية إضافية لتغطية تكلفة تشغيل يوم ${arabicDayName} (حوالي ${Math.max(1, Math.ceil(remainingToBreakEven / 42))} عبوة من حجم 30 أو 50 مل). ركز على ترقية الأحجام والبيع التكميلي لتحقيق التارجت سريعاً.`)

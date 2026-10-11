@@ -1,4 +1,4 @@
-import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
+import { GoogleAuthProvider, reauthenticateWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from './firebase';
 import {
   Sale,
@@ -57,7 +57,14 @@ export const googleWorkspaceSignIn = async (): Promise<{
   try {
     isSigningIn = true;
     provider.setCustomParameters({ prompt: 'consent' });
-    const result = await signInWithPopup(auth, provider);
+    const appUser = auth.currentUser;
+    if (!appUser || appUser.isAnonymous || !appUser.email) {
+      throw new Error('يجب تسجيل الدخول بحساب المتجر قبل ربط تقارير Google.');
+    }
+    const result = await reauthenticateWithPopup(appUser, provider);
+    if (result.user.uid !== appUser.uid || result.user.email !== appUser.email) {
+      throw new Error('يجب أن يطابق حساب التقارير هوية الدخول المعتمدة للمتجر.');
+    }
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('لم يتم استلام رمز الصلاحية (Access Token) من حساب جوجل.');
@@ -907,4 +914,3 @@ export async function flushOfflineReportQueue(
 
   return { sentCount, remainingCount: remaining, whatsappDispatched };
 }
-

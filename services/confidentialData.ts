@@ -9,9 +9,10 @@ type FieldPolicy = readonly string[] | FieldPolicyMap;
 
 const policies: Record<string, FieldPolicy> = {
   sales: {
-    '*': ['id','items','totalPrice','date','customerName','customerPhone','paymentMethod','transactionType','discount','loyaltyPointsRedeemed','loyaltyDiscountAmount','loyaltyPointsEarned','customerLoyaltyBalanceAfter','packagingOptionId','packagingRevenueEgp','isBasicBagReplacedByLuxury','notes','employeeName','source','timestamp','transactionId','deviceTimestamp','serverTimestamp','isOfflineCreated','isReversed','originalSaleId','reversalReason','reversedBy','reversedAt','dataClassification','isTestData','testClassificationNote'],
+    '*': ['id','items','totalPrice','date','customerName','customerPhone','paymentMethod','transactionType','discount','loyaltyPointsRedeemed','loyaltyDiscountAmount','loyaltyPointsEarned','customerLoyaltyBalanceAfter','packagingOptionId','packagingRevenueEgp','isBasicBagReplacedByLuxury','notes','employeeName','source','timestamp','transactionId','deviceTimestamp','serverTimestamp','isOfflineCreated','isReversed','originalSaleId','reversalReason','reversedBy','reversedAt','dataClassification','isTestData','testClassificationNote','createdByUid','itemCount','itemsSchemaVersion','itemsReady'],
     items: { '*': ['id','compositionType','isMix','customFormulaName','productId','productName','productType','bottleSize','essenceGrams','sellingPrice','quantity','isColoredBottle','isRollOn','alcoholMl','fixativeGrams'] },
   },
+  sale_items: ['id','lineItemId','saleId','itemIndex','createdByUid','compositionType','isMix','customFormulaName','productId','productName','productType','bottleSize','essenceGrams','sellingPrice','quantity','isColoredBottle','isRollOn','alcoholMl','fixativeGrams'],
   products: {
     '*': ['id','name','brand','origin','gender','season','timeOfDay','type','stock_grams','min_threshold_grams','customSellingPriceOverride','analysis','strategicThresholdGrams','occasions','fragranceProfileId','isSavedMixRecipe','updatedAt'],
     analysis: ['topNotes','heartNotes','baseNotes','mainAccords','bestSeason','bestTime','longevity','sillage','salesPitch','layeringSuggestion'],
@@ -98,4 +99,30 @@ function restore(publicData: ConfidentialDocument, privateData: ConfidentialDocu
 /** Restore the owner's complete data; private values always override public copies. */
 export function mergeConfidentialDocument(_collectionName: string, publicData: ConfidentialDocument, privateData: ConfidentialDocument): ConfidentialDocument {
   return restore(publicData, privateData);
+}
+
+const operationalCostFields: Record<string, readonly string[]> = {
+  sales: ['totalCost', 'commissionAmount', 'totalCommission'],
+  sale_items: ['cost'],
+  products: ['customGramCostEgp'],
+  settings: [
+    'priceEssenceNormal', 'priceEssenceNiche', 'priceEssenceSpecial',
+    'defaultBottleCost', 'standardBottleAndSprayCost', 'coloredBottleCost',
+    'coloredBottleExtraCost', 'stickerCost', 'basicBagCost', 'basicPlasticBagCost',
+    'commissionRate', 'tieredCommissionRate', 'tieredThresholdBottles',
+    'tieredCommissionBottleThreshold',
+  ],
+  bottleSizes: ['bottleCost', 'officialCost', 'alcoholCost', 'fixativeCost'],
+  saved_mixes: ['totalCost'],
+};
+
+/** Cost-only projection for authorized staff; never includes profit, budgets, or editable settings. */
+export function extractOperationalCostData(collectionName: string, record: ConfidentialDocument): ConfidentialDocument {
+  const result: ConfidentialDocument = {};
+  for (const field of operationalCostFields[collectionName] || []) {
+    if (Object.prototype.hasOwnProperty.call(record, field) && record[field] !== undefined) {
+      result[field] = record[field];
+    }
+  }
+  return result;
 }

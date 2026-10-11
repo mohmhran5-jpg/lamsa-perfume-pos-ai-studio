@@ -1,54 +1,38 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
-  AppUser, 
-  Sale, 
-  Expense, 
-  StoreSettings, 
-  Product, 
-  DailyClosure, 
-  View, 
-  DEFAULT_USERS, 
-  OWNER_FULL_PERMISSIONS, 
-  TAREK_OPERATIONAL_PERMISSIONS, 
-  resolveActiveAppTheme, 
-  isActualPaidOperationalExpense, 
-  isLiveProductionSale, 
-  calculateDailyAccountingSeparation 
-} from '../types';
+import { AppUser, Sale, Expense, StoreSettings, Product, DailyClosure, View, resolveActiveAppTheme, isActualPaidOperationalExpense, isLiveProductionSale, calculateDailyAccountingSeparation } from '../types';
 import { AppleNotificationItem } from './AppleTopNotificationBanner';
 import SmartFragranceSearchModal from './SmartFragranceSearchModal';
 import { 
   Crown, 
-  ArrowLeftRight, 
-  Lock, 
-  KeyRound, 
-  X, 
-  CheckCircle2, 
-  FileText, 
-  Download, 
-  Bell, 
-  Copy, 
-  Check, 
-  Eye, 
-  EyeOff, 
-  Delete, 
-  ShoppingBag, 
-  Wallet, 
-  AlertCircle, 
-  Info, 
-  Palette, 
-  Radio,
-  Award,
-  Search,
-  Clock,
+  Lock,
+  Unlock,
+  X,
+  CheckCircle2,
+  FileText,
+  Download,
+  Bell,
+  BellRing,
+  Copy,
+  Check,
+  TrendingUp,
+  ShoppingBag,
+  Wallet,
+  Pause,
+  Play,
+  AlertCircle,
+  Info,
+  Palette,
   ChevronDown,
-  Layers,
+  Search,
   Sparkles,
-  LogOut,
+  Layers,
+  Clock,
   Sliders,
-  Store
+  Store,
+  LogOut,
+  Radio
 } from 'lucide-react';
-import { verifyPassword, normalizePasswordInput, canAccessView } from '../services/authService';
+import { canAccessView } from '../services/authService';
 
 export type TickerNotificationKind = 'error' | 'success' | 'info';
 
@@ -91,9 +75,7 @@ export const getTickerNotificationTheme = (type: TickerNotificationKind) => {
 
 interface ExecutiveHeaderBarProps {
   currentUser: AppUser | null;
-  users: AppUser[];
-  onSwitchUser: (user: AppUser) => void;
-  onOpenAuthModal: () => void;
+  onSignOut: () => void;
   onOpenDayOperations: () => void;
   onLockScreen?: () => void;
   sales?: Sale[];
@@ -116,9 +98,7 @@ interface ExecutiveHeaderBarProps {
 
 export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(({
   currentUser,
-  users,
-  onSwitchUser,
-  onOpenAuthModal,
+  onSignOut,
   onOpenDayOperations,
   onLockScreen,
   sales = [],
@@ -138,33 +118,15 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   onOpenConnectedDevices,
   onUpdateSettings,
 }) => {
-  const isOwner = currentUser?.role === 'OWNER' || currentUser?.username === 'mohamed' || currentUser?.id === 'owner_mohamed';
-  const tarekUser = useMemo(() => {
-    const found = users.find(u => u.username === 'tarek' || u.id === 'sales_tarek' || u.role === 'STORE_MANAGER');
-    return found
-      ? { ...DEFAULT_USERS[1], ...found, role: 'STORE_MANAGER' as const, isActive: true, permissions: TAREK_OPERATIONAL_PERMISSIONS }
-      : DEFAULT_USERS[1];
-  }, [users]);
-  const ownerUser = useMemo(() => {
-    const found = users.find(u => u.role === 'OWNER' || u.username === 'mohamed' || u.id === 'owner_mohamed');
-    return found
-      ? { ...DEFAULT_USERS[0], ...found, role: 'OWNER' as const, isActive: true, permissions: OWNER_FULL_PERMISSIONS }
-      : DEFAULT_USERS[0];
-  }, [users]);
+  const activeTheme = useMemo(() => resolveActiveAppTheme(settings), [settings]);
+  const isOwner = currentUser?.role === 'OWNER';
 
-  const pinInputRef = useRef<HTMLInputElement | null>(null);
+  const [isTickerPaused, setIsTickerPaused] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const toolsMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Modal & Menu States
   const [isProfilePopoverOpen, setIsProfilePopoverOpen] = useState(false);
   const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
-  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [showPinText, setShowPinText] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
 
   // Daily Report Modal
   const [showDailyReportModal, setShowDailyReportModal] = useState(false);
@@ -355,140 +317,42 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     }
   };
 
-  // Quick switch from Owner to Tarek
-  const handleQuickSwitchToTarek = () => {
-    setIsProfilePopoverOpen(false);
-    if (tarekUser) {
-      onSwitchUser({ ...tarekUser, requiresPasswordChange: false });
-    } else {
-      onOpenAuthModal();
-    }
-  };
+  // Build real-time semantic notifications for the unified top ticker across all pages
+  const smartTickerMessages = useMemo<SmartTopTickerMessage[]>(() => {
+    const list: SmartTopTickerMessage[] = [];
 
-  // Open Owner switch modal
-  const handleSwitchToOwnerClick = () => {
-    setIsProfilePopoverOpen(false);
-    setPasswordInput('');
-    setPasswordError(null);
-    setShowPinText(false);
-    setShowPasswordPrompt(true);
-  };
-
-  const executeOwnerUnlock = () => {
-    if (!ownerUser) return;
-    onSwitchUser({
-      ...ownerUser,
-      requiresPasswordChange: false,
-      lastLoginAt: new Date().toISOString()
+    // 1. Include any active/recent top notifications mapped to semantic (error | success | info)
+    topNotifications.forEach((n) => {
+      const mappedType: TickerNotificationKind =
+        n.type === 'stock' || n.type === 'warning'
+          ? 'error'
+          : n.type === 'sale' || n.type === 'auth'
+          ? 'success'
+          : 'info';
+      list.push({
+        id: `live-notif-${n.id}`,
+        type: mappedType,
+        tag: n.badgeText || (mappedType === 'error' ? 'تنبيه' : mappedType === 'success' ? 'نجاح' : 'معلومة'),
+        text: n.subtitle ? `${n.title} — ${n.subtitle}` : n.title,
+      });
     });
-    setShowPasswordPrompt(false);
-    setPasswordInput('');
-    setPasswordError(null);
-  };
 
-  const handleInputChange = async (rawVal: string) => {
-    setPasswordInput(rawVal);
-    setPasswordError(null);
-    const normalized = normalizePasswordInput(rawVal);
-    const digitsOnly = normalized.replace(/\D/g, '');
-    if (normalized === '5188' || digitsOnly === '5188') {
-      executeOwnerUnlock();
-    }
-  };
-
-  useEffect(() => {
-    if (!showPasswordPrompt) return;
-    const focusTimer = window.setTimeout(() => {
-      pinInputRef.current?.focus();
-    }, 40);
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowPasswordPrompt(false);
-        return;
-      }
-      const activeTag = document.activeElement?.tagName;
-      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
-
-      const normalizedKey = normalizePasswordInput(e.key);
-      if (/^[0-9]$/.test(normalizedKey)) {
-        e.preventDefault();
-        setPasswordInput((prev) => {
-          if (prev.length >= 8) return prev;
-          const next = prev + normalizedKey;
-          const normNext = normalizePasswordInput(next);
-          if (normNext === '5188' || normNext.replace(/\D/g, '') === '5188') {
-            window.setTimeout(() => executeOwnerUnlock(), 10);
-          }
-          return next;
-        });
-        setPasswordError(null);
-      } else if (e.key === 'Backspace') {
-        e.preventDefault();
-        setPasswordInput((prev) => prev.slice(0, -1));
-        setPasswordError(null);
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        handleVerifyOwnerPassword();
-      }
-    };
-
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  }, [showPasswordPrompt, ownerUser]);
-
-  const handleVerifyOwnerPassword = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!ownerUser) return;
-
-    const normalized = normalizePasswordInput(passwordInput);
-    if (!normalized) {
-      setPasswordError('يرجى إدخال رمز المرور الخاص بالإدارة');
-      return;
-    }
-
-    if (normalized === '5188') {
-      executeOwnerUnlock();
-      return;
-    }
-
-    setIsVerifying(true);
-    setPasswordError(null);
-
-    try {
-      const isValid = await verifyPassword(normalized, ownerUser.passwordHash, ownerUser);
-      if (isValid) {
-        executeOwnerUnlock();
-      } else {
-        setPasswordError('رمز المرور غير صحيح، يرجى المحاولة مرة أخرى');
-      }
-    } catch {
-      if (normalized === '5188') {
-        executeOwnerUnlock();
-      } else {
-        setPasswordError('رمز المرور غير صحيح');
-      }
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
-  const handleKeypadDigit = (digit: string) => {
-    if (passwordInput.length >= 8) return;
-    const next = passwordInput + digit;
-    handleInputChange(next);
-  };
-
-  // Single quiet current status headline for Dynamic Island
-  const currentStatusHeadline = useMemo(() => {
-    if (currentClosure?.status !== 'مفتوح') {
-      return {
-        text: 'يوم التشغيل مغلق — اضغط على زر الوردية لتسجيل عهدة البداية',
-        type: 'error' as const,
-      };
+    // 2. Shift & Daily Closure Status
+    const isShiftOpen = currentClosure?.status === 'مفتوح';
+    if (!isShiftOpen) {
+      list.push({
+        id: 'shift-closed-error',
+        type: 'error',
+        tag: 'تنبيه الوردية',
+        text: 'يوم التشغيل مغلق حالياً — اضغط «الدرج» لفتح الوردية وتفعيل تسجيل المبيعات.',
+      });
+    } else {
+      list.push({
+        id: 'shift-open-success',
+        type: 'success',
+        tag: 'الوردية نشطة',
+        text: 'الوردية مفتوحة ومتصلة بالسحابة — يتم حفظ الفواتير وحركة الجرامات لحظياً.',
+      });
     }
     if (todayReportData.todaysSalesCount > 0) {
       return {
@@ -500,6 +364,20 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       text: 'المتجر متصل بالسحابة والوردية نشطة وجاهزة لتسجيل المبيعات',
       type: 'info' as const,
     };
+  }, [currentClosure?.status, todayReportData.todaysSalesCount, todayReportData.totalSalesRevenue, currency]);
+
+  // Single quiet current status headline for Dynamic Island
+  const currentStatusHeadline = useMemo(() => {
+    if (currentClosure?.status !== 'مفتوح') {
+      return { text: 'يوم التشغيل مغلق — اضغط على زر الوردية لتسجيل عهدة البداية', type: 'error' as const };
+    }
+    if (todayReportData.todaysSalesCount > 0) {
+      return {
+        text: `تم تسجيل ${todayReportData.todaysSalesCount} فاتورة اليوم بإجمالي ${todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} ${currency}`,
+        type: 'success' as const,
+      };
+    }
+    return { text: 'المتجر متصل بالسحابة والوردية نشطة وجاهزة لتسجيل المبيعات', type: 'info' as const };
   }, [currentClosure?.status, todayReportData.todaysSalesCount, todayReportData.totalSalesRevenue, currency]);
 
   // Main accessible views list for the Segmented Navigation Dock
@@ -532,7 +410,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
             {/* RIGHT SIDE: Avatar Badge & Profile Capsule Pill */}
             <div className="flex items-center gap-2 shrink-0 relative" ref={popoverRef}>
               {/* Circular Logo Badge */}
-              <div 
+              <div
                 className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center p-1.5 shrink-0 select-none hover:scale-105 transition-transform"
                 title={storeName}
               >
@@ -551,19 +429,19 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 type="button"
                 onClick={() => setIsProfilePopoverOpen(!isProfilePopoverOpen)}
                 className="apple-pill-btn halo-gold h-11 sm:h-12 px-3.5 sm:px-4 min-w-[150px] sm:min-w-[190px] justify-between group"
-                title="إدارة الحساب وتبديل المستخدم"
+                title="عرض الحساب الموثق"
               >
                 <div className="text-right min-w-0">
                   <div className={`text-xs sm:text-[13px] font-black truncate leading-tight ${isOwner ? 'text-[#C49746]' : 'text-[#0071E3]'}`}>
-                    {isOwner ? 'أهلاً د. محمد' : 'أهلاً طارق'}
+                    {currentUser?.displayName ? `أهلاً ${currentUser.displayName}` : 'حساب غير مسجل'}
                   </div>
                   <div className="text-[10px] text-[#86868B] font-medium truncate mt-0.5 leading-none">
-                    {isOwner ? 'الإدارة العامة' : (currentUser?.phone || '01008518800 · كاشير')}
+                    {currentUser?.authEmail || (isOwner ? 'حساب Google للمالك' : 'موظف معتمد عبر Google')}
                   </div>
                 </div>
-                <ChevronDown 
-                  size={14} 
-                  className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform duration-200 ${isProfilePopoverOpen ? 'rotate-180 text-[#0071E3]' : ''}`} 
+                <ChevronDown
+                  size={14}
+                  className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform duration-200 ${isProfilePopoverOpen ? 'rotate-180 text-[#0071E3]' : ''}`}
                 />
               </button>
 
@@ -572,18 +450,18 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               {/* ------------------------------------------------ */}
               {isProfilePopoverOpen && (
                 <>
-                  <div 
-                    className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
-                    onClick={() => setIsProfilePopoverOpen(false)} 
+                  <div
+                    className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity"
+                    onClick={() => setIsProfilePopoverOpen(false)}
                   />
-                  <div 
+                  <div
                     className="absolute top-full mt-2.5 right-0 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-3.5 space-y-3 animate-in fade-in zoom-in-95 duration-150"
                     dir="rtl"
                   >
                     {/* Current Active Account Header */}
                     <div className="flex items-center gap-3 pb-3 border-b border-black/[0.06]">
                       <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-sm text-white shadow-apple-xs ${isOwner ? 'bg-[#1D1D1F] border border-[#C49746]/50' : 'bg-[#0071E3]'}`}>
-                        {isOwner ? <Crown size={18} className="text-[#C49746] fill-[#C49746]" /> : 'ط'}
+                        {isOwner ? <Crown size={18} className="text-[#C49746] fill-[#C49746]" /> : (currentUser?.displayName?.trim().charAt(0) || 'م')}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
@@ -593,45 +471,17 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                           <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] shrink-0" />
                         </div>
                         <span className="text-[11px] text-[#86868B] block truncate">
-                          {isOwner ? 'كامل صلاحيات الإدارة العامة' : 'مسؤول المبيعات وتشغيل الكاشير'}
+                          {isOwner ? 'كامل صلاحيات الإدارة العامة' : 'حساب موظف معتمد'}
                         </span>
                       </div>
                     </div>
 
-                    {/* Switch Account Quick Action */}
-                    <div className="space-y-1.5">
-                      <span className="text-[10px] font-bold text-[#86868B] px-1 block">تبديل المستخدم السريع:</span>
-                      {isOwner ? (
-                        <button
-                          type="button"
-                          onClick={handleQuickSwitchToTarek}
-                          className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-blue-50/80 border border-black/[0.05] hover:border-blue-200 flex items-center justify-between text-xs font-bold text-[#1D1D1F] transition-all cursor-pointer"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded-full bg-blue-100 text-[#0071E3] flex items-center justify-center text-xs font-black">ط</span>
-                            <div className="text-right">
-                              <span className="block font-bold">حساب طارق</span>
-                              <span className="text-[9.5px] text-[#86868B]">كاشير ومبيعات مباشر</span>
-                            </div>
-                          </div>
-                          <ArrowLeftRight size={13} className="text-[#0071E3]" />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleSwitchToOwnerClick}
-                          className="w-full p-2.5 rounded-2xl bg-[#1D1D1F] hover:bg-black text-white border border-[#C49746]/30 flex items-center justify-between text-xs font-bold transition-all cursor-pointer shadow-apple-xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Crown size={15} className="text-[#C49746] fill-[#C49746]" />
-                            <div className="text-right">
-                              <span className="block text-amber-300 font-bold">دخول الإدارة العامة</span>
-                              <span className="text-[9.5px] text-zinc-400">رمز المرور السري</span>
-                            </div>
-                          </div>
-                          <Lock size={13} className="text-[#C49746]" />
-                        </button>
-                      )}
+                    {/* Verified Google account only; local account switching is intentionally unavailable. */}
+                    <div className="rounded-2xl bg-slate-50 border border-black/[0.05] p-3 space-y-1">
+                      <span className="text-[10px] font-bold text-[#86868B] block">حساب Google المعتمد</span>
+                      <span className="text-xs font-mono text-[#1D1D1F] block truncate" dir="ltr">
+                        {currentUser?.authEmail || 'لا يوجد بريد موثق'}
+                      </span>
                     </div>
 
                     {/* Quick Controls Grid */}
@@ -663,22 +513,19 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                           <span>{settings?.siteNumeralSystem === 'ar' ? 'الأرقام: ١٢٣' : 'Numbers: 123'}</span>
                         </button>
                       )}
-                    </div>
-
-                    {/* General Auth Modal / User Switch */}
-                    <div className="pt-2 border-t border-black/[0.05]">
                       <button
                         type="button"
                         onClick={() => {
                           setIsProfilePopoverOpen(false);
-                          onOpenAuthModal();
+                          onSignOut();
                         }}
-                        className="w-full py-2 rounded-xl text-rose-600 hover:bg-rose-50 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        className="col-span-2 p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                       >
-                        <LogOut size={13} />
-                        <span>إدارة المستخدمين وتسجيل الخروج</span>
+                        <LogOut size={12} />
+                        <span>تسجيل الخروج</span>
                       </button>
                     </div>
+
                   </div>
                 </>
               )}
@@ -714,7 +561,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               </button>
 
               {/* 3. Labeled Notifications Capsule (رادار المالك للمالك - وقسم العمولات لطارق) */}
-              {isOwner ? (
+              {isOwner && (
                 <button
                   type="button"
                   onClick={onOpenLiveAlertsRadar}
@@ -725,31 +572,18 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                   <span className="hidden sm:inline">رادار التنبيهات</span>
                   <span className="w-2 h-2 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse shrink-0" />
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onNavigate && onNavigate(View.STAFF_ENTITLEMENTS)}
-                  className="apple-pill-btn halo-blue h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
-                  title="قسم مستحقات طارق وعمولات اليوم وتوجيهات العمل"
-                >
-                  <Award size={15} className="text-[#0071E3] shrink-0" strokeWidth={2} />
-                  <span className="hidden sm:inline">عمولاتي ومستحقاتي</span>
-                  <span className="w-2 h-2 rounded-full bg-[#0071E3] ring-2 ring-white animate-pulse shrink-0" />
-                </button>
               )}
 
-              {/* 4. Settings & Control Hub Capsule (حصر ظهوره للمالك فقط - محجوب عن حساب طارق لمنع التشتت) */}
-              {isOwner && (
-                <button
-                  type="button"
-                  onClick={() => onNavigate?.(View.SETTINGS)}
-                  className={`apple-pill-btn halo-amber h-11 px-3 sm:px-3.5 text-xs font-bold relative ${currentView === View.SETTINGS ? 'bg-[#1D1D1F] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
-                  title="مركز التحكم والإعدادات الإدارية"
-                >
-                  <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
-                  <span className="hidden sm:inline">الإعدادات والتحكم</span>
-                </button>
-              )}
+              {/* 4. Settings & Control Hub Capsule */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.(View.SETTINGS)}
+                className={`apple-pill-btn halo-amber h-11 px-3 sm:px-3.5 text-xs font-bold relative ${currentView === View.SETTINGS ? 'bg-[#1D1D1F] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
+                title="مركز التحكم والإعدادات الإدارية"
+              >
+                <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
+                <span className="hidden sm:inline">الإعدادات والتحكم</span>
+              </button>
 
               {/* 4. CONSOLIDATED TOOLS MENU CAPSULE (دمج الأزرار في قائمة موحدة لمنع الزحام) */}
               <div className="relative" ref={toolsMenuRef}>
@@ -767,11 +601,11 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 {/* Dropdown Tools Sheet */}
                 {isToolsMenuOpen && (
                   <>
-                    <div 
-                      className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
-                      onClick={() => setIsToolsMenuOpen(false)} 
+                    <div
+                      className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity"
+                      onClick={() => setIsToolsMenuOpen(false)}
                     />
-                    <div 
+                    <div
                       className="absolute top-full mt-2.5 left-0 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150"
                       dir="rtl"
                     >
@@ -908,15 +742,26 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               <ChevronDown size={12} className="text-[#86868B] shrink-0" />
             </button>
 
-            {/* LEFT SIDE: Invoices Log Capsule */}
+            {onLockScreen && (
+              <button
+                type="button"
+                onClick={onLockScreen}
+                className="apple-btn px-2 py-1 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.06] text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                title="قفل الشاشة فوراً"
+              >
+                <Lock size={12} className="text-amber-500" />
+                <span className="hidden sm:inline">قفل</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => onNavigate?.(View.REPORTS)}
-              className={`apple-pill-btn halo-blue h-9 px-3 sm:px-3.5 text-xs font-bold ${currentView === View.REPORTS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
-              title="سجل الفواتير والعمليات المعتمدة"
+              onClick={onSignOut}
+              className="apple-btn px-2.5 py-1 rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-[#1D1D1F] border border-black/[0.06] text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+              title="تسجيل الخروج ثم الدخول بحساب Google المعتمد"
             >
-              <Clock size={14} className={currentView === View.REPORTS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
-              <span>سجل الفواتير</span>
+              <Lock size={12} className="text-slate-500" />
+              <span>خروج</span>
             </button>
           </div>
 
@@ -925,7 +770,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
           {/* ---------------------------------------------------- */}
           {onNavigate && (
             <div className="pt-1 border-t border-black/[0.04]">
-              <nav 
+              <nav
                 aria-label="التنقل السريع"
                 className="flex items-center gap-1.5 p-1 rounded-full bg-black/[0.03] overflow-x-auto no-scrollbar scroll-smooth"
               >
@@ -1076,106 +921,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* OWNER PIN VERIFICATION KEYPAD MODAL                      */}
-      {/* ======================================================== */}
-      {showPasswordPrompt && (
-        <div className="fixed inset-0 z-[130] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="apple-glass rounded-[28px] p-6 w-full max-w-sm border border-black/[0.1] shadow-apple-lg space-y-4 bg-white/95">
-            <div className="flex items-center justify-between pb-3 border-b border-black/[0.06]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-2xl bg-[#1D1D1F] text-[#C49746] flex items-center justify-center shadow-xs">
-                  <Crown size={18} className="fill-[#C49746]" />
-                </div>
-                <div>
-                  <h4 className="font-black text-sm text-[#1D1D1F]">دخول الإدارة العامة (د. محمد)</h4>
-                  <span className="text-[11px] text-[#86868B]">أدخل رمز المرور السري الخاص بالإدارة</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPasswordPrompt(false)}
-                className="w-8 h-8 rounded-full bg-black/[0.05] hover:bg-black/[0.1] flex items-center justify-center text-[#86868B] cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleVerifyOwnerPassword} className="space-y-3.5">
-              <div>
-                <div className="relative" dir="ltr" data-keep-numerals="true">
-                  <input
-                    ref={pinInputRef}
-                    type={showPinText ? 'text' : 'password'}
-                    inputMode="numeric"
-                    autoFocus
-                    value={passwordInput}
-                    onChange={(e) => handleInputChange(e.target.value)}
-                    placeholder="••••"
-                    className="w-full h-12 px-10 rounded-2xl bg-[#F5F5F7] border border-black/[0.1] focus:border-[#0071E3] focus:bg-white text-center font-mono text-xl font-black tracking-[0.35em] text-[#1D1D1F] outline-none transition-all placeholder:tracking-widest placeholder:text-gray-400"
-                  />
-                  <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#86868B] pointer-events-none" />
-                  <button
-                    type="button"
-                    onClick={() => setShowPinText(!showPinText)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#86868B] hover:text-[#1D1D1F] cursor-pointer"
-                    title={showPinText ? 'إخفاء الرمز' : 'إظهار الرمز'}
-                  >
-                    {showPinText ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-                {passwordError && (
-                  <p className="text-[11px] text-[#FF3B30] font-bold mt-1.5 text-center">{passwordError}</p>
-                )}
-              </div>
-
-              <div dir="ltr" data-keep-numerals="true" className="grid grid-cols-3 gap-2 select-none">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => {
-                  const isClear = k === 'C';
-                  const isBack = k === '⌫';
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => {
-                        if (isClear) {
-                          setPasswordInput('');
-                          setPasswordError(null);
-                        } else if (isBack) {
-                          setPasswordInput(prev => prev.slice(0, -1));
-                          setPasswordError(null);
-                        } else {
-                          handleKeypadDigit(k);
-                        }
-                      }}
-                      className={`h-11 rounded-xl font-mono font-bold text-base transition-all flex items-center justify-center cursor-pointer active:scale-95 ${
-                        isClear
-                          ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-sans font-black'
-                          : isBack
-                          ? 'bg-black/[0.05] hover:bg-black/[0.1] text-[#1D1D1F]'
-                          : 'bg-[#F5F5F7] hover:bg-black/[0.08] text-[#1D1D1F] shadow-2xs border border-black/[0.04]'
-                      }`}
-                    >
-                      {isClear ? 'مسح' : isBack ? <Delete size={17} /> : k}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="pt-1">
-                <button
-                  type="submit"
-                  disabled={isVerifying || !passwordInput.trim()}
-                  className="apple-btn w-full py-3 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-40 text-white text-xs font-black shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <CheckCircle2 size={15} />
-                  <span>{isVerifying ? 'جاري التحقق...' : 'تأكيد الدخول كإدارة عامة'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </>
   );
 });

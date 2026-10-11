@@ -12,8 +12,6 @@ import OperationsSystem from './components/OperationsSystem';
 import AIMarketing from './components/AIMarketing';
 import FinancialVaults from './components/FinancialVaults';
 import ProductFormulationEngine from './components/ProductFormulationEngine';
-import AuthModal from './components/AuthModal';
-import PasswordChangeModal from './components/PasswordChangeModal';
 import UsersManagement from './components/UsersManagement';
 import DayOperationsModal from './components/DayOperationsModal';
 import InventoryIntelligence from './components/InventoryIntelligence';
@@ -29,7 +27,6 @@ import InteractiveTypingController from './components/InteractiveTypingControlle
 import OwnerLiveAlertsRadarModal from './components/OwnerLiveAlertsRadarModal';
 import PWAInstallModal from './components/PWAInstallModal';
 import ConnectedDevicesSyncModal from './components/ConnectedDevicesSyncModal';
-import StaffEntitlements from './components/StaffEntitlements';
 import { soundAlertService } from './services/soundAlertService';
 import { browserNotificationService } from './services/browserNotificationService';
 import { 
@@ -59,9 +56,6 @@ import {
   DEFAULT_SETTINGS, 
   DEFAULT_BOTTLE_SIZES,
   DEFAULT_VAULTS,
-  DEFAULT_USERS,
-  OWNER_FULL_PERMISSIONS,
-  TAREK_OPERATIONAL_PERMISSIONS,
   resolveActiveAppTheme,
   isActualPaidOperationalExpense,
   isLiveProductionSale,
@@ -70,6 +64,7 @@ import {
 } from './types';
 import {
   persistDataDurable,
+  replaceDataDurable,
   loadDataSync,
   hydrateFromIndexedDBIfNeeded,
   mergeCollectionRecords,
@@ -113,6 +108,7 @@ import {
   saveAllVaultsCloud,
   addWithdrawalCloud,
   addSaleCloud,
+  updateSaleMetadataCloud,
   deleteSaleCloud,
   deleteSaleAndRestoreInventoryCloud,
   saveProductCloud,
@@ -143,17 +139,28 @@ import {
   subscribeToSavedMixes,
   saveSavedMixCloud,
   deleteSavedMixCloud,
-  subscribeToConnectedDevices,
-  publishDevicePresence,
-  markDeviceOfflineCloud,
-  getLocalDeviceId,
-  isVirtualDemoCustomer,
-  posRealtimeChannel,
+  subscribeToDevicePresence,
   subscribeToOwnerBroadcasts,
   sendOwnerBroadcastCloud,
   acknowledgeOwnerBroadcastCloud,
+  startDevicePresenceTracking,
+  subscribeConfidentialMigrationStatus,
+  migrateConfidentialDataToOwnerPrivate,
+  sanitizeOperationalRecord,
+  toOperationalSettings,
+  onFirebaseAuthStateChanged,
+  loadAuthorizedAppUser,
+  isTransientFirebaseError,
+  getGoogleSignInErrorMessage,
+  signOutFirebaseUser,
+  getCurrentFirebaseUser,
+  type DevicePresenceRecord,
+  type ConfidentialMigrationStatus,
+  type ConfidentialMigrationResult,
+  isVirtualDemoCustomer,
+  posRealtimeChannel
 } from './services/firebase';
-import { getSessionUser, saveSessionUser, canAccessView, hasPermission, logRejectedAccessAttempt } from './services/authService';
+import { canAccessView, logRejectedAccessAttempt } from './services/authService';
 import { Lock, Radio, CheckCircle2, X, Sparkles, Star, Clock, Hourglass, ExternalLink, Repeat } from 'lucide-react';
 
 // Seed Data
@@ -408,107 +415,28 @@ const App: React.FC = () => {
     return loadDataSync<AuditLogRecord[]>('lamsa_audit_logs_v1', []);
   });
 
-  // User Accounts & Authentication State (with automatic sanitization so 5188 never forces password change & Dr. Mohamed / Tarek are always present)
-  const sanitizeUserAccount = (u: AppUser): AppUser => {
-    const uname = (u.username || '').toLowerCase().trim();
-    const dname = (u.displayName || '').trim();
-    const isOwnerMohamed =
-      u.id === 'user-mohamed' ||
-      uname === 'mohamed' ||
-      uname === 'محمد' ||
-      u.role === 'OWNER' ||
-      dname.includes('محمد');
-
-    if (isOwnerMohamed) {
-      return {
-        ...DEFAULT_USERS[0],
-        ...u,
-        id: u.id || 'user-mohamed',
-        username: 'mohamed',
-        displayName: u.displayName || 'د. محمد (المالك)',
-        role: 'OWNER',
-        passwordHash: u.passwordHash || '5188',
-        isActive: true,
-        requiresPasswordChange: false,
-        permissions: {
-          ...OWNER_FULL_PERMISSIONS,
-        },
-      };
-    }
-
-    const isTarek =
-      u.id === 'user-tarek' ||
-      u.id === 'user-tarek-sales' ||
-      uname === 'tarek' ||
-      uname === 'طارق' ||
-      dname.includes('طارق');
-
-    if (isTarek) {
-      return {
-        ...DEFAULT_USERS[1],
-        ...u,
-        id: u.id || 'user-tarek',
-        username: 'tarek',
-        displayName: u.displayName || 'طارق (مسؤول ومدير المبيعات)',
-        role: 'STORE_MANAGER',
-        passwordHash: u.passwordHash || '12345',
-        isActive: true,
-        requiresPasswordChange: false,
-        permissions: {
-          ...TAREK_OPERATIONAL_PERMISSIONS,
-          // Strictly enforce protection on sensitive financial & settings data
-          canViewCostAndProfit: false,
-          canViewAuditLogs: false,
-          canExportData: false,
-          canEditSettingsAndBudgets: false,
-          canDeleteInvoices: false,
-        },
-      };
-    }
-    return {
-      ...u,
-      isActive: u.isActive !== false,
-      requiresPasswordChange: false,
-    };
-  };
-
-  const ensureCoreUsersList = (rawUsers: AppUser[]): AppUser[] => {
-    const sanitizedList = Array.isArray(rawUsers) ? rawUsers.map(sanitizeUserAccount) : [];
-    const existingOwner = sanitizedList.find(
-      (u) => u.role === 'OWNER' || u.username === 'mohamed' || u.id === 'user-mohamed'
-    );
-    const existingTarek = sanitizedList.find(
-      (u) => u.username === 'tarek' || u.id === 'user-tarek' || u.id === 'user-tarek-sales'
-    );
-    const otherUsers = sanitizedList.filter(
-      (u) => u !== existingOwner && u !== existingTarek
-    );
-
-    return [
-      existingOwner || sanitizeUserAccount(DEFAULT_USERS[0]),
-      existingTarek || sanitizeUserAccount(DEFAULT_USERS[1]),
-      ...otherUsers,
-    ];
-  };
+  // Firebase Google Auth is the sole identity source; cached profiles are display-only.
+  const sanitizeUserAccount = (user: AppUser): AppUser => ({
+    ...user,
+    authEmail: (user.authEmail || '').trim().toLowerCase(),
+    passwordHash: '',
+    requiresPasswordChange: false,
+  });
 
   const [users, setUsers] = useState<AppUser[]>(() => {
-    try {
-      const saved = localStorage.getItem('lamsa_users_v1');
-      if (saved) {
-        const parsed: AppUser[] = JSON.parse(saved);
-        return ensureCoreUsersList(parsed);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return ensureCoreUsersList(DEFAULT_USERS);
+    const cachedUsers = loadDataSync<AppUser[]>('lamsa_users_v1', []);
+    return Array.isArray(cachedUsers) ? cachedUsers.map(sanitizeUserAccount) : [];
   });
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [confidentialMigrationStatus, setConfidentialMigrationStatus] = useState<ConfidentialMigrationStatus | null>(null);
 
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
-    const session = getSessionUser();
-    if (session) return sanitizeUserAccount(session);
-    return DEFAULT_USERS[0]; // Default to Dr. Mohamed (Owner)
-  });
+  useEffect(() => {
+    if (currentUser?.role !== 'OWNER') {
+      setConfidentialMigrationStatus(null);
+      return;
+    }
+    return subscribeConfidentialMigrationStatus(setConfidentialMigrationStatus);
+  }, [currentUser?.id, currentUser?.role]);
 
   // Owner Preview Mode & Security State (معاينة الواجهة وتتبع الصلاحيات)
   const [previewModeUser, setPreviewModeUser] = useState<AppUser | null>(null);
@@ -539,22 +467,6 @@ const App: React.FC = () => {
       createdAt: new Date().toISOString(),
     };
     setTopNotifications(prev => [newItem, ...prev.slice(0, 3)]);
-
-    // Smart modern intelligent audio cues
-    try {
-      if (type === 'sale' || type === 'invoice') {
-        soundAlertService.playSaleChime();
-      } else if (type === 'goal' || type === 'auth' || type === 'success') {
-        soundAlertService.playRegisterSuccessChime();
-      } else if (type === 'warning' || type === 'stock') {
-        soundAlertService.playAlertChime();
-      } else {
-        soundAlertService.playNotificationChime(type);
-      }
-    } catch {
-      // ignore
-    }
-
     setTimeout(() => {
       setTopNotifications(prev => prev.filter(n => n.id !== id));
     }, 4500);
@@ -564,18 +476,50 @@ const App: React.FC = () => {
     setTopNotifications(prev => prev.filter(n => n.id !== id));
   };
 
-  // Apple Welcome & Lock Screen state for complete store privacy
-  const [isScreenLocked, setIsScreenLocked] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem('lamsa_unlocked_session_v1') !== 'true';
-    } catch {
-      return true;
-    }
-  });
-
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // Require an authenticated Google session on every app load and after every lock.
+  const [isScreenLocked, setIsScreenLocked] = useState(true);
+  const [authRestoreError, setAuthRestoreError] = useState<string | null>(null);
+  const [savedSessionUser, setSavedSessionUser] = useState<AppUser | null>(null);
+  const [isCheckingSavedSession, setIsCheckingSavedSession] = useState(true);
   const [isThemeStudioModalOpen, setIsThemeStudioModalOpen] = useState(false);
-  const [passwordChangeUser, setPasswordChangeUser] = useState<AppUser | null>(null);
+
+  // Restore a button-ready Google session after checking the Firebase identity and active app role.
+  useEffect(() => {
+    let active = true;
+    let generation = 0;
+    const unsubscribe = onFirebaseAuthStateChanged((firebaseUser) => {
+      const currentGeneration = ++generation;
+      if (!firebaseUser) {
+        setSavedSessionUser(null);
+        setIsCheckingSavedSession(false);
+        return;
+      }
+      setIsCheckingSavedSession(true);
+      setAuthRestoreError(null);
+      void loadAuthorizedAppUser(firebaseUser)
+        .then((profile) => {
+          if (!active || currentGeneration !== generation) return;
+          setSavedSessionUser(sanitizeUserAccount(profile));
+        })
+        .catch((error: unknown) => {
+          if (!active || currentGeneration !== generation) return;
+          setSavedSessionUser(null);
+          setAuthRestoreError(
+            isTransientFirebaseError(error)
+              ? 'تعذر التحقق من الجلسة المحفوظة الآن؛ أعد المحاولة أو سجّل الدخول عبر Google.'
+              : getGoogleSignInErrorMessage(error)
+          );
+        })
+        .finally(() => {
+          if (active && currentGeneration === generation) setIsCheckingSavedSession(false);
+        });
+    });
+    return () => {
+      active = false;
+      generation += 1;
+      unsubscribe();
+    };
+  }, []);
 
   // Synchronize active Apple Theme, Typography, Colors, Weight, Stroke, Numeral System & Surface Styles to document root
   useEffect(() => {
@@ -843,14 +787,10 @@ const App: React.FC = () => {
   const [isPWAInstallModalOpen, setIsPWAInstallModalOpen] = useState<boolean>(false);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDeviceRecord[]>([]);
   const [isConnectedDevicesModalOpen, setIsConnectedDevicesModalOpen] = useState<boolean>(false);
-  const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>(() => {
-    return loadDataSync<OwnerStaffBroadcast[]>('lamsa_owner_broadcasts', []);
-  });
-  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(() => {
-    const cached = loadDataSync<string[]>('lamsa_dismissed_broadcasts_v2', []);
-    return new Set(cached);
-  });
-  const prevDeviceCountRef = useRef<number>(0);
+  const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>([]);
+  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(() =>
+    new Set(loadDataSync<string[]>('lamsa_dismissed_broadcasts_v2', []))
+  );
 
   // Track known remote event IDs to trigger real-time sound & system notifications when new records arrive from other devices
   const isInitialSalesLoadedRef = useRef<boolean>(false);
@@ -870,6 +810,7 @@ const App: React.FC = () => {
 
   // Real-time synchronization across all devices via Firestore onSnapshot
   useEffect(() => {
+    if (!currentUser || !currentUser.isActive) return;
     testFirestoreConnection().catch(() => {});
 
     // Hydrate from IndexedDB on startup if localStorage was reset or cleared
@@ -1166,29 +1107,16 @@ const App: React.FC = () => {
       }
     });
 
-    // Listen to real-time app users
+    // Owner-only user directory; an empty collection stays empty until the owner adds profiles.
     const unsubUsers = subscribeToAppUsers((cloudUsers) => {
-      if (cloudUsers && cloudUsers.length > 0) {
-        const completeUsers = ensureCoreUsersList(cloudUsers);
-        setUsers(completeUsers);
-        persistDataDurable('lamsa_users_v1', completeUsers);
-        setIsCloudConnected(true);
-
-        // Self-heal Firestore if Dr. Mohamed or Tarek was missing from cloud collection
-        const hasOwnerInCloud = cloudUsers.some(
-          (u) => u.role === 'OWNER' || u.username === 'mohamed' || u.id === 'user-mohamed'
-        );
-        const hasTarekInCloud = cloudUsers.some(
-          (u) => u.username === 'tarek' || u.id === 'user-tarek' || u.id === 'user-tarek-sales'
-        );
-        if (!hasOwnerInCloud) {
-          saveAppUserCloud(completeUsers[0]).catch(() => {});
-        }
-        if (!hasTarekInCloud && completeUsers[1]) {
-          saveAppUserCloud(completeUsers[1]).catch(() => {});
-        }
+      const safeUsers = (Array.isArray(cloudUsers) ? cloudUsers : []).map(sanitizeUserAccount);
+      if (currentUser?.role === 'OWNER' && !safeUsers.some((u) => u.id === currentUser.id)) {
+        safeUsers.unshift(sanitizeUserAccount(currentUser));
       }
-    }, DEFAULT_USERS);
+      setUsers(safeUsers);
+      persistDataDurable('lamsa_users_v1', safeUsers);
+      setIsCloudConnected(true);
+    });
 
     // Listen to real-time daily closures
     const unsubClosures = subscribeToDailyClosures((cloudClosures) => {
@@ -1295,18 +1223,28 @@ const App: React.FC = () => {
       }
     });
 
-    // Real-Time Connected Devices Presence Listener
-    const unsubDevices = subscribeToConnectedDevices((activeList) => {
-      setConnectedDevices(activeList);
+    // Owner-only device presence: coarse device category and last-seen timestamp only.
+    const unsubDevices = subscribeToDevicePresence((presenceList) => {
+      const safeDevices: ConnectedDeviceRecord[] = presenceList.map((device: DevicePresenceRecord) => {
+        const lastSeenMs = device.lastSeenAt.toMillis();
+        const deviceType = device.deviceType === 'phone' ? 'mobile' : device.deviceType === 'tablet' ? 'tablet' : 'desktop';
+        const deviceName = deviceType === 'mobile' ? 'هاتف' : deviceType === 'tablet' ? 'جهاز لوحي' : 'حاسوب';
+        return {
+          id: device.id,
+          deviceId: device.deviceId,
+          userId: device.userUid,
+          userName: device.displayName,
+          deviceName,
+          deviceType,
+          browser: 'غير متاح',
+          appVersion: 'legacy-presence',
+          isOnline: Date.now() - lastSeenMs < 5 * 60_000,
+          lastSeen: device.lastSeenAt.toDate().toISOString(),
+          lastSeenMs,
+        };
+      });
+      setConnectedDevices(safeDevices);
       setIsCloudConnected(true);
-    });
-
-    // Real-Time Owner Staff Directives & Broadcasts Listener
-    const unsubBroadcasts = subscribeToOwnerBroadcasts((cloudBroadcasts) => {
-      if (cloudBroadcasts) {
-        setOwnerBroadcasts(cloudBroadcasts);
-        persistDataDurable('lamsa_owner_broadcasts', cloudBroadcasts);
-      }
     });
 
     const onRealtimeMessage = (e: MessageEvent) => {
@@ -1387,51 +1325,24 @@ const App: React.FC = () => {
       unsubCustomers();
       unsubSavedMixes();
       unsubDevices();
-      unsubBroadcasts();
     };
-  }, []);
+  }, [currentUser?.id, currentUser?.role]);
 
-  // Real-Time Multi-Device Presence Heartbeat & Auto-Sync
+  // Broadcast subscription is scoped to the verified account; never hydrate another user's messages from local storage.
   useEffect(() => {
-    // Initial presence ping
-    publishDevicePresence(currentUser, currentView).catch(() => {});
+    setOwnerBroadcasts([]);
+    if (!currentUser || !currentUser.isActive) return;
+    return subscribeToOwnerBroadcasts(setOwnerBroadcasts, currentUser);
+  }, [currentUser?.id, currentUser?.authEmail, currentUser?.displayName, currentUser?.username, currentUser?.isActive, currentUser?.role]);
 
-    // Periodic heartbeat every 20 seconds
-    const interval = setInterval(() => {
-      publishDevicePresence(currentUser, currentView).catch(() => {});
-    }, 20000);
-
-    const handleBeforeUnload = () => {
-      markDeviceOfflineCloud().catch(() => {});
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [currentUser, currentView]);
-
-  // Real-time Notification for Store Owner when new devices connect
+  // Records only coarse device type and last-seen time; never current screen, IP, or browser.
   useEffect(() => {
-    const isOwner = currentUser?.role === 'OWNER';
-    if (isOwner && prevDeviceCountRef.current > 0 && connectedDevices.length > prevDeviceCountRef.current) {
-      const newlyJoined = connectedDevices.find((d) => d.deviceId !== getLocalDeviceId());
-      if (newlyJoined) {
-        soundAlertService.playActionChime();
-        pushTopNotification(
-          'goal',
-          `📱 جهاز جديد متصل بالوقت الفعلي`,
-          `انضم الآن: [${newlyJoined.deviceName}] بواسطة [${newlyJoined.userName}] · إجمالي الأجهزة المتصلة: ${connectedDevices.length}`,
-          'رادار التزامن',
-          'عرض الأجهزة',
-          () => setIsConnectedDevicesModalOpen(true)
-        );
-      }
+    if (!currentUser || !currentUser.isActive) {
+      setConnectedDevices([]);
+      return;
     }
-    prevDeviceCountRef.current = connectedDevices.length;
-  }, [connectedDevices.length, currentUser]);
+    return startDevicePresenceTracking(currentUser);
+  }, [currentUser?.id, currentUser?.authEmail, currentUser?.displayName, currentUser?.isActive]);
 
   // Sync state changes to durable storage (localStorage + IndexedDB)
   useEffect(() => {
@@ -1571,26 +1482,21 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [products.length]);
 
-  // User save handler
+  // User save handler: Google email + role/permissions only; never persist a local password.
   const handleSaveUser = async (user: AppUser) => {
-    setUsers(prev => {
-      const idx = prev.findIndex(u => u.id === user.id);
+    const previousEmail = users.find((entry) => entry.id === user.id)?.authEmail;
+    const safeUser = sanitizeUserAccount(user);
+    await saveAppUserCloud(safeUser, previousEmail);
+    setUsers((prev) => {
+      const idx = prev.findIndex((entry) => entry.id === safeUser.id);
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = user;
+        next[idx] = safeUser;
         return next;
       }
-      return [...prev, user];
+      return [...prev, safeUser];
     });
-    if (currentUser?.id === user.id) {
-      setCurrentUser(user);
-      saveSessionUser(user);
-    }
-    try {
-      await saveAppUserCloud(user);
-    } catch (e) {
-      console.error("Error saving user:", e);
-    }
+    if (currentUser?.id === safeUser.id) setCurrentUser(safeUser);
   };
 
   // Daily closure save handler
@@ -1784,52 +1690,126 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLoginSuccess = (user: AppUser) => {
-    const cleanUser: AppUser = sanitizeUserAccount(user);
-    setCurrentUser(cleanUser);
-    saveSessionUser(cleanUser);
-    setIsAuthModalOpen(false);
-    setIsScreenLocked(false);
-    try {
-      sessionStorage.setItem('lamsa_unlocked_session_v1', 'true');
-    } catch {}
+  const handleLoginSuccess = async (user: AppUser) => {
+    const cleanUser = sanitizeUserAccount(user);
+    setAuthRestoreError(null);
+    setUsers([]);
+
     if (cleanUser.role !== 'OWNER') {
+      const safeRows = <T,>(collectionName: string, rows: T[]): T[] =>
+        rows.map((row) => sanitizeOperationalRecord(collectionName, row));
+      const safeProducts = safeRows('products', products);
+      const safeSales = safeRows('sales', sales);
+      const safeSettings = toOperationalSettings(settings, DEFAULT_SETTINGS);
+      const safeBottleSizes = bottleSizes.map((size) => ({
+        ...sanitizeOperationalRecord('bottleSizes', size),
+        bottleCost: 0,
+        alcoholCost: 0,
+        suggestedMargin: 0,
+        officialCost: 0,
+      } as BottleSize));
+      const safeAttendance = safeRows('staff_attendance', attendanceRecords);
+      const safeClosures = safeRows('daily_closures', dailyClosures);
+      const safePurchaseRequests = safeRows('purchase_requests', purchaseRequests);
+      const safeCustomerRequests = safeRows('customer_requests', customerRequests);
+      const safeStockChecks = safeRows('stock_checks', stockChecks);
+      const safeCustomers = safeRows('customers', customCustomers);
+      const safeMixes = safeRows('saved_mixes', savedMixes);
+      const safeFragranceDatabase = safeRows<FragranceDatabaseEntry>('fragrance_database', fragranceDatabase);
+
+      try {
+        await Promise.all([
+          replaceDataDurable('lamsa_products', safeProducts),
+          replaceDataDurable('lamsa_sales', safeSales),
+          replaceDataDurable('lamsa_settings_v2', safeSettings),
+          replaceDataDurable('lamsa_bottle_sizes_v2', safeBottleSizes),
+          replaceDataDurable('lamsa_expenses_v2', []),
+          replaceDataDurable('lamsa_vaults_v1', []),
+          replaceDataDurable('lamsa_withdrawals_v1', []),
+          replaceDataDurable('lamsa_attendance_v1', safeAttendance),
+          replaceDataDurable('lamsa_batches_v1', []),
+          replaceDataDurable('lamsa_audit_logs_v1', []),
+          replaceDataDurable('lamsa_users_v1', []),
+          replaceDataDurable('lamsa_closures_v1', safeClosures),
+          replaceDataDurable('lamsa_purchase_requests_v1', safePurchaseRequests),
+          replaceDataDurable('lamsa_customer_requests_v1', safeCustomerRequests),
+          replaceDataDurable('lamsa_stock_checks_v1', safeStockChecks),
+          replaceDataDurable('lamsa_custom_customers_v1', safeCustomers),
+          replaceDataDurable('lamsa_saved_mixes_v1', safeMixes),
+          replaceDataDurable('lamsa_strategic_orders_v1', []),
+          replaceDataDurable('lamsa_fragrance_db_v2', safeFragranceDatabase),
+        ]);
+      } catch (error) {
+        console.error('Failed to isolate local data for the employee role:', error);
+        setAuthRestoreError('تعذّر عزل ذاكرة هذا الجهاز بأمان؛ أبقينا التطبيق مقفلاً. أعد المحاولة أو افتحه من جهاز آخر.');
+        setIsScreenLocked(true);
+        setCurrentUser(null);
+        await signOutFirebaseUser().catch(() => {});
+        return;
+      }
+
+      setProducts(safeProducts);
+      setSales(safeSales);
+      setSettings(safeSettings);
+      setBottleSizes(safeBottleSizes);
+      setExpenses([]);
+      setVaults([]);
+      setWithdrawals([]);
+      setAttendanceRecords(safeAttendance);
+      setBatches([]);
+      setAuditLogs([]);
+      setDailyClosures(safeClosures);
+      setPurchaseRequests(safePurchaseRequests);
+      setCustomerRequests(safeCustomerRequests);
+      setStockChecks(safeStockChecks);
+      setCustomCustomers(safeCustomers);
+      setSavedMixes(safeMixes);
+      setFragranceDatabase(safeFragranceDatabase);
+      setStrategicOrders([]);
+      saveLocalFragranceDatabase(safeFragranceDatabase);
+      saveLocalStrategicOrders([]);
       setCurrentView(View.POS);
     }
+
+    setCurrentUser(cleanUser);
+    setSavedSessionUser(cleanUser);
+    setIsCloudConnected(false);
+    setIsScreenLocked(false);
+    setAuthRestoreError(null);
     pushTopNotification(
       'auth',
       `مرحباً بك، ${cleanUser.displayName.replace(/\(.*?\)/g, '').trim()}`,
       cleanUser.role === 'OWNER'
-        ? 'تم تفعيل صلاحيات المدير العام والمالك بالكامل (5188)'
-        : 'تم تفعيل واجهة مسؤول المبيعات وصالة العرض',
-      cleanUser.role === 'OWNER' ? 'وضع المدير العام' : 'وضع المبيعات'
+        ? 'تم التحقق من حساب Google وتفعيل صلاحيات المالك'
+        : 'تم التحقق من حساب Google وتفعيل صلاحيات الموظف المحددة',
+      cleanUser.role === 'OWNER' ? 'المالك' : 'حساب موظف'
     );
   };
 
   const handleLockScreen = () => {
+    if (currentUser) setSavedSessionUser(sanitizeUserAccount(currentUser));
     setIsScreenLocked(true);
-    try {
-      sessionStorage.removeItem('lamsa_unlocked_session_v1');
-    } catch {}
+    setCurrentUser(null);
+    setAuthRestoreError(null);
   };
 
   const handleLogout = () => {
-    saveSessionUser(null);
-    setCurrentUser(null);
+    setSavedSessionUser(null);
     setIsScreenLocked(true);
-    try {
-      sessionStorage.removeItem('lamsa_unlocked_session_v1');
-    } catch {}
+    setCurrentUser(null);
+    setAuthRestoreError(null);
+    signOutFirebaseUser().catch((error) => console.error('Firebase sign-out error:', error));
   };
 
   // Real-time Administrative Directives & Staff Broadcast Handlers
   const handleSendOwnerBroadcast = async (broadcast: OwnerStaffBroadcast) => {
-    setOwnerBroadcasts(prev => [broadcast, ...prev.filter(b => b.id !== broadcast.id)]);
-    persistDataDurable('lamsa_owner_broadcasts', [broadcast, ...ownerBroadcasts]);
     try {
       await sendOwnerBroadcastCloud(broadcast);
+      setOwnerBroadcasts(prev => [broadcast, ...prev.filter(b => b.id !== broadcast.id)]);
     } catch (e) {
       console.error("Error sending owner broadcast to cloud:", e);
+      pushTopNotification('info', 'تعذر إرسال التوجيه', 'لم يؤكد Firestore حفظ الرسالة؛ لم تُعرض كرسالة مرسلة.', 'فشل الحفظ');
+      return;
     }
     pushTopNotification(
       'goal',
@@ -1856,33 +1836,24 @@ const App: React.FC = () => {
   };
 
   const handleAcknowledgeOwnerBroadcast = async (broadcastId: string) => {
-    const employee = currentUser?.name || 'طارق';
-    setOwnerBroadcasts(prev => {
-      const updated = prev.map(b => {
-        if (b.id === broadcastId) {
-          const acks = b.acknowledgedBy || [];
-          if (!acks.some(a => a.employeeName === employee)) {
-            return {
-              ...b,
-              acknowledgedBy: [...acks, { employeeName: employee, timestamp: new Date().toISOString() }]
-            };
-          }
-        }
-        return b;
-      });
-      persistDataDurable('lamsa_owner_broadcasts', updated);
-      return updated;
-    });
+    const employee = currentUser?.displayName || currentUser?.name || currentUser?.username || '';
+    if (!currentUser || !employee) return;
     try {
       await acknowledgeOwnerBroadcastCloud(broadcastId, employee);
+      setOwnerBroadcasts(prev => prev.map(b => {
+        if (b.id !== broadcastId) return b;
+        const acknowledgements = b.acknowledgedBy || [];
+        return acknowledgements.some((ack) => ack.employeeName === employee)
+          ? b
+          : { ...b, acknowledgedBy: [...acknowledgements, { employeeName: employee, timestamp: new Date().toISOString() }] };
+      }));
+      soundAlertService.playActionChime();
+      pushTopNotification('info', 'تم تأكيد الاطلاع', 'تم توثيق قراءتك للتنبيه بنجاح', 'تأكيد');
+      handleDismissBroadcast(broadcastId);
     } catch (e) {
       console.error("Error acknowledging broadcast:", e);
+      pushTopNotification('info', 'لم يُسجل الإقرار', 'تعذر التحقق من الإقرار لدى Firestore.', 'فشل الحفظ');
     }
-    soundAlertService.playActionChime();
-    pushTopNotification('info', 'تم تأكيد الاطلاع', 'تم توثيق قراءتك للتنبيه بنجاح', 'تأكيد');
-    
-    // Automatically close from top banner upon read confirmation, persisting across reload
-    handleDismissBroadcast(broadcastId);
   };
 
   // Active broadcast to display in UI for current user (handles auto-expiration, recurrence, and dismissal)
@@ -1923,7 +1894,9 @@ const App: React.FC = () => {
       }
 
       // Target matching: 'all' or specific employee name or role
-      const matchesTarget = !b.targetEmployee || b.targetEmployee === 'all' || b.targetEmployee === currentUser?.name;
+      const targetNames = [currentUser?.displayName, currentUser?.name, currentUser?.username, currentUser?.id]
+        .filter((name): name is string => Boolean(name));
+      const matchesTarget = !b.targetEmployee || b.targetEmployee === 'all' || targetNames.includes(b.targetEmployee);
       if (!matchesTarget) return false;
       return true;
     });
@@ -2195,6 +2168,24 @@ const App: React.FC = () => {
     previousSale: Sale,
     restoreOrAdjustStock: boolean = true
   ) => {
+    if (currentUser?.role !== 'OWNER') {
+      if (restoreOrAdjustStock) {
+        console.error('Employee invoice edits cannot change item quantities, prices, discounts, or stock.');
+        return;
+      }
+      try {
+        await updateSaleMetadataCloud(updatedSale, previousSale);
+        setSales(prev => {
+          const next = prev.map(s => s.id === updatedSale.id ? updatedSale : s);
+          persistDataDurable('lamsa_sales', next);
+          return next;
+        });
+      } catch (err) {
+        console.error('Error saving permitted invoice metadata:', err);
+      }
+      return;
+    }
+
     let updatedProductsList: Product[] = [];
 
     if (restoreOrAdjustStock) {
@@ -2245,44 +2236,6 @@ const App: React.FC = () => {
       const next = prev.map(s => (s.id === updatedSale.id ? updatedSale : s));
       persistDataDurable('lamsa_sales', next);
       return next;
-    });
-
-    // Immutable Audit Trail recording with deep old vs new values comparison (§41)
-    handleAddAuditLog({
-      id: `audit-sale-edit-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      user: currentUser?.displayName || 'د. محمد (المالك)',
-      action: 'تعديل فاتورة',
-      entityType: 'sale',
-      entityId: updatedSale.id,
-      entityName: `فاتورة #${updatedSale.id.slice(-6)}`,
-      oldValue: {
-        totalPrice: previousSale.totalPrice,
-        itemsCount: previousSale.items?.length || 0,
-        paymentMethod: previousSale.paymentMethod || 'نقدي',
-        discount: previousSale.discount || 0,
-        customerName: previousSale.customerName || 'عميل نقدي',
-        customerPhone: previousSale.customerPhone || '',
-        items: previousSale.items,
-        notes: previousSale.notes || ''
-      },
-      newValue: {
-        totalPrice: updatedSale.totalPrice,
-        itemsCount: updatedSale.items?.length || 0,
-        paymentMethod: updatedSale.paymentMethod || 'نقدي',
-        discount: updatedSale.discount || 0,
-        customerName: updatedSale.customerName || 'عميل نقدي',
-        customerPhone: updatedSale.customerPhone || '',
-        items: updatedSale.items,
-        notes: updatedSale.notes || '',
-        stockAdjusted: restoreOrAdjustStock
-      },
-      reason: updatedSale.notes && updatedSale.notes !== previousSale.notes
-        ? `تعديل بنود وتفاصيل الفاتورة: ${updatedSale.notes}`
-        : 'تعديل تفاصيل الفاتورة والمبالغ والأصناف وطريقة الدفع من الإدارة',
-      approvedBy: currentUser?.displayName || 'الإدارة',
-      category: 'مبيعات',
-      relatedTransactionId: updatedSale.transactionId || updatedSale.id
     });
 
     pushTopNotification(
@@ -2603,8 +2556,8 @@ const App: React.FC = () => {
 
   const renderView = () => {
     // Strictly isolate confidential areas from unauthorized employees (Rules 1, 2, 3, 6, 9)
-    if (!canAccessView(effectiveUser, currentView)) {
-      logRejectedAccessAttempt(effectiveUser, currentView, undefined, 'محاولة وصول مباشر لصفحة غير مصرح بها');
+    if (!canAccessView(currentUser, currentView)) {
+      logRejectedAccessAttempt(currentUser, currentView, undefined, 'محاولة وصول مباشر لصفحة غير مصرح بها');
 
       return (
         <div className="p-6 sm:p-12 max-w-xl mx-auto my-12 text-center animate-in fade-in duration-200" dir="rtl">
@@ -2617,7 +2570,7 @@ const App: React.FC = () => {
               تتطلب هذه الشاشة صلاحيات إدارية خاصة بحساب المالك (د. محمد).
             </p>
             <div className="p-3 rounded-2xl bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 text-[11px] font-mono border border-slate-200 dark:border-white/10">
-              المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'طارق'} ({effectiveUser?.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : effectiveUser?.role})</strong>
+              المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'طارق'} ({currentUser?.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : currentUser?.role})</strong>
             </div>
             <div className="pt-2">
               <button
@@ -2785,9 +2738,11 @@ const App: React.FC = () => {
         return (
           <UsersManagement
             users={users}
-            currentUser={effectiveUser}
+            currentUser={currentUser}
             onSaveUser={handleSaveUser}
             onAddAuditLog={handleAddAuditLog}
+            migrationStatus={confidentialMigrationStatus}
+            onResumeMigration={() => migrateConfidentialDataToOwnerPrivate(true)}
             onPreviewUserPermissions={(previewUser) => {
               setPreviewModeUser(previewUser);
               if (previewUser) {
@@ -2810,7 +2765,7 @@ const App: React.FC = () => {
             products={products}
             bottleSizes={bottleSizes}
             settings={settings}
-            currentUser={effectiveUser}
+            currentUser={currentUser}
             onUpdateSale={handleUpdateSale}
             onDeleteSale={handleDeleteSale}
             onAddAuditLog={handleAddAuditLog}
@@ -2849,21 +2804,6 @@ const App: React.FC = () => {
               setVaults(updatedList);
               saveAllVaultsCloud(updatedList).catch(console.error);
             }}
-          />
-        );
-      case View.STAFF_ENTITLEMENTS:
-        return (
-          <StaffEntitlements
-            sales={sales}
-            vaults={vaults}
-            currentUser={currentUser}
-            users={users}
-            settings={settings}
-            onUpdateVaults={(updatedList) => {
-              setVaults(updatedList);
-              saveAllVaultsCloud(updatedList).catch(console.error);
-            }}
-            onAddExpense={(newExp) => handleSetExpenses(prev => [newExp, ...prev])}
           />
         );
       case View.EXPENSES:
@@ -2991,6 +2931,25 @@ const App: React.FC = () => {
           currentClosure={currentClosure}
           onUnlock={handleLoginSuccess}
           onUpdateUser={handleSaveUser}
+          savedSessionUser={savedSessionUser}
+          isCheckingSavedSession={isCheckingSavedSession}
+          onResumeSavedSession={async () => {
+            const firebaseUser = getCurrentFirebaseUser();
+            if (!firebaseUser || !savedSessionUser) return;
+            setIsCheckingSavedSession(true);
+            setAuthRestoreError(null);
+            try {
+              const authorizedProfile = await loadAuthorizedAppUser(firebaseUser);
+              await handleLoginSuccess(authorizedProfile);
+            } catch (error) {
+              setSavedSessionUser(null);
+              setAuthRestoreError(getGoogleSignInErrorMessage(error));
+            } finally {
+              setIsCheckingSavedSession(false);
+            }
+          }}
+          authRestoreError={authRestoreError}
+          activeThemeId={resolveActiveAppTheme(settings).id}
           storeName={settings.storeName || 'لَمْسَةُ عِطْر'}
           storeSlogan={settings.storeSlogan || 'فخامة العطور الشرقية والفرنسية'}
         />
@@ -3035,8 +2994,8 @@ const App: React.FC = () => {
         products={products}
         settings={settings}
         isCloudConnected={isCloudConnected}
-        currentUser={effectiveUser}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        currentUser={currentUser}
+        onOpenAuthModal={handleLogout}
         onLogout={handleLogout}
         onOpenDayOperations={() => setIsDayOpsModalOpen(true)}
         onLockScreen={handleLockScreen}
@@ -3058,10 +3017,8 @@ const App: React.FC = () => {
       <main className="min-h-screen w-full max-w-full overflow-x-hidden relative z-0 md:pr-72 pt-2 sm:pt-3 md:pt-4 transition-all duration-200">
         {/* Unified Sleek Top Header Bar & Smart Color-Coded Notification Ticker */}
         <ExecutiveHeaderBar
-          currentUser={effectiveUser}
-          users={users}
-          onSwitchUser={handleLoginSuccess}
-          onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          currentUser={currentUser}
+          onSignOut={handleLogout}
           onOpenDayOperations={() => setIsDayOpsModalOpen(true)}
           onLockScreen={handleLockScreen}
           sales={sales}
@@ -3079,8 +3036,6 @@ const App: React.FC = () => {
           onOpenThemeStudio={() => setIsThemeStudioModalOpen(true)}
           onOpenLiveAlertsRadar={() => setIsOwnerLiveRadarOpen(true)}
           onOpenPWAInstall={() => setIsPWAInstallModalOpen(true)}
-          connectedDevicesCount={connectedDevices.length}
-          onOpenConnectedDevices={() => setIsConnectedDevicesModalOpen(true)}
           onUpdateSettings={handleSetSettings}
         />
 
@@ -3157,10 +3112,10 @@ const App: React.FC = () => {
                           </span>
                         );
                       }
-                      const expiry = activeBroadcastForDisplay.expiresAt 
-                        ? new Date(activeBroadcastForDisplay.expiresAt).getTime() 
+                      const expiry = activeBroadcastForDisplay.expiresAt
+                        ? new Date(activeBroadcastForDisplay.expiresAt).getTime()
                         : (activeBroadcastForDisplay.createdAt ? new Date(activeBroadcastForDisplay.createdAt).getTime() + (activeBroadcastForDisplay.durationHours || 8) * 3600 * 1000 : null);
-                      
+
                       if (!expiry) return null;
                       const remainingMs = expiry - Date.now();
                       if (remainingMs <= 0) return null;
@@ -3206,7 +3161,7 @@ const App: React.FC = () => {
 
                 {/* 2. Acknowledge Receipt Button */}
                 {activeBroadcastForDisplay.requiresAcknowledgement && (
-                  !activeBroadcastForDisplay.acknowledgedBy?.some(a => a.employeeName === (currentUser?.name || 'طارق')) ? (
+                  !activeBroadcastForDisplay.acknowledgedBy?.some(a => a.employeeName === (currentUser?.displayName || currentUser?.name || currentUser?.username || '')) ? (
                     <button
                       type="button"
                       onClick={() => handleAcknowledgeOwnerBroadcast(activeBroadcastForDisplay.id)}
@@ -3267,30 +3222,6 @@ const App: React.FC = () => {
           }}
         />
       </main>
-
-      {/* Auth Modal for Login and User Switching */}
-      {isAuthModalOpen && (
-        <AuthModal
-          users={users}
-          currentUser={currentUser}
-          onLoginSuccess={handleLoginSuccess}
-          onUpdateUser={handleSaveUser}
-          onClose={() => setIsAuthModalOpen(false)}
-        />
-      )}
-
-      {/* Password Change Enforcement Modal */}
-      {passwordChangeUser && (
-        <PasswordChangeModal
-          user={passwordChangeUser}
-          onPasswordChanged={(updated) => {
-            handleSaveUser(updated);
-            setPasswordChangeUser(null);
-            handleLoginSuccess(updated);
-          }}
-          onClose={() => setPasswordChangeUser(null)}
-        />
-      )}
 
       {/* Day Operations Modal (فتح وإغلاق اليوم والدرج) */}
       {isDayOpsModalOpen && (
@@ -3381,15 +3312,6 @@ const App: React.FC = () => {
         onClose={() => setIsConnectedDevicesModalOpen(false)}
         devices={connectedDevices}
         isOwner={currentUser?.role === 'OWNER'}
-        onTriggerInstantSync={async () => {
-          await publishDevicePresence(currentUser, currentView);
-          pushTopNotification(
-            'goal',
-            '⚡ تم التزامن اللحظي بنجاح',
-            `كافة الأجهزة المتصلة (${connectedDevices.length}) متطابقة 100% مع السيرفر السحابي`,
-            'مزامنة سريعة'
-          );
-        }}
       />
     </div>
   );

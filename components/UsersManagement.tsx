@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AppUser,
   UserRole,
@@ -10,7 +10,8 @@ import {
   AuditLogRecord,
   View
 } from '../types';
-import { hashPassword } from '../services/authService';
+import { subscribeToDevicePresence } from '../services/firebase';
+import type { DevicePresenceRecord, ConfidentialMigrationResult, ConfidentialMigrationStatus } from '../services/firebase';
 import {
   Users,
   UserPlus,
@@ -57,6 +58,8 @@ interface UsersManagementProps {
   onSaveUser: (user: AppUser) => void;
   onAddAuditLog: (log: AuditLogRecord) => void;
   onPreviewUserPermissions?: (user: AppUser | null) => void;
+  migrationStatus: ConfidentialMigrationStatus | null;
+  onResumeMigration: () => Promise<ConfidentialMigrationResult>;
 }
 
 const PERMISSION_GROUPS = [
@@ -133,9 +136,23 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
   onSaveUser,
   onAddAuditLog,
   onPreviewUserPermissions,
+  migrationStatus,
+  onResumeMigration,
 }) => {
-  const isOwner = currentUser?.role === 'OWNER' || currentUser?.displayName?.includes('محمد');
+  const isOwner = currentUser?.role === 'OWNER';
 
+  const migrationComplete = migrationStatus?.status === 'complete' && migrationStatus.version === 3;
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<DevicePresenceRecord[]>([]);
+  useEffect(() => { if (!isOwner) { setDevices([]); return; } return subscribeToDevicePresence(setDevices); }, [isOwner]);
+  const resumeMigration = async () => {
+    if (!isOwner || migrationComplete || migrationBusy) return;
+    setMigrationBusy(true); setMigrationError(null);
+    try { const result = await onResumeMigration(); if (result.skippedReason) setMigrationError('يوجد ترحيل نشط بالفعل؛ انتظر اكتماله.'); }
+    catch (err) { setMigrationError(err instanceof Error ? err.message : 'تعذّر استئناف الترحيل.'); }
+    finally { setMigrationBusy(false); }
+  };
   // Control Center Active Tab (15 Sections as specified)
   const [controlTab, setControlTab] = useState<
     | 'overview'
@@ -163,9 +180,8 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
   const [formDisplayName, setFormDisplayName] = useState('');
   const [formUsername, setFormUsername] = useState('');
   const [formRole, setFormRole] = useState<UserRole>('CASHIER');
-  const [formPassword, setFormPassword] = useState('');
+  const [formAuthEmail, setFormAuthEmail] = useState('');
   const [formPermissions, setFormPermissions] = useState<UserPermissions>(TAREK_OPERATIONAL_PERMISSIONS);
-  const [showPassword, setShowPassword] = useState(false);
 
   // Cashier Interface Live Preview Modal State
   const [showTarekPreviewModal, setShowTarekPreviewModal] = useState(false);
@@ -183,8 +199,8 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
     setIsCreatingNew(false);
     setFormDisplayName(u.displayName);
     setFormUsername(u.username);
+    setFormAuthEmail(u.authEmail || '');
     setFormRole(u.role);
-    setFormPassword('');
     setFormPermissions({ ...u.permissions });
   };
 
@@ -193,8 +209,8 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
     setIsCreatingNew(true);
     setFormDisplayName('');
     setFormUsername('');
+    setFormAuthEmail('');
     setFormRole('CASHIER');
-    setFormPassword('12345');
     setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
   };
 
@@ -204,7 +220,7 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
       setFormRole('OWNER');
     } else if (templateName === 'TAREK') {
       setFormPermissions({ ...TAREK_OPERATIONAL_PERMISSIONS });
-      setFormRole('CASHIER');
+      setFormRole('STORE_MANAGER');
     } else if (templateName === 'CASHIER') {
       setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
       setFormRole('CASHIER');
@@ -215,7 +231,10 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
     showToast(`تم تطبيق قالب صلاحيات «${templateName}» بنجاح ✓`);
   };
 
+  const OWNER_ONLY_PERMISSION_KEYS = new Set<keyof UserPermissions>(['canEditProductCost','canOverridePrice','canViewProfits','canViewExecutiveDashboard','canViewVaults','canRequestWithdrawal','canApproveWithdrawal','canInjectCapital','canTransferBetweenVaults','canWithdrawOwnerProfit','canEditBudget','canEditSalaries','canEditCommissions','canViewExpenses','canManageSettings','canManageUsers','canViewAuditLog','canExportData','canAccessOperationsSystem']);
   const handleTogglePermission = (key: keyof UserPermissions) => {
+    if (formRole !== 'OWNER' && OWNER_ONLY_PERMISSION_KEYS.has(key)) return;
+    if (key === 'canViewCosts' && !(formRole === 'STORE_MANAGER' && formUsername.trim().toLowerCase() === 'tarek')) return;
     setFormPermissions((prev) => ({
       ...prev,
       [key]: !prev[key]
@@ -225,33 +244,48 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
   const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isOwner) {
-      showToast('عفواً، التحكم بصلاحيات النظام وحسابات الموظفين مقتصر على المالك د. محمد.');
+      alert('عفواً، التحكم بصلاحيات النظام وحسابات الموظفين مقتصر على المالك د. محمد.');
       return;
     }
 
     if (!formDisplayName.trim() || !formUsername.trim()) {
-      showToast('يرجى ملء جميع الحقول الأساسية.');
+      alert('يرجى ملء جميع الحقول الأساسية.');
       return;
     }
 
-    let passwordHashToSave = selectedUser?.passwordHash || '';
-    if (formPassword.trim()) {
-      passwordHashToSave = await hashPassword(formPassword.trim());
+    const normalizedEmail = formAuthEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      alert('أدخل بريد Google صحيحاً لهذا الموظف.');
+      return;
+    }
+    if (users.some((user) => user.id !== selectedUser?.id && (user.authEmail || '').trim().toLowerCase() === normalizedEmail)) {
+      alert('هذا البريد مرتبط بالفعل بحساب موظف آخر.');
+      return;
     }
 
+
+    if (formRole !== 'OWNER' && !migrationComplete) { alert('يجب اكتمال ترحيل البيانات السرية قبل إضافة أو تعديل موظف محدود.'); return; }
+    if (formRole === 'OWNER' && selectedUser?.role !== 'OWNER') {
+      alert('إنشاء أو ترقية حساب المالك غير مسموح من شاشة الموظفين.');
+      return;
+    }
+    const safePermissions = formRole === 'OWNER'
+      ? { ...OWNER_FULL_PERMISSIONS }
+      : { ...formPermissions, canViewCosts: formRole === 'STORE_MANAGER' && formUsername.trim().toLowerCase() === 'tarek', canEditProductCost: false, canOverridePrice: false, canViewProfits: false, canViewCostAndProfit: false, canViewProfitAndCosts: false, canViewExecutiveDashboard: false, canViewVaults: false, canRequestWithdrawal: false, canApproveWithdrawal: false, canInjectCapital: false, canTransferBetweenVaults: false, canWithdrawOwnerProfit: false, canEditBudget: false, canEditSalaries: false, canEditCommissions: false, canViewExpenses: false, canManageSettings: false, canManageUsers: false, canViewAuditLog: false, canViewAuditLogs: false, canExportData: false, canDeleteInvoices: false, canAccessOperationsSystem: false } as UserPermissions;
     const updatedUser: AppUser = {
       id: selectedUser ? selectedUser.id : `user-${Date.now()}`,
       username: formUsername.trim().toLowerCase(),
       displayName: formDisplayName.trim(),
+      authEmail: normalizedEmail,
       role: formRole,
-      passwordHash: passwordHashToSave,
+      passwordHash: '',
       requiresPasswordChange: false,
-      isActive: true,
+      isActive: selectedUser?.isActive ?? false,
       createdAt: selectedUser ? selectedUser.createdAt : new Date().toISOString(),
-      permissions: { ...formPermissions },
+      permissions: safePermissions,
     };
 
-    onSaveUser(updatedUser);
+    await onSaveUser(updatedUser);
 
     onAddAuditLog({
       id: `audit-user-${Date.now()}`,
@@ -268,6 +302,7 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
 
   return (
     <div dir="rtl" className="space-y-5 animate-in fade-in duration-200 p-2 sm:p-4">
+      {isOwner && <section className="p-4 rounded-2xl border border-amber-300 bg-amber-50" aria-label="ترحيل البيانات السرية"><h2 className="font-black">حالة ترحيل البيانات السرية</h2><p className="text-sm">{migrationStatus?.status || 'غير معروف'} — الإصدار {migrationStatus?.version ?? '—'}</p>{migrationError && <p role="alert" className="text-rose-700">{migrationError}</p>}<button type="button" disabled={migrationComplete || migrationBusy} onClick={resumeMigration} className="mt-2 px-4 py-2 rounded bg-slate-900 text-white disabled:opacity-50">{migrationComplete ? 'اكتمل الترحيل' : migrationBusy ? 'جارٍ الاستئناف…' : 'استئناف الترحيل الآمن'}</button><p className="text-xs mt-2">الأجهزة المتصلة: {devices.length}</p></section>}
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl bg-slate-900 text-white text-xs font-bold shadow-2xl flex items-center gap-2 border border-amber-400/40 animate-in slide-in-from-top duration-150">
@@ -384,7 +419,7 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
               <div className="space-y-1.5 pt-1">
                 {users.map((u) => {
                   const isSelected = selectedUser?.id === u.id && !isCreatingNew;
-                  const isUserOwner = u.role === 'OWNER' || u.username === 'mohamed';
+                  const isUserOwner = u.role === 'OWNER';
 
                   return (
                     <button
@@ -500,23 +535,17 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">كلمة المرور (تعديل اختياري):</label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={formPassword}
-                      onChange={(e) => setFormPassword(e.target.value)}
-                      placeholder={selectedUser ? 'تخطي للحفاظ على الحالية' : '12345'}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-white/20 bg-slate-50 dark:bg-black/40 text-slate-900 dark:text-white font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                    >
-                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">بريد حساب Google المعتمد:</label>
+                  <input
+                    type="email"
+                    value={formAuthEmail}
+                    onChange={(e) => setFormAuthEmail(e.target.value)}
+                    placeholder="name@gmail.com"
+                    autoComplete="email"
+                    dir="ltr"
+                    required
+                    className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-white/20 bg-slate-50 dark:bg-black/40 text-slate-900 dark:text-white font-mono"
+                  />
                 </div>
               </div>
 
@@ -549,6 +578,7 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
                               type="checkbox"
                               checked={isGranted}
                               onChange={() => handleTogglePermission(perm.key)}
+                              disabled={(formRole !== 'OWNER' && OWNER_ONLY_PERMISSION_KEYS.has(perm.key)) || (perm.key === 'canViewCosts' && !(formRole === 'STORE_MANAGER' && formUsername.trim().toLowerCase() === 'tarek'))}
                               className="w-4 h-4 rounded text-amber-500 focus:ring-amber-500 cursor-pointer"
                             />
                           </label>

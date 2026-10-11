@@ -183,7 +183,7 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
           break;
 
         case 'salaries':
-          // ③.2 مخصص الرواتب: د. محمد (10,000) + طارق (1,500) = 11,500 ج.م (11,500 / 15,000 = 76.67%)
+          // ③.2 مخصص الرواتب: د. محمد (10,500) + طارق (1,000) = 11,500 ج.م (11,500 / 15,000 = 76.67%)
           totalInflow = (financials.fixedBudgetCovered / 15000) * 11500;
           break;
 
@@ -265,7 +265,7 @@ export const FinancialVaults: React.FC<FinancialVaultsProps> = ({
         setRecipientName('مالك العقار');
         break;
       case 'salaries':
-        setTransReason('صرف مسير الرواتب المعتمد (راتب د. محمد 10,000 / طارق 1,500)');
+        setTransReason('صرف مسير الرواتب المعتمد (راتب د. محمد 10,500 / طارق 1,000)');
         setRecipientName('د. محمد / طارق');
         break;
       case 'utilities':

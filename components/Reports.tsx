@@ -11,7 +11,7 @@ import {
   isLiveProductionSale,
   isTestOrExampleRecord
 } from '../types';
-import { canViewProfits, canViewCosts } from '../services/authService';
+import { canViewProfits, canViewCosts, hasPermission } from '../services/authService';
 import {
   TrendingUp,
   DollarSign,
@@ -81,10 +81,10 @@ export type LogPeriodMode = 'daily' | 'weekly' | 'monthly' | 'all';
 export type PaymentFilter = 'all' | 'نقدي' | 'بطاقة' | 'محفظة إلكترونية';
 export type SortBy = 'newest' | 'highest_price' | 'highest_profit' | 'highest_grams' | 'oldest';
 
-// ========================================================
+// == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == ==
 // RELATIVE TIME SALE TRACKER HELPER (تتبع وقت بيع الفاتورة لحظياً)
 // Displays: الآن (منذ لحظات)، منذ دقيقة، منذ ساعة، أمس، منذ يومين، إلخ
-// ========================================================
+// == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == ==
 export interface FormattedSaleRelativeTime {
   label: string;
   formattedDate: string;
@@ -302,6 +302,10 @@ const Reports: React.FC<ReportsProps> = ({
   currentUser,
   users = [],
 }) => {
+  const canEditSaleMetadata = currentUser?.role === 'OWNER' || currentUser?.permissions.canEditSaleBeforeClose === true;
+  const canEditSaleAmounts = currentUser?.role === 'OWNER';
+  const canExportFullData = currentUser?.role === 'OWNER' || hasPermission(currentUser ?? null, 'canExportData');
+  const canCancelSales = currentUser?.role === 'OWNER' || hasPermission(currentUser ?? null, 'canCancelSale');
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [logPeriodMode, setLogPeriodMode] = useState<LogPeriodMode>('daily');
   const [selectedDayDate, setSelectedDayDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
@@ -542,7 +546,7 @@ const Reports: React.FC<ReportsProps> = ({
     // Sort
     return [...list].sort((a, b) => {
       if (sortBy === 'highest_price') return (b.totalPrice || 0) - (a.totalPrice || 0);
-      if (sortBy === 'highest_profit') return (b.totalProfit || 0) - (a.totalProfit || 0);
+      if (sortBy === 'highest_profit' && showProfitMetrics) return (b.totalProfit || 0) - (a.totalProfit || 0);
       if (sortBy === 'highest_grams') {
         const gA = (a.items || []).reduce((s, i) => s + (i.essenceGrams || 0), 0);
         const gB = (b.items || []).reduce((s, i) => s + (i.essenceGrams || 0), 0);
@@ -553,7 +557,7 @@ const Reports: React.FC<ReportsProps> = ({
       }
       return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
-  }, [sales, logPeriodMode, selectedDayDate, currentWeekRange, selectedMonthStr, timeRange, customDate, employeeFilter, statusFilter, paymentFilter, sortBy, searchTerm]);
+  }, [sales, logPeriodMode, selectedDayDate, currentWeekRange, selectedMonthStr, timeRange, customDate, employeeFilter, statusFilter, paymentFilter, sortBy, searchTerm, showProfitMetrics]);
 
   // Financial aggregates (active non-reversed live production sales)
   const activeFilteredSales = useMemo(
@@ -763,25 +767,34 @@ const Reports: React.FC<ReportsProps> = ({
 
   // Export CSV
   const handleExportCSV = () => {
-    const headers = ['رقم الفاتورة,التاريخ,الأصناف,عدد العبوات,الزيت(جم),التكلفة,سعر البيع,الربح,العميل,الهاتف,طريقة الدفع,البائع'];
+    const canExportCosts = currentUser?.role === 'OWNER' || canViewCosts(currentUser ?? null);
+    const canExportProfits = currentUser?.role === 'OWNER' || canViewProfits(currentUser ?? null);
+    const headers = ['رقم الفاتورة', 'التاريخ', 'الأصناف', 'عدد العبوات', 'الزيت(جم)'];
+    if (canExportCosts) headers.push('التكلفة');
+    headers.push('سعر البيع');
+    if (canExportProfits) headers.push('الربح');
+    headers.push('العميل', 'الهاتف', 'طريقة الدفع', 'البائع');
     const rows = filteredSales.map((s) => {
       const itemsSummary = (s.items || []).map(i => `${i.productName} (${i.bottleSize}مل×${i.quantity || 1})`).join(' + ');
       const bottlesCount = (s.items || []).reduce((acc, i) => acc + (i.quantity || 1), 0);
       const gramsCount = (s.items || []).reduce((acc, i) => acc + (i.essenceGrams || 0), 0);
-      return [
+      const row: Array<string | number> = [
         s.id,
         new Date(s.date).toLocaleString('ar-EG'),
         `"${itemsSummary}"`,
         bottlesCount,
         gramsCount,
-        s.totalCost,
-        s.totalPrice,
-        s.totalProfit,
+      ];
+      if (canExportCosts) row.push(s.totalCost ?? '');
+      row.push(s.totalPrice ?? '');
+      if (canExportProfits) row.push(s.totalProfit ?? '');
+      row.push(
         `"${s.customerName || 'عميل نقدي'}"`,
         `"${s.customerPhone || ''}"`,
         `"${s.paymentMethod || 'نقدي'}"`,
         `"${s.employeeName || 'طارق'}"`
-      ].join(',');
+      );
+      return row.join(',');
     });
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers, ...rows].join('\n');
@@ -819,9 +832,9 @@ ${itemsLines}
   return (
     <div className="p-3 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-5 pb-14 animate-in fade-in duration-200">
       
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* TOP HEADER & QUICK CONTROL ACTIONS                       */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       <header className="apple-glass rounded-[26px] p-4 sm:p-5 border border-black/[0.07] shadow-apple-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-start sm:items-center gap-3.5">
           <div className="w-12 h-12 rounded-2xl bg-[#1D1D1F] text-[#C49746] flex items-center justify-center shadow-sm shrink-0">
@@ -857,7 +870,7 @@ ${itemsLines}
           )}
 
           {/* 2. Direct Export CSV */}
-          <button
+          {canExportFullData && <button
             type="button"
             onClick={handleExportCSV}
             className="apple-pill-btn halo-emerald flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-bold text-[#1D1D1F] cursor-pointer"
@@ -865,7 +878,7 @@ ${itemsLines}
           >
             <Download size={14} className="text-emerald-600" />
             <span className="hidden sm:inline">تصدير إكسل</span>
-          </button>
+          </button>}
 
           {/* 3. Consolidated Options Menu (دمج العمليات الثانوية لمنع الزحام) */}
           <div className="relative">
@@ -883,11 +896,11 @@ ${itemsLines}
             {/* Dropdown Options Sheet */}
             {isReportsMenuOpen && (
               <>
-                <div 
-                  className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
-                  onClick={() => setIsReportsMenuOpen(false)} 
+                <div
+                  className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity"
+                  onClick={() => setIsReportsMenuOpen(false)}
                 />
-                <div 
+                <div
                   className="absolute top-full mt-2.5 left-0 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150"
                   dir="rtl"
                 >
@@ -943,9 +956,9 @@ ${itemsLines}
         </div>
       </header>
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* FINANCIAL & PERFORMANCE KPI METRICS                      */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
         {/* KPI 1: Total Revenue & Invoices Count */}
         <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
@@ -967,7 +980,7 @@ ${itemsLines}
         </div>
 
         {/* KPI 2: Top Selling Employee */}
-        <div 
+        <div
           onClick={() => {
             if (topPerformerEmployee) {
               setEmployeeFilter(employeeFilter === topPerformerEmployee.name ? 'all' : topPerformerEmployee.name);
@@ -1010,7 +1023,7 @@ ${itemsLines}
         </div>
 
         {/* KPI 3: Contribution or Average Basket */}
-        {showProfitMetrics ? (
+        {showProfitMetrics && currentUser?.role === 'OWNER' ? (
           <div className="apple-glass-card rounded-3xl p-4 sm:p-5 border border-black/[0.06] flex flex-col justify-between">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold text-[#86868B]">المساهمة المحققة</span>
@@ -1066,12 +1079,12 @@ ${itemsLines}
             </div>
             {/* Visual ratio bar */}
             <div className="w-full h-1.5 bg-black/[0.06] rounded-full overflow-hidden mt-1.5 flex">
-              <div 
+              <div
                 style={{ width: `${totalRevenue > 0 ? (paymentBreakdown['نقدي'] / totalRevenue) * 100 : 50}%` }}
                 className="bg-[#0071E3] h-full"
                 title="نسبة النقدي"
               />
-              <div 
+              <div
                 style={{ width: `${totalRevenue > 0 ? (((paymentBreakdown['بطاقة'] || 0) + (paymentBreakdown['محفظة إلكترونية'] || 0)) / totalRevenue) * 100 : 50}%` }}
                 className="bg-purple-600 h-full"
                 title="نسبة البطاقات والمحافظ"
@@ -1220,10 +1233,10 @@ ${itemsLines}
         </div>
       )}
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* INVOICE LOG PERIOD EXPLORER & FULL INTERACTIVE CONTROLS   */}
       {/* سجل لكل يوم وكل أسبوع وكل شهر مع بحث وتحكم كامل           */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       <div className="apple-glass rounded-3xl p-4 sm:p-5 border border-black/[0.08] dark:border-white/10 space-y-4 shadow-apple-xs">
         {/* Tier 1: Primary Log Period Switcher (يومي / أسبوعي / شهري / شامل) + View Mode */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-black/[0.06] dark:border-white/10">
@@ -1645,7 +1658,7 @@ ${itemsLines}
             >
               <option value="newest">الأحدث أولاً</option>
               <option value="highest_price">الأعلى قيمة (المبلغ)</option>
-              <option value="highest_profit">الأعلى ربحاً</option>
+              {showProfitMetrics && <option value="highest_profit">الأعلى ربحاً</option>}
               <option value="highest_grams">الأكثر استهلاكاً للزيت</option>
               <option value="oldest">الأقدم أولاً</option>
             </select>
@@ -1694,9 +1707,9 @@ ${itemsLines}
         </div>
       </div>
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* INVOICES LOG TABLE WITH FULL INTERACTIVE CONTROL         */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       <div className="apple-glass-card rounded-[28px] p-4 sm:p-6 space-y-4 border border-black/[0.07] shadow-apple-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3.5 border-b border-black/[0.06]">
           <div>
@@ -1845,7 +1858,7 @@ ${itemsLines}
                         العميل: <strong className="text-[#1D1D1F]">{sale.customerName || 'عميل نقدي'}</strong>
                         {sale.customerPhone ? ` (${sale.customerPhone})` : ''}
                       </span>
-                      {showProfitMetrics && (
+                      {showProfitMetrics && currentUser?.role === 'OWNER' && (
                         <span className="text-[#248A3D] font-mono font-bold">
                           مساهمة: +{sale.totalProfit.toFixed(0)} ج
                         </span>
@@ -1880,7 +1893,7 @@ ${itemsLines}
                           <Eye size={12} />
                           <span>تفاصيل</span>
                         </button>
-                        {onUpdateSale && (
+                        {onUpdateSale && canEditSaleMetadata && (
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(sale)}
@@ -1908,7 +1921,7 @@ ${itemsLines}
                         >
                           {copiedInvoiceId === sale.id ? <Check size={13} /> : <Share2 size={13} />}
                         </button>
-                        {onDeleteSale && (
+                        {onDeleteSale && canCancelSales && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1942,7 +1955,7 @@ ${itemsLines}
                       <th className="py-3.5 px-3">العميل</th>
                       <th className="py-3.5 px-3">طريقة السداد</th>
                       <th className="py-3.5 px-3">الإجمالي</th>
-                      {showProfitMetrics && (
+                      {showProfitMetrics && currentUser?.role === 'OWNER' && (
                         <th className="py-3.5 px-3">المساهمة المحققة</th>
                       )}
                       <th className="py-3.5 px-3 text-left">أدوات التحكم الكامل</th>
@@ -1978,7 +1991,7 @@ ${itemsLines}
 
                           {/* Dedicated Employee Column (Key user requirement!) */}
                           <td className="py-3 px-3">
-                            <div 
+                            <div
                               onClick={() => setEmployeeFilter(cleanEmp)}
                               title={`انقر لتصفية فواتير ${cleanEmp} فقط`}
                               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-blue-50/80 hover:bg-blue-100/90 border border-blue-200/60 text-[#0071E3] transition-all cursor-pointer group/emp shadow-2xs"
@@ -2085,7 +2098,7 @@ ${itemsLines}
                           </td>
 
                           {/* Profit */}
-                          {showProfitMetrics && (
+                          {showProfitMetrics && currentUser?.role === 'OWNER' && (
                             <td className="py-3 px-3 font-mono font-black text-[#248A3D]">
                               +{sale.totalProfit.toFixed(0)} {settings.currency}
                             </td>
@@ -2104,7 +2117,7 @@ ${itemsLines}
                                 <span>تفاصيل</span>
                               </button>
 
-                              {onUpdateSale && (
+                              {onUpdateSale && canEditSaleMetadata && (
                                 <button
                                   type="button"
                                   onClick={() => handleOpenEditModal(sale)}
@@ -2151,7 +2164,7 @@ ${itemsLines}
                                 <Printer size={14} />
                               </button>
 
-                              {onDeleteSale && (
+                              {onDeleteSale && canCancelSales && (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2177,9 +2190,9 @@ ${itemsLines}
         )}
       </div>
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* TOP SELLING PERFUMES RANKING TABLE                       */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {topSellingPerfumes.length > 0 && (
         <div className="apple-glass-card rounded-[28px] p-5 sm:p-6 space-y-4 border border-black/[0.06]">
           <div className="flex items-center justify-between pb-3 border-b border-black/[0.06]">
@@ -2200,7 +2213,7 @@ ${itemsLines}
                   <th className="py-2.5 px-3">العبوات المباعة</th>
                   <th className="py-2.5 px-3">الزيت المستهلك</th>
                   <th className="py-2.5 px-3">إجمالي الإيراد</th>
-                  {showProfitMetrics && <th className="py-2.5 px-3">المساهمة المحققة</th>}
+                  {showProfitMetrics && currentUser?.role === 'OWNER' && <th className="py-2.5 px-3">المساهمة المحققة</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/[0.04]">
@@ -2214,7 +2227,7 @@ ${itemsLines}
                     <td className="py-2.5 px-3 font-mono font-bold text-[#1D1D1F]">
                       {perfume.revenue.toLocaleString('ar-EG')} {settings.currency}
                     </td>
-                    {showProfitMetrics && (
+                    {showProfitMetrics && currentUser?.role === 'OWNER' && (
                       <td className="py-2.5 px-3 font-mono font-bold text-[#248A3D]">
                         +{perfume.profit.toFixed(0)} {settings.currency}
                       </td>
@@ -2227,9 +2240,9 @@ ${itemsLines}
         </div>
       )}
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* FULL INVOICE EDITOR MODAL (التحكم الكامل وتعديل الفاتورة) */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {editingSale && (
         <div className="fixed inset-0 z-[130] bg-black/50 backdrop-blur-md smart-modal-overlay animate-in fade-in duration-150">
           <div className="apple-glass smart-modal-window rounded-[28px] p-5 w-full max-w-2xl border border-black/[0.1] shadow-2xl bg-white/95 space-y-3.5 overflow-hidden">
@@ -2476,9 +2489,9 @@ ${itemsLines}
         </div>
       )}
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* PROFESSIONAL THERMAL RECEIPT & WHATSAPP MODAL            */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {selectedSale && (
         <ReceiptModal
           sale={selectedSale}
@@ -2492,9 +2505,9 @@ ${itemsLines}
         />
       )}
 
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {/* DELETE / REVERSE SALE CONFIRMATION MODAL                 */}
-      {/* ======================================================== */}
+      {/* == == ==== == ==== == ==== == ==== == ==== == ==== == ==== == == */}
       {saleToDelete && (
         <div className="fixed inset-0 z-[130] bg-black/50 backdrop-blur-sm smart-modal-overlay animate-in fade-in duration-150">
           <div className="apple-glass-card smart-modal-window rounded-[28px] w-full max-w-md overflow-hidden p-5 text-center space-y-3.5 shadow-apple-lg border border-black/[0.08] bg-white/95">

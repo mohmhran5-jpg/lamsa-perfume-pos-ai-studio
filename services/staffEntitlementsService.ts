@@ -1,6 +1,7 @@
 /**
  * Staff Entitlements, Commissions, Salaries & Financial Settlements Engine
- * Lamsa Etr Perfume POS - Executive Accounting System
+ * Lamsa Eitr Perfume POS - Executive Accounting System
+ * Storage currently uses browser localStorage/IndexedDB only; keep this module unrouted until owner-scoped cloud sync and migration tests exist.
  */
 
 import {
@@ -826,4 +827,3 @@ export function calculateIncentiveReserveLedger(
     remainingBalanceAfterPayoutEgp,
   };
 }
-

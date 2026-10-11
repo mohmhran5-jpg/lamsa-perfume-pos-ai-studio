@@ -1939,7 +1939,7 @@ a:hover p,
   backdrop-filter: blur(24px) saturate(190%);
   -webkit-backdrop-filter: blur(24px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.85);
-  box-shadow: 
+  box-shadow:
     0 4px 20px -2px rgba(0, 0, 0, 0.04),
     0 1px 3px rgba(0, 0, 0, 0.02),
     inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
@@ -1949,7 +1949,7 @@ a:hover p,
 [data-theme-mode="dark"] .apple-glass-halo {
   background: rgba(28, 28, 30, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 
+  box-shadow:
     0 4px 24px -2px rgba(0, 0, 0, 0.35),
     inset 0 1px 1px 0 rgba(255, 255, 255, 0.15);
 }
@@ -1964,7 +1964,7 @@ a:hover p,
   backdrop-filter: blur(20px) saturate(190%);
   -webkit-backdrop-filter: blur(20px) saturate(190%);
   border: 1px solid rgba(0, 0, 0, 0.07);
-  box-shadow: 
+  box-shadow:
     0 2px 10px -1px rgba(0, 0, 0, 0.04),
     inset 0 1px 1px rgba(255, 255, 255, 0.95);
   cursor: pointer;
@@ -1976,7 +1976,7 @@ a:hover p,
   background: rgba(38, 38, 42, 0.92);
   border-color: rgba(255, 255, 255, 0.12);
   color: #FFFFFF;
-  box-shadow: 
+  box-shadow:
     0 2px 12px -1px rgba(0, 0, 0, 0.3),
     inset 0 1px 1px rgba(255, 255, 255, 0.15);
 }
@@ -1996,7 +1996,7 @@ a:hover p,
 }
 .halo-blue:hover {
   border-color: rgba(0, 113, 227, 0.55) !important;
-  box-shadow: 
+  box-shadow:
     0 4px 18px -2px rgba(0, 113, 227, 0.16),
     0 0 0 1px rgba(0, 113, 227, 0.12),
     inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
@@ -2007,7 +2007,7 @@ a:hover p,
 }
 .halo-gold:hover {
   border-color: rgba(196, 151, 70, 0.6) !important;
-  box-shadow: 
+  box-shadow:
     0 4px 18px -2px rgba(196, 151, 70, 0.18),
     0 0 0 1px rgba(196, 151, 70, 0.14),
     inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
@@ -2018,7 +2018,7 @@ a:hover p,
 }
 .halo-emerald:hover {
   border-color: rgba(52, 199, 89, 0.55) !important;
-  box-shadow: 
+  box-shadow:
     0 4px 18px -2px rgba(52, 199, 89, 0.16),
     0 0 0 1px rgba(52, 199, 89, 0.12),
     inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
@@ -2029,7 +2029,7 @@ a:hover p,
 }
 .halo-purple:hover {
   border-color: rgba(175, 82, 222, 0.55) !important;
-  box-shadow: 
+  box-shadow:
     0 4px 18px -2px rgba(175, 82, 222, 0.16),
     0 0 0 1px rgba(175, 82, 222, 0.12),
     inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
@@ -2686,15 +2686,10 @@ p, span, h1, h2, h3, h4, h5, h6, label, button, td, th {
 
 /* 4. Touch Targets Ergonomics for POS & Handheld Mobile */
 @media (max-width: 768px) {
-  button, 
+  button,
   [role="button"],
   input[type="button"],
   input[type="submit"] {
     min-height: 38px;
   }
 }
-
-
-
-
-

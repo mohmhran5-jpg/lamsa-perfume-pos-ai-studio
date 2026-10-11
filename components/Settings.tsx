@@ -29,7 +29,7 @@ import { DashboardLayoutStudioPanel } from './DashboardLayoutStudioPanel';
 import UsersManagement from './UsersManagement';
 import AuditLogViewer from './AuditLogViewer';
 import { FinancialVaults } from './FinancialVaults';
-import { canViewProfits, canViewCosts, hashPassword } from '../services/authService';
+import { canViewProfits, canViewCosts } from '../services/authService';
 import { analyzeLoyaltyProgramWithAI } from '../services/geminiService';
 import { 
   Store, 
@@ -142,7 +142,6 @@ export const Settings: React.FC<SettingsProps> = ({
   onCheckInAttendance,
   onAddWithdrawal,
   onNavigate,
-  onSaveAppUser,
   onAddAuditLog,
   onPreviewUserPermissions,
   onUpdateSale,
@@ -344,12 +343,6 @@ export const Settings: React.FC<SettingsProps> = ({
   const [withdrawAmount, setWithdrawAmount] = useState<number | ''>('');
   const [withdrawReason, setWithdrawReason] = useState('صرف جزء من مخصص راتب الإدارة المعتمد');
   const [withdrawRef, setWithdrawRef] = useState('');
-
-  // Password change in security tab
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
 
   // Financial calculations summary (Live Production Data only)
   const liveSalesList = useMemo(() => sales.filter(s => isLiveProductionSale(s)), [sales]);
@@ -643,9 +636,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
   const handleSaveBottleForm = () => {
     if (!bottleFormData.sizeMl || bottleFormData.sizeMl <= 0) {
-      setToastMessage('يرجى تحديد حجم الزجاجة بالمليلتر.');
-      setIsSavedToast(true);
-      setTimeout(() => setIsSavedToast(false), 3000);
+      alert('يرجى تحديد حجم الزجاجة بالمليلتر.');
       return;
     }
 
@@ -709,9 +700,7 @@ export const Settings: React.FC<SettingsProps> = ({
     const activeCount = bottleSizes.filter(b => b.isActive !== false).length;
 
     if (isCurrentlyActive && activeCount <= 1) {
-      setToastMessage('يجب الإبقاء على حجم زجاجة واحد نشط على الأقل في النظام.');
-      setIsSavedToast(true);
-      setTimeout(() => setIsSavedToast(false), 3000);
+      alert('يجب الإبقاء على حجم زجاجة واحد نشط على الأقل في النظام.');
       return;
     }
 
@@ -819,42 +808,6 @@ export const Settings: React.FC<SettingsProps> = ({
     setToastMessage('تم تسجيل المعاملة المالية وترحيلها للخزائن بنجاح.');
     setIsSavedToast(true);
     setTimeout(() => setIsSavedToast(false), 2500);
-  };
-
-  // Change password for current logged-in user
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasswordError(null);
-    setPasswordSuccess(null);
-
-    if (newPassword.length < 4) {
-      setPasswordError('كلمة المرور يجب أن لا تقل عن 4 خانات.');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      setPasswordError('كلمتا المرور غير متطابقتين.');
-      return;
-    }
-
-    try {
-      const hash = await hashPassword(newPassword);
-      if (currentUser && onSaveAppUser) {
-        const updated: AppUser = {
-          ...currentUser,
-          passwordHash: hash,
-          requiresPasswordChange: false
-        };
-        onSaveAppUser(updated);
-        setPasswordSuccess('تم تحديث وتشفير كلمة المرور بنجاح.');
-        setNewPassword('');
-        setConfirmPassword('');
-      } else {
-        setPasswordSuccess('تم تشفير كلمة المرور بنجاح.');
-      }
-    } catch (err) {
-      setPasswordError('حدث خطأ أثناء تشفير كلمة المرور.');
-    }
   };
 
   // Export JSON Backup file
@@ -3521,67 +3474,31 @@ export const Settings: React.FC<SettingsProps> = ({
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-black text-[#1D1D1F]">الأمان، كلمات المرور، والنسخ الاحتياطي</h2>
-                  <p className="text-xs text-[#86868B]">تشفير بيانات الدخول وتصدير نسخ احتياطية شاملة بصيغة JSON.</p>
+                  <h2 className="text-lg font-black text-[#1D1D1F]">أمان حساب Google والنسخ الاحتياطي</h2>
+                  <p className="text-xs text-[#86868B]">إدارة أمان تسجيل الدخول عبر Google وتصدير نسخة احتياطية بصيغة JSON.</p>
                 </div>
                 <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
                   <KeyRound size={20} />
                 </div>
               </div>
 
-              {/* Password Change Form */}
-              <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-4">
+              {/* Google account security notice */}
+              <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-3">
                 <div className="flex items-center gap-2">
                   <KeyRound size={16} className="text-[#0071E3]" />
-                  <h3 className="font-bold text-xs text-[#1D1D1F]">تغيير كلمة المرور الخاصة بحسابك:</h3>
+                  <h3 className="font-bold text-xs text-[#1D1D1F]">حماية حساب Google</h3>
                 </div>
-
-                {passwordError && (
-                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
-                    {passwordError}
-                  </div>
-                )}
-
-                {passwordSuccess && (
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
-                    {passwordSuccess}
-                  </div>
-                )}
-
-                <form onSubmit={handleChangePassword} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-[#86868B] block text-right">كلمة المرور الجديدة:</label>
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="أدخل كلمة مرور جديدة..."
-                      className="w-full h-10 px-3 rounded-xl bg-white border border-black/[0.08] font-mono text-xs outline-none focus:border-[#0071E3] text-right"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-[#86868B] block text-right">تأكيد كلمة المرور:</label>
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="أعد إدخال كلمة المرور..."
-                      className="w-full h-10 px-3 rounded-xl bg-white border border-black/[0.08] font-mono text-xs outline-none focus:border-[#0071E3] text-right"
-                      required
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2 pt-1">
-                    <button
-                      type="submit"
-                      className="apple-btn px-4 py-2 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold"
-                    >
-                      تحديث كلمة المرور
-                    </button>
-                  </div>
-                </form>
+                <p className="text-xs text-[#6E6E73] leading-6">
+                  يعتمد الدخول إلى التطبيق على Google؛ لا يخزن التطبيق كلمة مرور محلية ولا يستطيع تغيير كلمة مرور Google. لإدارة كلمة المرور أو التحقق بخطوتين، افتح إعدادات أمان حساب Google.
+                </p>
+                <a
+                  href="https://myaccount.google.com/security"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-[#0071E3] text-white text-xs font-bold"
+                >
+                  إعدادات أمان Google
+                </a>
               </div>
 
               {/* Backup & Export */}
@@ -3788,7 +3705,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   }}
                   className="w-full h-10 px-3 rounded-xl bg-white border border-black/[0.08] font-bold"
                 >
-                  <option value="owner_salary">1. راتب مالك (من مخصص الـ 10,000 ج)</option>
+                  <option value="owner_salary">1. راتب مالك (من مخصص الـ 10,500 ج)</option>
                   <option value="owner_profit">2. أرباح مسحوبة (بعد اكتمال الـ 15k)</option>
                   <option value="restock">3. شراء مخزون وخامات (تعويض رأس المال)</option>
                   <option value="utilities">4. مصروف تشغيلي / فواتير</option>
