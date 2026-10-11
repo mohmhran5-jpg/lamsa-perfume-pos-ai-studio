@@ -858,25 +858,25 @@ export const DailyReportAutomationModal: React.FC<DailyReportAutomationModalProp
                     <div className="p-2.5 rounded-xl bg-white/[0.06] border border-white/10">
                       <span className="text-[10px] text-zinc-400 block">إجمالي المبيعات</span>
                       <span className="text-sm font-black font-mono text-white">
-                        {liveTodayReport.metrics.totalRevenue.toLocaleString('ar-EG')} {currency}
+                        {(liveTodayReport.metrics?.totalRevenue ?? 0).toLocaleString('ar-EG')} {currency}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white/[0.06] border border-white/10">
                       <span className="text-[10px] text-zinc-400 block">صافي الربح المحقق</span>
                       <span className="text-sm font-black font-mono text-emerald-400">
-                        +{Math.round(liveTodayReport.metrics.netProfit).toLocaleString('ar-EG')} {currency}
+                        +{(Math.round(liveTodayReport.metrics?.netProfit ?? 0)).toLocaleString('ar-EG')} {currency}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white/[0.06] border border-white/10">
                       <span className="text-[10px] text-zinc-400 block">عدد الفواتير والعبوات</span>
                       <span className="text-xs font-black font-mono text-amber-300">
-                        {liveTodayReport.metrics.salesCount} فاتورة ({liveTodayReport.metrics.totalBottlesSold} عبوة)
+                        {liveTodayReport.metrics?.salesCount ?? 0} فاتورة ({liveTodayReport.metrics?.totalBottlesSold ?? 0} عبوة)
                       </span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white/[0.06] border border-white/10">
                       <span className="text-[10px] text-zinc-400 block">النقدية بالدرج</span>
                       <span className="text-xs font-black font-mono text-blue-300">
-                        {liveTodayReport.metrics.expectedCashInDrawer.toLocaleString('ar-EG')} {currency}
+                        {(liveTodayReport.metrics?.expectedCashInDrawer ?? 0).toLocaleString('ar-EG')} {currency}
                       </span>
                     </div>
                   </div>
@@ -1279,8 +1279,8 @@ export const DailyReportAutomationModal: React.FC<DailyReportAutomationModalProp
                             </span>
                           </div>
                           <span className="text-[10px] text-[#636366] font-mono block mt-0.5 truncate">
-                            المبيعات: {item.metrics.totalRevenue.toLocaleString('ar-EG')} {currency} · صافي الربح: +
-                            {Math.round(item.metrics.netProfit).toLocaleString('ar-EG')} {currency} · واتساب:{' '}
+                            المبيعات: {(item.metrics?.totalRevenue ?? 0).toLocaleString('ar-EG')} {currency} · صافي الربح: +
+                            {(Math.round(item.metrics?.netProfit ?? 0)).toLocaleString('ar-EG')} {currency} · واتساب:{' '}
                             {item.whatsappPhone} / {item.whatsappSecondaryPhone || '01062018755'}
                           </span>
                         </div>
@@ -1394,11 +1394,11 @@ export const DailyReportAutomationModal: React.FC<DailyReportAutomationModalProp
               <div>
                 • <strong>الأداء:</strong> مبيعات{' '}
                 <strong className="font-mono">
-                  {pendingConfirmReport.metrics.totalRevenue.toLocaleString('ar-EG')} {currency}
+                  {(pendingConfirmReport?.metrics?.totalRevenue ?? 0).toLocaleString('ar-EG')} {currency}
                 </strong>{' '}
-                ({pendingConfirmReport.metrics.salesCount} فاتورة) · صافي ربح{' '}
+                ({pendingConfirmReport?.metrics?.salesCount ?? 0} فاتورة) · صافي ربح{' '}
                 <strong className="font-mono text-emerald-700">
-                  +{Math.round(pendingConfirmReport.metrics.netProfit).toLocaleString('ar-EG')} {currency}
+                  +{(Math.round(pendingConfirmReport?.metrics?.netProfit ?? 0)).toLocaleString('ar-EG')} {currency}
                 </strong>
               </div>
             </div>

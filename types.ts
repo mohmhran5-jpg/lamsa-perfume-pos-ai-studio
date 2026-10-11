@@ -1649,6 +1649,160 @@ export enum View {
   AUDIT_LOGS = 'AUDIT_LOGS',
   STAFF_ENTITLEMENTS = 'STAFF_ENTITLEMENTS',
   DAY_OPERATIONS = 'DAY_OPERATIONS',
+  STAFF_ENTITLEMENTS = 'STAFF_ENTITLEMENTS',
+}
+
+export interface CommissionPolicy {
+  id: string;
+  policyName: string;
+  baseRate: number;
+  tieredRate: number;
+  tierThresholdBottles: number;
+  eligibleTypes: string[];
+  isRollOnEligible: boolean;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  approvedBy: string;
+  approvedAt: string;
+  reason?: string;
+  isActive: boolean;
+}
+
+export interface StaffBaseSalaryConfig {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  monthlySalaryEgp: number;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  payPeriodFrequency?: 'monthly' | 'weekly' | 'biweekly';
+  approvedBy: string;
+  notes?: string;
+}
+
+export interface StaffIncentive {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  incentiveType?: string;
+  date: string;
+  relevantPeriodStr?: string;
+  reason: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'مصروف' | 'ملغى';
+  createdAt?: string;
+  payoutTransactionId?: string;
+  notes?: string;
+}
+
+export interface StaffDeduction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  deductionType?: string;
+  date: string;
+  relevantPeriodStr?: string;
+  reason: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'منفذ' | 'ملغى';
+  createdAt?: string;
+  notes?: string;
+}
+
+export interface StaffAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  date: string;
+  reason: string;
+  paymentMethod?: string;
+  approvedBy: string;
+  repaymentPlan?: string;
+  settledAmountEgp?: number;
+  remainingAmountEgp: number;
+  status: 'نشطة' | 'مسددة بالكامل' | 'ملغاة';
+  createdAt?: string;
+  notes?: string;
+}
+
+export interface StaffSettlementTransaction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  transactionType: any;
+  totalAmountEgp: number;
+  breakdown?: any;
+  paymentMethod: string;
+  vaultId?: string;
+  executedBy: string;
+  approvedBy: string;
+  reason: string;
+  notes?: string;
+  status: 'تم_الصرف' | 'معلقة' | 'ملغاة' | 'بانتظار_الاعتماد';
+  receiptReference?: string;
+}
+
+export interface DailyCommissionAuditRecord {
+  id: string;
+  date: string;
+  employeeId: string;
+  employeeName: string;
+  eligibleSalesCount: number;
+  sprayBottlesCount: number;
+  rollOnBottlesCount: number;
+  bottlesAt5Percent: number;
+  bottlesAt7Percent: number;
+  eligibleNetRevenueEgp: number;
+  calculatedCommissionEgp: number;
+  tier1CommissionEgp: number;
+  tier2CommissionEgp: number;
+  adjustmentsAndReturnsEgp: number;
+  policyIdUsed: string;
+  recordedInEntitlementsEgp: number;
+  alreadyPaidEgp: number;
+  remainingDueEgp: number;
+  auditState: 'معتمدة' | 'تحتاج_مراجعة' | 'فرق_غير_معتمد' | 'لم_تُحتسب_بعد';
+  discrepancyDeltaEgp: number;
+  lastCalculatedAt: string;
+  lastApprovedBy?: string;
+  notes?: string;
+}
+
+export interface CommissionAuditLog {
+  id: string;
+  date: string;
+  employeeName: string;
+  previousCommissionEgp: number;
+  newCorrectCommissionEgp: number;
+  differenceDeltaEgp: number;
+  reason: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface StaffMemberEntitlementSummary {
+  employeeId: string;
+  employeeName: string;
+  monthlyBaseSalaryEgp: number;
+  dailySalaryRateEgp: number;
+  elapsedWorkDaysPeriod: number;
+  isCurrentOngoingPeriod: boolean;
+  earnedSalaryPeriodEgp: number;
+  earnedCommissionsPeriodEgp: number;
+  approvedIncentivesPeriodEgp: number;
+  approvedAdditionsEgp: number;
+  outstandingAdvancesEgp: number;
+  approvedDeductionsEgp: number;
+  totalPreviouslyPaidEgp: number;
+  totalExpensesPaidEgp?: number; // إجمالي المصروف: المسحوبات المنصرفة + الخصومات + السلف
+  totalEntitlementsGrossEgp: number;
+  netRemainingBalanceDueEgp: number;
+  pendingApprovalsCount: number;
+  discrepanciesAlertCount: number;
 }
 
 export interface CustomerLoyaltyLog {

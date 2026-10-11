@@ -512,6 +512,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       { id: View.CUSTOMERS_LOYALTY, label: 'العملاء والولاء', icon: Crown, badge: null },
       { id: View.FORMULATION_ENGINE, label: 'محرك التركيب', icon: Sliders, badge: null },
       { id: View.EXPENSES, label: 'المصاريف', icon: Wallet, badge: null },
+      { id: View.SETTINGS, label: 'الإعدادات والتحكم', icon: Sliders, badge: null },
     ] as const).filter(item => canAccessView(currentUser, item.id));
   }, [currentUser, todayReportData.todaysSalesCount, products.length]);
 
@@ -550,7 +551,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               <button
                 type="button"
                 onClick={() => setIsProfilePopoverOpen(!isProfilePopoverOpen)}
-                className="apple-pill-btn halo-gold h-11 sm:h-12 px-3.5 sm:px-4 min-w-[150px] sm:min-w-[190px] justify-between group"
+                className="apple-pill-btn halo-gold h-10 sm:h-12 px-2 sm:px-3.5 min-w-0 max-w-[110px] sm:max-w-[160px] md:max-w-none justify-between group cursor-pointer"
                 title="إدارة الحساب وتبديل المستخدم"
               >
                 <div className="text-right min-w-0">
@@ -558,12 +559,12 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                     {isOwner ? 'أهلاً د. محمد' : 'أهلاً طارق'}
                   </div>
                   <div className="text-[10px] text-[#86868B] font-medium truncate mt-0.5 leading-none">
-                    {isOwner ? 'الإدارة العامة' : (currentUser?.phone || '01008518800 · كاشير')}
+                    {isOwner ? 'الإدارة العامة' : (currentUser?.phone || 'كاشير ومبيعات')}
                   </div>
                 </div>
                 <ChevronDown 
-                  size={14} 
-                  className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform duration-200 ${isProfilePopoverOpen ? 'rotate-180 text-[#0071E3]' : ''}`} 
+                  size={13} 
+                  className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform duration-200 mr-1 ${isProfilePopoverOpen ? 'rotate-180 text-[#0071E3]' : ''}`} 
                 />
               </button>
 
@@ -685,12 +686,12 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
             </div>
 
             {/* LEFT SIDE: Labeled Capsule Buttons with Soft Chromatic Halos */}
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 justify-end">
               {/* 1. Labeled Search Capsule */}
               <button
                 type="button"
                 onClick={() => setIsSearchModalOpen(true)}
-                className="apple-pill-btn halo-gold h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F]"
+                className="apple-pill-btn halo-gold h-10 sm:h-11 px-2.5 sm:px-3 text-xs font-bold text-[#1D1D1F] cursor-pointer"
                 title="بحث ذكي في العطور والتركيبات"
               >
                 <Search size={15} className="text-[#C49746] shrink-0" strokeWidth={2} />
@@ -701,11 +702,11 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               <button
                 type="button"
                 onClick={() => onNavigate?.(View.POS)}
-                className={`apple-pill-btn halo-blue h-11 px-3 sm:px-3.5 text-xs font-bold relative ${currentView === View.POS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
+                className={`apple-pill-btn halo-blue h-10 sm:h-11 px-2.5 sm:px-3.5 text-xs font-bold relative cursor-pointer ${currentView === View.POS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
                 title="الكاشير والمبيعات"
               >
                 <ShoppingBag size={15} className={currentView === View.POS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
-                <span>الكاشير</span>
+                <span className="hidden xs:inline">الكاشير</span>
                 {todayReportData.todaysSalesCount > 0 && (
                   <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[9.5px] font-mono font-black flex items-center justify-center ${currentView === View.POS ? 'bg-white text-[#0071E3]' : 'bg-[#0071E3] text-white shadow-2xs'}`}>
                     {todayReportData.todaysSalesCount}
@@ -718,49 +719,51 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 <button
                   type="button"
                   onClick={onOpenLiveAlertsRadar}
-                  className="apple-pill-btn halo-emerald h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
+                  className="apple-pill-btn halo-emerald h-10 sm:h-11 px-2.5 sm:px-3 text-xs font-bold text-[#1D1D1F] relative cursor-pointer"
                   title="رادار التنبيهات والتزامن الحي لمدير النظام د. محمد"
                 >
                   <Bell size={15} className="text-[#34C759] shrink-0" strokeWidth={2} />
-                  <span className="hidden sm:inline">رادار التنبيهات</span>
+                  <span className="hidden md:inline">الرادار</span>
                   <span className="w-2 h-2 rounded-full bg-[#34C759] ring-2 ring-white animate-pulse shrink-0" />
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={() => onNavigate && onNavigate(View.STAFF_ENTITLEMENTS)}
-                  className="apple-pill-btn halo-blue h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] relative"
+                  className="apple-pill-btn halo-blue h-10 sm:h-11 px-2.5 sm:px-3 text-xs font-bold text-[#1D1D1F] relative cursor-pointer"
                   title="قسم مستحقات طارق وعمولات اليوم وتوجيهات العمل"
                 >
                   <Award size={15} className="text-[#0071E3] shrink-0" strokeWidth={2} />
-                  <span className="hidden sm:inline">عمولاتي ومستحقاتي</span>
+                  <span className="hidden md:inline">مستحقاتي</span>
                   <span className="w-2 h-2 rounded-full bg-[#0071E3] ring-2 ring-white animate-pulse shrink-0" />
                 </button>
               )}
 
-              {/* 4. Settings & Control Hub Capsule (حصر ظهوره للمالك فقط - محجوب عن حساب طارق لمنع التشتت) */}
-              {isOwner && (
-                <button
-                  type="button"
-                  onClick={() => onNavigate?.(View.SETTINGS)}
-                  className={`apple-pill-btn halo-amber h-11 px-3 sm:px-3.5 text-xs font-bold relative ${currentView === View.SETTINGS ? 'bg-[#1D1D1F] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
-                  title="مركز التحكم والإعدادات الإدارية"
-                >
-                  <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
-                  <span className="hidden sm:inline">الإعدادات والتحكم</span>
-                </button>
-              )}
+              {/* 4. Settings & Control Hub Capsule - Always visible and responsive */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.(View.SETTINGS)}
+                className={`apple-pill-btn halo-amber h-10 sm:h-11 px-2.5 sm:px-3.5 text-xs font-bold relative cursor-pointer transition-all ${
+                  currentView === View.SETTINGS 
+                    ? 'bg-[#1D1D1F] text-amber-300 shadow-apple-xs ring-1 ring-amber-400/40' 
+                    : 'text-[#1D1D1F] hover:bg-amber-500/10'
+                }`}
+                title="مركز التحكم والإعدادات الإدارية"
+              >
+                <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
+                <span className="hidden sm:inline">الإعدادات</span>
+              </button>
 
-              {/* 4. CONSOLIDATED TOOLS MENU CAPSULE (دمج الأزرار في قائمة موحدة لمنع الزحام) */}
+              {/* 5. CONSOLIDATED TOOLS MENU CAPSULE */}
               <div className="relative" ref={toolsMenuRef}>
                 <button
                   type="button"
                   onClick={() => setIsToolsMenuOpen(!isToolsMenuOpen)}
-                  className="apple-pill-btn halo-purple h-11 px-3 sm:px-3.5 text-xs font-bold text-[#1D1D1F] group"
+                  className="apple-pill-btn halo-purple h-10 sm:h-11 px-2.5 sm:px-3 text-xs font-bold text-[#1D1D1F] group cursor-pointer"
                   title="قائمة الأدوات السريعة للمتجر"
                 >
                   <Sparkles size={14} className="text-purple-600 shrink-0" />
-                  <span className="hidden sm:inline">الأدوات</span>
+                  <span className="hidden md:inline">الأدوات</span>
                   <ChevronDown size={13} className={`text-[#86868B] group-hover:text-[#1D1D1F] shrink-0 transition-transform ${isToolsMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
 
@@ -779,6 +782,26 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         <span className="text-[11px] font-black text-[#1D1D1F]">الأدوات والإعدادات المدمجة:</span>
                         <span className="text-[9.5px] font-bold text-[#86868B]">وصول مباشر</span>
                       </div>
+
+                      {/* Control Hub Direct Link in Menu */}
+                      {(isOwner || currentUser?.permissions?.canManageSettings || currentUser?.role === 'ADMIN') && onNavigate && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            onNavigate(View.SETTINGS);
+                          }}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border border-amber-200/50 bg-amber-50/30"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
+                            <Sliders size={14} />
+                          </div>
+                          <div className="text-right">
+                            <span className="block font-black">⚙️ مركز التحكم والإعدادات</span>
+                            <span className="text-[9.5px] text-[#86868B]">الموظفين، العمولات، الموازنة، والهوية</span>
+                          </div>
+                        </button>
+                      )}
 
                       {/* Theme Studio */}
                       {onOpenThemeStudio && (

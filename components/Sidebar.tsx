@@ -496,12 +496,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                     <span className={`text-xs font-black ${sec.headerText}`}>{sec.title}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {sec.items.map((item) => {
+                    {sec.items.map((item, itemIdx) => {
                       const Icon = item.icon;
                       const isActive = currentView === item.id;
                       return (
                         <button
-                          key={item.id}
+                          key={item.id || `item-${itemIdx}-${item.label}`}
                           type="button"
                           onClick={() => handleItemClick(item)}
                           className={`p-2.5 rounded-xl border text-right flex items-center gap-2 transition-all ${
@@ -714,12 +714,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                 {/* Collapsible Section Items */}
                 {isSecOpen && (
                   <div className="p-1.5 space-y-1">
-                    {section.items.map((item) => {
+                    {section.items.map((item, itemIdx) => {
                       const Icon = item.icon;
                       const isActive = currentView === item.id;
                       return (
                         <button
-                          key={item.id}
+                          key={item.id || `item-${itemIdx}-${item.label}`}
                           type="button"
                           data-active-button={isActive ? 'true' : undefined}
                           onClick={() => handleItemClick(item)}
@@ -861,6 +861,113 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       </aside>
+
+      {/* ======================================================== */}
+      {/* MOBILE PERSISTENT BOTTOM NAVIGATION DOCK (iOS Style)    */}
+      {/* ======================================================== */}
+      <nav 
+        aria-label="شريط التنقل السفلي للهاتف"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-black/[0.08] shadow-apple-lg px-2 py-1 select-none"
+      >
+        <div className="flex items-center justify-around gap-1 max-w-md mx-auto">
+          {/* 1. POS */}
+          <button
+            type="button"
+            onClick={() => setCurrentView(View.POS)}
+            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+              currentView === View.POS
+                ? 'text-[#0071E3] font-black'
+                : 'text-[#86868B] hover:text-[#1D1D1F]'
+            }`}
+          >
+            <div className={`p-1 rounded-lg ${currentView === View.POS ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+              <ShoppingBag size={18} />
+            </div>
+            <span className="text-[10px] leading-none">الكاشير</span>
+          </button>
+
+          {/* 2. Dashboard */}
+          <button
+            type="button"
+            onClick={() => setCurrentView(View.DASHBOARD)}
+            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+              currentView === View.DASHBOARD
+                ? 'text-[#0071E3] font-black'
+                : 'text-[#86868B] hover:text-[#1D1D1F]'
+            }`}
+          >
+            <div className={`p-1 rounded-lg ${currentView === View.DASHBOARD ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+              <LayoutDashboard size={18} />
+            </div>
+            <span className="text-[10px] leading-none">الرئيسية</span>
+          </button>
+
+          {/* 3. Reports */}
+          <button
+            type="button"
+            onClick={() => setCurrentView(View.REPORTS)}
+            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+              currentView === View.REPORTS
+                ? 'text-[#0071E3] font-black'
+                : 'text-[#86868B] hover:text-[#1D1D1F]'
+            }`}
+          >
+            <div className={`p-1 rounded-lg ${currentView === View.REPORTS ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+              <FileText size={18} />
+            </div>
+            <span className="text-[10px] leading-none">الفواتير</span>
+          </button>
+
+          {/* 4. Inventory */}
+          <button
+            type="button"
+            onClick={() => setCurrentView(View.INVENTORY)}
+            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer relative ${
+              currentView === View.INVENTORY
+                ? 'text-[#0071E3] font-black'
+                : 'text-[#86868B] hover:text-[#1D1D1F]'
+            }`}
+          >
+            <div className={`p-1 rounded-lg ${currentView === View.INVENTORY ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+              <Box size={18} />
+            </div>
+            <span className="text-[10px] leading-none">المخزون</span>
+            {lowStockCount > 0 && (
+              <span className="absolute top-0 right-2 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+            )}
+          </button>
+
+          {/* 5. Settings */}
+          <button
+            type="button"
+            onClick={() => setCurrentView(View.SETTINGS)}
+            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+              currentView === View.SETTINGS
+                ? 'text-amber-600 font-black'
+                : 'text-[#86868B] hover:text-[#1D1D1F]'
+            }`}
+          >
+            <div className={`p-1 rounded-lg ${currentView === View.SETTINGS ? 'bg-amber-500/15 text-amber-600' : ''}`}>
+              <Sliders size={18} />
+            </div>
+            <span className="text-[10px] leading-none">الإعدادات</span>
+          </button>
+
+          {/* 6. All Sections Drawer */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+              mobileMenuOpen ? 'text-[#1D1D1F] font-black' : 'text-[#86868B] hover:text-[#1D1D1F]'
+            }`}
+          >
+            <div className="p-1 rounded-lg">
+              <Layers size={18} />
+            </div>
+            <span className="text-[10px] leading-none">الأقسام</span>
+          </button>
+        </div>
+      </nav>
     </>
   );
 };

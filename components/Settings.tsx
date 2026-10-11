@@ -21,7 +21,8 @@ import {
   AuditLogRecord,
   buildCommercialReferenceRow,
   isLiveProductionSale,
-  isLiveProductionWithdrawal
+  isLiveProductionWithdrawal,
+  APPROVED_FIXED_BUDGET_ITEMS
 } from '../types';
 import { ThermalReceiptLiveView } from './ReceiptModal';
 import { AppleThemeStudioPanel } from './AppleThemeStudioModal';
@@ -146,38 +147,62 @@ export const Settings: React.FC<SettingsProps> = ({
   onAddAuditLog,
   onPreviewUserPermissions,
   onUpdateSale,
-  initialSection = 'staff_management'
+  initialSection = 'pricing'
 }) => {
   const isOwner = currentUser?.role === 'OWNER';
 
-  // Active Main Administrative Tab
+  // Active Main Administrative Tab (Default to 'pricing' to immediately show real numbers & controls)
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
-    if (initialSection === 'loyalty_ai' || initialSection === 'budget') return 'budget_management';
-    if (['identity', 'pricing', 'privacy', 'pos_receipts', 'inventory', 'security_backup', 'themes', 'dashboard_layout'].includes(initialSection)) {
+    if (initialSection === 'loyalty_ai' || initialSection === 'budget' || initialSection === 'vaults') return 'budget_management';
+    if (['identity', 'privacy', 'pos_receipts', 'inventory', 'security_backup', 'themes', 'dashboard_layout'].includes(initialSection)) {
       return 'system_settings';
     }
-    return initialSection || 'staff_management';
+    return initialSection || 'pricing';
   });
 
   // System Settings Sub-Tab
-  const [systemSubTab, setSystemSubTab] = useState<'identity' | 'themes' | 'pos_receipts' | 'pricing_inventory' | 'security_backup'>('identity');
+  const [systemSubTab, setSystemSubTab] = useState<'identity' | 'themes' | 'pos_receipts' | 'pricing' | 'inventory' | 'security_backup' | 'loyalty_ai' | 'dashboard_layout'>('identity');
+
+  // Budget Management Sub-Tab
+  const [budgetSubTab, setBudgetSubTab] = useState<'budget_target' | 'vaults'>('budget_target');
+
+  // Interactive Commission Simulator State for commission_policies tab
+  const [simSoldBottles, setSimSoldBottles] = useState<number>(12);
+  const [simAvgBottlePrice, setSimAvgBottlePrice] = useState<number>(120);
 
   const [searchTerm, setSearchTerm] = useState('');
 
   // Sync if initialSection prop changes or if navigated from Dashboard customization button
   useEffect(() => {
+    let target = initialSection;
     try {
       const requestedSection = sessionStorage.getItem('lamsa_open_settings_section') as SettingsSection | null;
       if (requestedSection) {
         sessionStorage.removeItem('lamsa_open_settings_section');
-        setActiveSection(requestedSection);
-        return;
+        target = requestedSection;
       }
     } catch {
       // ignore storage errors
     }
-    if (initialSection) {
-      setActiveSection(initialSection === 'loyalty_ai' ? 'budget' : initialSection);
+
+    if (!target) return;
+
+    if (target === 'pricing') {
+      setActiveSection('pricing');
+    } else if (['identity', 'privacy', 'pos_receipts', 'inventory', 'security_backup', 'themes', 'dashboard_layout', 'loyalty_ai'].includes(target)) {
+      setActiveSection('system_settings');
+      if (target === 'inventory') setSystemSubTab('inventory');
+      else if (target === 'themes') setSystemSubTab('themes');
+      else if (target === 'pos_receipts') setSystemSubTab('pos_receipts');
+      else if (target === 'security_backup') setSystemSubTab('security_backup');
+      else if (target === 'loyalty_ai') setSystemSubTab('loyalty_ai');
+      else if (target === 'dashboard_layout') setSystemSubTab('dashboard_layout');
+      else setSystemSubTab('identity');
+    } else if (target === 'budget' || target === 'vaults') {
+      setActiveSection('budget_management');
+      setBudgetSubTab(target === 'vaults' ? 'vaults' : 'budget_target');
+    } else {
+      setActiveSection(target);
     }
   }, [initialSection]);
 
@@ -945,202 +970,477 @@ export const Settings: React.FC<SettingsProps> = ({
       )}
 
       {/* ======================================================== */}
-      {/* 2. MASTER CONTROL ROADMAP (خريطة وأقسام مركز التحكم الإداري) */}
+      {/* 2. REAL OPERATIONAL KPIS & NUMBERS STRIP                */}
       {/* ======================================================== */}
-      <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-[#1D1D1F] via-[#2A2A2E] to-[#121215] text-white border border-white/10 shadow-2xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
-              <Crown size={18} className="text-amber-400" />
+      <div className="apple-glass rounded-3xl p-3.5 sm:p-4 border border-black/[0.08] shadow-apple-sm bg-gradient-to-r from-amber-500/5 via-white to-blue-500/5 space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-black/[0.06]">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center font-bold">
+              <Crown size={16} />
             </div>
             <div>
-              <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-                <span>خريطة مركز التحكم الإداري الشامل لمحل «لمسة عطر»</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-bold">11 قسماً تنفيذاً</span>
+              <h2 className="text-xs sm:text-sm font-black text-[#1D1D1F] flex items-center gap-2">
+                <span>المؤشرات والأرقام التشغيلية المعتمدة لمتجر «لمسة عطر»</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold font-mono">
+                  معتمدة لحظياً
+                </span>
               </h2>
-              <p className="text-xs text-gray-300 mt-0.5">
-                دليل سريع للوصول لكافة أدوات الإدارة، الموازنة، التسعير، الفواتير، والأمان بنقرة واحدة
-              </p>
+              <span className="text-[11px] text-[#86868B]">
+                {isOwner ? '👤 الحساب الحالي: د. محمد (المالك والمدير العام)' : '👤 الحساب الحالي: الكاشير ومسؤول التشغيل'}
+              </span>
             </div>
           </div>
-          <div className="text-[11px] text-gray-400 font-mono">
-            {isOwner ? '👤 الحساب الحالي: د. محمد (مدير النظام والمالك)' : '👤 الحساب الحالي: الكاشير (صلاحيات تشغيلية)'}
+          <div className="text-[11px] text-gray-500 font-medium text-right sm:text-left">
+            التعديل المباشر ينعكس تلقائياً على منظومة الكاشير والفواتير وحسابات الأرباح
           </div>
         </div>
 
-        {/* 5 Master Administrative Tabs Roadmap Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
-          {/* Tab 1: Staff Management */}
-          <button
-            type="button"
-            onClick={() => setActiveSection('staff_management')}
-            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
-              activeSection === 'staff_management'
-                ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-sm'
-                : 'bg-white/5 border-white/10 hover:border-amber-400/40 text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-1 font-black mb-1">
-              <span className="flex items-center gap-1.5"><Users size={15} /> 1. إدارة الموظفين</span>
-              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">RBAC</span>
+        {/* 6 Real Numbers KPI Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-right">
+          {/* Card 1 */}
+          <div className="p-2.5 rounded-2xl bg-white border border-black/[0.06] shadow-2xs">
+            <span className="text-[10.5px] text-[#86868B] block font-bold">🧴 زيت عادي:</span>
+            <div className="font-mono text-sm sm:text-base font-black text-[#0071E3] mt-0.5">
+              {localSettings.priceEssenceNormal} <span className="text-[10px] text-gray-500 font-sans font-normal">ج/جم</span>
             </div>
-            <p className="text-[11px] opacity-80 leading-tight">حسابات كادر العمل والصلاحيات ومعاينة أدوار الكاشير</p>
-          </button>
+            <span className="text-[9.5px] text-gray-400 block mt-0.5">تكلفة الجرام</span>
+          </div>
 
-          {/* Tab 2: Commission Policies */}
-          <button
-            type="button"
-            onClick={() => setActiveSection('commission_policies')}
-            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
-              activeSection === 'commission_policies'
-                ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-bold shadow-sm'
-                : 'bg-white/5 border-white/10 hover:border-emerald-400/40 text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-1 font-black mb-1">
-              <span className="flex items-center gap-1.5"><Award size={15} /> 2. سياسات العمولات</span>
-              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">5% / 7%</span>
+          {/* Card 2 */}
+          <div className="p-2.5 rounded-2xl bg-white border border-teal-200/80 shadow-2xs">
+            <span className="text-[10.5px] text-teal-800 block font-bold">🌿 زيت النيش:</span>
+            <div className="font-mono text-sm sm:text-base font-black text-teal-700 mt-0.5">
+              {localSettings.priceEssenceNiche ?? 15} <span className="text-[10px] text-gray-500 font-sans font-normal">ج/جم</span>
             </div>
-            <p className="text-[11px] opacity-80 leading-tight">شريحة الفائض، التارجت، واحتياطي الحوافز (500 ج)</p>
-          </button>
+            <span className="text-[9.5px] text-teal-600 block mt-0.5">+5ج عن العادي</span>
+          </div>
 
-          {/* Tab 3: Budget Management */}
-          <button
-            type="button"
-            onClick={() => setActiveSection('budget_management')}
-            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
-              activeSection === 'budget_management'
-                ? 'bg-blue-500 text-white border-blue-400 font-bold shadow-sm'
-                : 'bg-white/5 border-white/10 hover:border-blue-400/40 text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-1 font-black mb-1">
-              <span className="flex items-center gap-1.5"><Target size={15} /> 3. إدارة الموازنة</span>
-              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">15,000 ج</span>
+          {/* Card 3 */}
+          <div className="p-2.5 rounded-2xl bg-white border border-amber-200/80 shadow-2xs">
+            <span className="text-[10.5px] text-amber-800 block font-bold">🟤 عود ومسك:</span>
+            <div className="font-mono text-sm sm:text-base font-black text-amber-700 mt-0.5">
+              {localSettings.priceEssenceSpecial ?? 20} <span className="text-[10px] text-gray-500 font-sans font-normal">ج/جم</span>
             </div>
-            <p className="text-[11px] opacity-80 leading-tight">بنود الموازنة الثابتة والخزائن ومسحوبات المالك</p>
-          </button>
+            <span className="text-[9.5px] text-amber-600 block mt-0.5">+10ج عن العادي</span>
+          </div>
 
-          {/* Tab 4: System Settings */}
-          <button
-            type="button"
-            onClick={() => setActiveSection('system_settings')}
-            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
-              activeSection === 'system_settings'
-                ? 'bg-purple-500 text-white border-purple-400 font-bold shadow-sm'
-                : 'bg-white/5 border-white/10 hover:border-purple-400/40 text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-1 font-black mb-1">
-              <span className="flex items-center gap-1.5"><Sliders size={15} /> 4. إعدادات النظام</span>
-              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">الطباعة والهوية</span>
+          {/* Card 4 */}
+          <div className="p-2.5 rounded-2xl bg-white border border-emerald-200/80 shadow-2xs">
+            <span className="text-[10.5px] text-emerald-800 block font-bold">💰 عمولة الكادر:</span>
+            <div className="font-mono text-sm sm:text-base font-black text-emerald-700 mt-0.5">
+              {(localSettings.commissionRate * 100).toFixed(0)}% <span className="text-[10px] text-emerald-600 font-sans font-bold">/ {(localSettings.tieredCommissionRate * 100).toFixed(0)}%</span>
             </div>
-            <p className="text-[11px] opacity-80 leading-tight">الهوية، الثيمات، تصميم الفواتير، التكاليف والنسخ</p>
-          </button>
+            <span className="text-[9.5px] text-emerald-600 block mt-0.5">أساسي / فائض</span>
+          </div>
 
-          {/* Tab 5: Audit Log */}
-          <button
-            type="button"
-            onClick={() => setActiveSection('audit_log')}
-            className={`p-3 rounded-2xl border text-right transition-all cursor-pointer ${
-              activeSection === 'audit_log'
-                ? 'bg-amber-600 text-white border-amber-400 font-bold shadow-sm'
-                : 'bg-white/5 border-white/10 hover:border-amber-400/40 text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-1 font-black mb-1">
-              <span className="flex items-center gap-1.5"><History size={15} /> 5. سجل التدقيق</span>
-              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-black/20 font-mono">السرية</span>
+          {/* Card 5 */}
+          <div className="p-2.5 rounded-2xl bg-white border border-blue-200/80 shadow-2xs">
+            <span className="text-[10.5px] text-blue-800 block font-bold">🎯 موازنة 15k:</span>
+            <div className="font-mono text-sm sm:text-base font-black text-[#0071E3] mt-0.5">
+              {localSettings.monthlyFixedBudget?.toLocaleString('ar-EG')} <span className="text-[10px] text-gray-500 font-sans font-normal">ج</span>
             </div>
-            <p className="text-[11px] opacity-80 leading-tight">تتبع تغيير الأسعار، تعديل التكاليف وسجلات الأمان</p>
-          </button>
+            <span className="text-[9.5px] text-blue-600 block mt-0.5">شهري معتمد</span>
+          </div>
+
+          {/* Card 6 */}
+          <div className="p-2.5 rounded-2xl bg-white border border-purple-200/80 shadow-2xs">
+            <span className="text-[10.5px] text-purple-800 block font-bold">📈 تارجت يومي:</span>
+            <div className="font-mono text-sm sm:text-base font-black text-purple-700 mt-0.5">
+              {localSettings.dailyTargetProfit?.toLocaleString('ar-EG')} <span className="text-[10px] text-gray-500 font-sans font-normal">ج</span>
+            </div>
+            <span className="text-[9.5px] text-purple-600 block mt-0.5">مرحلة 600ج</span>
+          </div>
         </div>
       </div>
 
       {/* ======================================================== */}
-      {/* 2. MAIN 2-COLUMN LAYOUT: INDEXED SIDEBAR + ACTIVE PANEL  */}
+      {/* 3. MASTER HORIZONTAL SEGMENTED NAVIGATION DOCK           */}
       {/* ======================================================== */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* Left Column (Right in RTL): Navigation & Search Index */}
-        <div className="lg:col-span-4 space-y-3">
-          
-          {/* Search Index Input */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="ابحث في الإعدادات والتحكم..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-11 px-4 pr-10 rounded-2xl bg-white border border-black/[0.08] text-xs font-medium outline-none focus:border-[#0071E3] focus:ring-2 focus:ring-[#0071E3]/20 shadow-apple-xs transition-all"
-            />
-            <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#86868B]" />
-            {searchTerm && (
+      <div className="apple-glass rounded-2xl p-1.5 border border-black/[0.08] shadow-apple-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth">
+          {[
+            { id: 'pricing', label: '🏷️ التسعير وتكلفة الخامات والعبوات', badge: 'أسعار', icon: DollarSign },
+            { id: 'commission_policies', label: '💰 سياسات العمولات والحوافز والتارجت', badge: '5% - 7%', icon: Award },
+            { id: 'budget_management', label: '🎯 الموازنة المعتمدة (15,000 ج) والخزائن', badge: '15k', icon: Target },
+            { id: 'system_settings', label: '🏬 الهوية والفواتير والطباعة', badge: 'النظام', icon: Sliders },
+            { id: 'staff_management', label: '👥 إدارة الموظفين والصلاحيات (RBAC)', badge: 'الكادر', icon: Users },
+            { id: 'audit_log', label: '📜 سجل التدقيق والرقابة وتتبع الأسعار', badge: 'الأمان', icon: History },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isTabActive = 
+              activeSection === tab.id ||
+              (tab.id === 'budget_management' && (activeSection === 'budget' || activeSection === 'vaults')) ||
+              (tab.id === 'system_settings' && ['identity', 'privacy', 'pos_receipts', 'inventory', 'security_backup', 'themes', 'dashboard_layout', 'loyalty_ai'].includes(activeSection));
+
+            return (
               <button
-                onClick={() => setSearchTerm('')}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#86868B] hover:text-[#1D1D1F]"
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSection(tab.id as SettingsSection)}
+                className={`px-3.5 py-2.5 rounded-xl text-xs font-black whitespace-nowrap flex items-center gap-2 transition-all cursor-pointer shrink-0 ${
+                  isTabActive
+                    ? 'bg-[#1D1D1F] text-white shadow-apple-sm scale-[1.01]'
+                    : 'text-[#505055] hover:text-[#1D1D1F] hover:bg-black/[0.04]'
+                }`}
               >
-                مسح
+                <Icon size={14} className={isTabActive ? 'text-amber-400' : 'text-[#86868B]'} />
+                <span>{tab.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  isTabActive ? 'bg-white/20 text-white' : 'bg-black/[0.05] text-gray-600'
+                }`}>
+                  {tab.badge}
+                </span>
               </button>
-            )}
-          </div>
-
-          {/* Navigation Category List */}
-          <div className="apple-glass rounded-3xl p-2 border border-black/[0.06] shadow-apple-sm space-y-1">
-            {filteredMenuItems.map(item => {
-              const Icon = item.icon;
-              const isActive = activeSection === item.id;
-
-              return (
-                <button
-                  key={item.id}
-                  data-active-button={isActive ? 'true' : undefined}
-                  onClick={() => setActiveSection(item.id)}
-                  className={`apple-btn w-full p-3 rounded-2xl text-right transition-all flex items-start gap-3 ${
-                    isActive 
-                      ? 'bg-[#1D1D1F] text-white shadow-apple-sm' 
-                      : 'hover:bg-black/[0.04] text-[#1D1D1F]'
-                  }`}
-                >
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                    isActive 
-                      ? 'bg-[#C49746] text-white' 
-                      : 'bg-black/[0.04] text-[#0071E3]'
-                  }`}>
-                    <Icon size={17} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className={`text-xs font-black block truncate leading-tight ${isActive ? 'text-white' : 'text-[#1D1D1F]'}`}>
-                      {item.label}
-                    </span>
-                    <span className={`text-[11px] block truncate mt-0.5 ${isActive ? 'text-gray-300' : 'text-[#86868B]'}`}>
-                      {item.desc}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Manager Privileges Badge */}
-          <div className="p-4 rounded-3xl bg-amber-500/10 border border-amber-500/20 text-xs space-y-1.5 text-right">
-            <div className="flex items-center gap-2 font-bold text-amber-950">
-              <ShieldCheck size={16} className="text-amber-700 shrink-0" />
-              <span>خصوصية وسرية الإدارة:</span>
-            </div>
-            <p className="text-[11px] text-amber-900 leading-relaxed">
-              هذا المركز مخصص حصرياً للمدير العام. كافة هوامش الربح وتكاليف الخامات تُحجب تلقائياً عن شاشات الموظفين والكاشير.
-            </p>
-          </div>
+            );
+          })}
         </div>
+      </div>
 
-        {/* Right Column (Left in RTL): Active Settings Screen */}
-        <div className="lg:col-span-8 space-y-5" data-active-section="true">
+      {/* ======================================================== */}
+      {/* 4. ACTIVE SETTINGS VIEWPORT (FULL-WIDTH COMFORT)          */}
+      {/* ======================================================== */}
+      <div className="space-y-6 w-full" data-active-section="true">
+
+          {/* ======================================================== */}
+          {/* SECTION 1: STAFF MANAGEMENT & RBAC PERMISSIONS           */}
+          {/* ======================================================== */}
+          {activeSection === 'staff_management' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              <UsersManagement
+                users={users}
+                currentUser={currentUser || null}
+                onSaveUser={onSaveAppUser || (() => {})}
+                onAddAuditLog={onAddAuditLog || (() => {})}
+                onPreviewUserPermissions={onPreviewUserPermissions}
+              />
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* SECTION 2: COMMISSION POLICIES & STAFF INCENTIVES        */}
+          {/* ======================================================== */}
+          {activeSection === 'commission_policies' && (
+            <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
+              <div className="pb-4 border-b border-black/[0.06] flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-black text-[#1D1D1F] flex items-center gap-2">
+                    <span>سياسات العمولات والحوافز وربط المبيعات</span>
+                    <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-800 border border-emerald-500/20 font-bold">
+                      حوكمة الأداء المالي
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[#86868B] mt-0.5">
+                    حوكمة عمولة الـ 5% الأساسية لكادر العمل، والـ 7% لشريحة الفائض بعد التارجت، واحتياطي الحوافز (500 ج.م).
+                  </p>
+                </div>
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-700 flex items-center justify-center font-bold">
+                  <Award size={20} />
+                </div>
+              </div>
+
+              {/* 4 Core Configuration Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                {/* 1. Base Commission Rate */}
+                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-2 text-right">
+                  <span className="text-[#86868B] text-[11px] block font-bold">نسبة العمولة الأساسية:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={localSettings.commissionRate}
+                      onChange={(e) => setLocalSettings({ ...localSettings, commissionRate: Number(e.target.value) || 0 })}
+                      className="w-full h-9 px-2 rounded-xl bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                    />
+                    <span className="font-bold text-[#1D1D1F]">%</span>
+                  </div>
+                  <div className="flex items-center gap-1 justify-center pt-0.5">
+                    {[0.03, 0.05, 0.07, 0.10].map(rate => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => setLocalSettings({ ...localSettings, commissionRate: rate })}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          localSettings.commissionRate === rate
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-black/[0.04] text-[#86868B] hover:text-[#1D1D1F]'
+                        }`}
+                      >
+                        {rate * 100}%
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-emerald-800 font-bold block text-center">
+                    تطبق على كافة المبيعات اليومية
+                  </span>
+                </div>
+
+                {/* 2. Tiered Surplus Rate */}
+                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-2 text-right">
+                  <span className="text-[#86868B] text-[11px] block font-bold">نسبة شريحة الفائض:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={localSettings.tieredCommissionRate}
+                      onChange={(e) => setLocalSettings({ ...localSettings, tieredCommissionRate: Number(e.target.value) || 0 })}
+                      className="w-full h-9 px-2 rounded-xl bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                    />
+                    <span className="font-bold text-[#1D1D1F]">%</span>
+                  </div>
+                  <div className="flex items-center gap-1 justify-center pt-0.5">
+                    {[0.05, 0.07, 0.08, 0.10].map(rate => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => setLocalSettings({ ...localSettings, tieredCommissionRate: rate })}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          localSettings.tieredCommissionRate === rate
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-black/[0.04] text-[#86868B] hover:text-[#1D1D1F]'
+                        }`}
+                      >
+                        {rate * 100}%
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-blue-800 font-bold block text-center">
+                    تطبق على ما بعد الـ 10 عبوات
+                  </span>
+                </div>
+
+                {/* 3. Bottle Target Threshold */}
+                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-2 text-right">
+                  <span className="text-[#86868B] text-[11px] block font-bold">شريحة العبوات المستهدفة:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      value={localSettings.targetBottlesPerDay || 10}
+                      onChange={(e) => setLocalSettings({ ...localSettings, targetBottlesPerDay: Number(e.target.value) || 10 })}
+                      className="w-full h-9 px-2 rounded-xl bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                    />
+                    <span className="font-bold text-[#1D1D1F]">عبوة/يوم</span>
+                  </div>
+                  <span className="text-[10px] text-purple-800 font-bold block text-center pt-1">
+                    تفعيل نسبة الـ 7% التلقائية
+                  </span>
+                </div>
+
+                {/* 4. Incentive Reserve */}
+                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-2 text-right">
+                  <span className="text-[#86868B] text-[11px] block font-bold">احتياطي الحوافز المعتمد:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      value={localSettings.bonusPoolMonthlyReserve || 500}
+                      onChange={(e) => setLocalSettings({ ...localSettings, bonusPoolMonthlyReserve: Number(e.target.value) || 500 })}
+                      className="w-full h-9 px-2 rounded-xl bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                    />
+                    <span className="font-bold text-[#1D1D1F]">ج.م</span>
+                  </div>
+                  <span className="text-[10px] text-amber-800 font-bold block text-center pt-1">
+                    مخصص أمان تشغيلي وحوافز
+                  </span>
+                </div>
+              </div>
+
+              {/* Live Interactive Commission Simulator */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-emerald-500/15">
+                  <div className="flex items-center gap-2">
+                    <Zap size={16} className="text-emerald-600" />
+                    <span className="font-black text-xs text-emerald-950">
+                      محاكي واختبار حساب العمولات التفاعلي المباشر:
+                    </span>
+                  </div>
+                  <span className="text-[10.5px] font-bold text-emerald-700">نتائج فورية وفق مدخلاتك الحالية</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[#48484A] block">عدد العبوات المباعة للتجربة ({simSoldBottles} عبوة):</label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={30}
+                      value={simSoldBottles}
+                      onChange={(e) => setSimSoldBottles(Number(e.target.value))}
+                      className="w-full accent-emerald-600 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-gray-500 font-mono">
+                      <span>1 عبوة</span>
+                      <span className="font-bold text-emerald-700">الهدف: {localSettings.targetBottlesPerDay || 10}</span>
+                      <span>30 عبوة</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[#48484A] block">متوسط سعر بيع العبوة ({simAvgBottlePrice} ج):</label>
+                    <input
+                      type="range"
+                      min={50}
+                      max={350}
+                      step={10}
+                      value={simAvgBottlePrice}
+                      onChange={(e) => setSimAvgBottlePrice(Number(e.target.value))}
+                      className="w-full accent-emerald-600 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-gray-500 font-mono">
+                      <span>50 ج</span>
+                      <span>200 ج</span>
+                      <span>350 ج</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Calculation Output Cards */}
+                {(() => {
+                  const targetBottles = localSettings.targetBottlesPerDay || 10;
+                  const baseRate = localSettings.commissionRate || 0.05;
+                  const surplusRate = localSettings.tieredCommissionRate || 0.07;
+                  const totalSimRevenue = simSoldBottles * simAvgBottlePrice;
+                  
+                  const baseBottles = Math.min(simSoldBottles, targetBottles);
+                  const surplusBottles = Math.max(0, simSoldBottles - targetBottles);
+                  
+                  const baseCommission = Math.round(baseBottles * simAvgBottlePrice * baseRate);
+                  const surplusCommission = Math.round(surplusBottles * simAvgBottlePrice * surplusRate);
+                  const totalCommission = baseCommission + surplusCommission;
+                  const netStoreShare = totalSimRevenue - totalCommission;
+
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1 text-center">
+                      <div className="p-3 rounded-xl bg-white border border-black/[0.06] shadow-2xs">
+                        <span className="text-[10px] text-gray-500 block font-bold">إجمالي المبيعات</span>
+                        <span className="text-sm font-black font-mono text-[#1D1D1F] block mt-0.5">
+                          {totalSimRevenue.toLocaleString('ar-EG')} ج
+                        </span>
+                        <span className="text-[9.5px] text-gray-400 font-mono">{simSoldBottles} عبوة</span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-white border border-black/[0.06] shadow-2xs">
+                        <span className="text-[10px] text-emerald-700 block font-bold">عمولة الأساس ({baseRate * 100}%)</span>
+                        <span className="text-sm font-black font-mono text-emerald-700 block mt-0.5">
+                          {baseCommission.toLocaleString('ar-EG')} ج
+                        </span>
+                        <span className="text-[9.5px] text-gray-400 font-mono">على أول {baseBottles} عبوة</span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-white border border-black/[0.06] shadow-2xs">
+                        <span className="text-[10px] text-blue-700 block font-bold">عمولة الفائض ({surplusRate * 100}%)</span>
+                        <span className="text-sm font-black font-mono text-blue-700 block mt-0.5">
+                          {surplusCommission.toLocaleString('ar-EG')} ج
+                        </span>
+                        <span className="text-[9.5px] text-gray-400 font-mono">على {surplusBottles} عبوة إضافية</span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-emerald-600 text-white shadow-2xs">
+                        <span className="text-[10px] text-emerald-100 block font-bold">مستحق الكادر الإجمالي</span>
+                        <span className="text-sm font-black font-mono text-white block mt-0.5">
+                          {totalCommission.toLocaleString('ar-EG')} ج
+                        </span>
+                        <span className="text-[9.5px] text-emerald-200 font-mono">صافي المتجر: {netStoreShare.toLocaleString('ar-EG')} ج</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Action Bar */}
+              <div className="flex items-center justify-between pt-2 border-t border-black/[0.06]">
+                <span className="text-[11px] text-[#86868B]">
+                  يتم حفظ هذه السياسات وتطبيقها فوراً على حسابات الكاشير ومسير عمولات طارق
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveSettings();
+                    if (onAddAuditLog) {
+                      onAddAuditLog({
+                        id: `audit-comm-${Date.now()}`,
+                        timestamp: new Date().toISOString(),
+                        user: currentUser?.displayName || 'المدير العام',
+                        action: 'تحديث سياسات العمولات',
+                        entityType: 'setting',
+                        entityId: 'commission_policies',
+                        entityName: 'نسب العمولات والتارجت',
+                        oldValue: { commissionRate: settings.commissionRate, tieredCommissionRate: settings.tieredCommissionRate },
+                        newValue: { commissionRate: localSettings.commissionRate, tieredCommissionRate: localSettings.tieredCommissionRate },
+                        reason: 'تحديث معتمد لسياسة العمولات والحوافز'
+                      });
+                    }
+                  }}
+                  className="apple-btn flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-apple-xs transition-all cursor-pointer"
+                >
+                  <Check size={14} />
+                  <span>تأكيد وحفظ سياسات العمولات</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* SECTION 5: AUDIT LOG & OPERATION TRACKING                */}
+          {/* ======================================================== */}
+          {activeSection === 'audit_log' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              <AuditLogViewer
+                logs={auditLogs}
+                sales={sales}
+                products={products}
+                bottleSizes={bottleSizes}
+                settings={localSettings}
+                currentUser={currentUser}
+                onUpdateSale={onUpdateSale}
+                onAddAuditLog={onAddAuditLog}
+              />
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* SYSTEM SETTINGS SUB-TABS NAVIGATION BAR                  */}
+          {/* ======================================================== */}
+          {(activeSection === 'system_settings' || ['identity', 'pricing', 'privacy', 'pos_receipts', 'inventory', 'security_backup', 'themes', 'dashboard_layout', 'loyalty_ai'].includes(activeSection)) && (
+            <div className="apple-glass rounded-2xl p-2 border border-black/[0.06] shadow-apple-xs">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth">
+                {[
+                  { id: 'identity', label: '🏬 الهوية والفرع', icon: Store },
+                  { id: 'pos_receipts', label: '🧾 الفواتير والطباعة', icon: Receipt },
+                  { id: 'pricing', label: '🏷️ التسعير والعبوات', icon: DollarSign },
+                  { id: 'inventory', label: '🧪 تكلفة الخامات', icon: Package },
+                  { id: 'security_backup', label: '🔒 الأمان والنسخ', icon: Lock },
+                  { id: 'themes', label: '🎨 استوديو الثيمات', icon: Palette },
+                  { id: 'loyalty_ai', label: '🤖 محرك الولاء والذكاء', icon: Sparkles },
+                  { id: 'dashboard_layout', label: '📊 تخصيص لوحة القيادة', icon: Sliders },
+                ].map(sub => {
+                  const SubIcon = sub.icon;
+                  const isSubActive = systemSubTab === sub.id || activeSection === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveSection('system_settings');
+                        setSystemSubTab(sub.id as any);
+                      }}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
+                        isSubActive
+                          ? 'bg-[#1D1D1F] text-white shadow-apple-xs'
+                          : 'text-[#636366] hover:bg-black/[0.04] hover:text-[#1D1D1F]'
+                      }`}
+                    >
+                      <SubIcon size={13} />
+                      <span>{sub.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* ======================================================== */}
           {/* SECTION: OWNER DASHBOARD CARDS & REPORTS CUSTOMIZATION   */}
           {/* ======================================================== */}
-          {activeSection === 'dashboard_layout' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'dashboard_layout') || activeSection === 'dashboard_layout') && (
             <div className="animate-in fade-in duration-150">
               <DashboardLayoutStudioPanel
                 settings={localSettings}
@@ -1167,7 +1467,7 @@ export const Settings: React.FC<SettingsProps> = ({
           {/* ======================================================== */}
           {/* SECTION: APPLE DYNAMIC THEMES & ATMOSPHERE STUDIO        */}
           {/* ======================================================== */}
-          {activeSection === 'themes' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'themes') || activeSection === 'themes') && (
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card animate-in fade-in duration-150">
               <AppleThemeStudioPanel
                 settings={localSettings}
@@ -1190,7 +1490,7 @@ export const Settings: React.FC<SettingsProps> = ({
           {/* ======================================================== */}
           {/* SECTION 0: SMART LOYALTY ENGINE & AI PROFIT GOVERNANCE   */}
           {/* ======================================================== */}
-          {activeSection === 'loyalty_ai' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'loyalty_ai') || activeSection === 'loyalty_ai') && (
             <div className="space-y-5 animate-in fade-in duration-150">
               {/* 1. Master Loyalty Engine Control & AI Autopilot Card */}
               <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-5">
@@ -1792,7 +2092,7 @@ export const Settings: React.FC<SettingsProps> = ({
           {/* ======================================================== */}
           {/* SECTION 1: STORE IDENTITY & GENERAL INFO                 */}
           {/* ======================================================== */}
-          {activeSection === 'identity' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'identity') || activeSection === 'identity') && (
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
                 <div>
@@ -1930,7 +2230,7 @@ export const Settings: React.FC<SettingsProps> = ({
           {/* ======================================================== */}
           {/* SECTION 2: PRICING, ESSENCE OILS & BOTTLE SIZES          */}
           {/* ======================================================== */}
-          {activeSection === 'pricing' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'pricing') || activeSection === 'pricing') && (
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               <div className="pb-3 border-b border-black/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -2194,188 +2494,204 @@ export const Settings: React.FC<SettingsProps> = ({
           )}
 
           {/* ======================================================== */}
-          {/* SECTION 3: APPROVED FIXED BUDGET & TARGETS               */}
+          {/* SECTION 3: BUDGET MANAGEMENT & FINANCIAL VAULTS          */}
           {/* ======================================================== */}
-          {activeSection === 'budget' && (
-            <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
-              <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-black text-[#1D1D1F]">الموازنة الشهرية المعتمدة والتارجت ومسير الرواتب</h2>
-                  <p className="text-xs text-[#86868B]">موازنة الـ 15,000 ج.م الآمنة لحماية مصاريف المتجر والرواتب.</p>
-                </div>
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
-                  <Target size={20} />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
-                  <span className="text-[#86868B] text-[11px] block font-bold">الموازنة الشهرية الثابتة:</span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      value={localSettings.monthlyFixedBudget}
-                      onChange={(e) => setLocalSettings({ ...localSettings, monthlyFixedBudget: Number(e.target.value) || 0 })}
-                      className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
-                    />
-                    <span className="font-bold text-[#1D1D1F]">ج</span>
-                  </div>
-                  <span className="text-[10px] text-amber-800 font-bold block">15,000 ج.م المعتمدة رسمياً</span>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
-                  <span className="text-[#86868B] text-[11px] block font-bold">أيام العمل التخطيطية للشهر:</span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      value={localSettings.monthlyWorkDays}
-                      onChange={(e) => setLocalSettings({ ...localSettings, monthlyWorkDays: Number(e.target.value) || 0 })}
-                      className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
-                    />
-                    <span className="font-bold text-[#1D1D1F]">يوم</span>
-                  </div>
-                  <span className="text-[10px] text-blue-800 font-bold block">معدل: 600 ج.م مساهمة يومية</span>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
-                  <span className="text-[#86868B] text-[11px] block font-bold">التارجت اليومي المستهدف:</span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      value={localSettings.dailyTargetProfit}
-                      onChange={(e) => setLocalSettings({ ...localSettings, dailyTargetProfit: Number(e.target.value) || 0 })}
-                      className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
-                    />
-                    <span className="font-bold text-[#1D1D1F]">ج</span>
-                  </div>
-                  <span className="text-[10px] text-emerald-800 font-bold block">المرحلة الأولى: 600ج / الثانية: 1000ج</span>
-                </div>
-              </div>
-
-              {/* Payroll & Salaries */}
-              <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-3">
-                <h3 className="text-xs font-black text-[#1D1D1F] flex items-center gap-1.5">
-                  <Users size={14} className="text-[#0071E3]" />
-                  <span>مسير الرواتب المعتمد ضمن الموازنة:</span>
-                </h3>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
-                    <span className="text-[#86868B] text-[11px] block">راتب الإدارة (د. محمد):</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={localSettings.ownerSalary}
-                        onChange={(e) => setLocalSettings({ ...localSettings, ownerSalary: Number(e.target.value) || 0 })}
-                        className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
-                      />
-                      <span className="font-bold text-xs">ج.م/شهر</span>
-                    </div>
-                    <span className="text-[10px] text-gray-500 block">400 ج.م مخصص يومي في ذمة المتجر</span>
-                  </div>
-
-                  <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
-                    <span className="text-[#86868B] text-[11px] block">المخصص الشهري الخلفي للتشغيل (سري بالنظام):</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={localSettings.employeeBaseSalary}
-                        onChange={(e) => setLocalSettings({ ...localSettings, employeeBaseSalary: Number(e.target.value) || 0 })}
-                        className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
-                      />
-                      <span className="font-bold text-xs">ج.م/شهر</span>
-                    </div>
-                    <span className="text-[10px] text-purple-800 font-bold block">
-                      🔒 بيانات خلفية سرية — يظهر للموظف في الواجهة العمولة (5% - 7%) فقط
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
-                  <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
-                    <span className="text-[#86868B] text-[11px] block">نسبة العمولة الأساسية للمبيعات:</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={localSettings.commissionRate}
-                        onChange={(e) => setLocalSettings({ ...localSettings, commissionRate: Number(e.target.value) || 0 })}
-                        className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
-                      />
-                      <span className="font-bold text-xs">% (0.05 = 5%)</span>
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
-                    <span className="text-[#86868B] text-[11px] block">نسبة عمولة الشريحة التشجيعية:</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={localSettings.tieredCommissionRate}
-                        onChange={(e) => setLocalSettings({ ...localSettings, tieredCommissionRate: Number(e.target.value) || 0 })}
-                        className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
-                      />
-                      <span className="font-bold text-xs">% (0.07 = 7%)</span>
-                    </div>
-                    <span className="text-[10px] text-gray-500 block">تطبق بعد تخطي 10 عبوات يومياً</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ======================================================== */}
-          {/* SECTION 4: FINANCIAL VAULTS & STRICT WITHDRAWALS         */}
-          {/* ======================================================== */}
-          {activeSection === 'vaults' && (
-            <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
-              <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-black text-[#1D1D1F]">الخزائن المالية وقواعد المسحوبات الصارمة</h2>
-                  <p className="text-xs text-[#86868B]">فصل التكاليف عن الأرباح والمحافظ ومنع السحب بالسالب أو العشوائي.</p>
-                </div>
+          {(activeSection === 'budget_management' || activeSection === 'budget' || activeSection === 'vaults') && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              {/* Budget Sub-Tabs Switcher */}
+              <div className="apple-glass rounded-2xl p-2 border border-black/[0.06] shadow-apple-xs flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsWithdrawModalOpen(true)}
-                  className="apple-btn flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-xs"
+                  onClick={() => setBudgetSubTab('budget_target')}
+                  className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    budgetSubTab === 'budget_target'
+                      ? 'bg-[#1D1D1F] text-white shadow-apple-xs'
+                      : 'text-[#86868B] hover:text-[#1D1D1F] hover:bg-black/[0.04]'
+                  }`}
                 >
-                  <ArrowDownRight size={14} />
-                  <span>تسجيل سحب مالك رسمي</span>
+                  <Target size={15} className={budgetSubTab === 'budget_target' ? 'text-amber-400' : 'text-blue-600'} />
+                  <span>1. الموازنة الشهرية المعتمدة (15,000 ج) والتارجت والرواتب</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBudgetSubTab('vaults')}
+                  className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    budgetSubTab === 'vaults'
+                      ? 'bg-[#1D1D1F] text-white shadow-apple-xs'
+                      : 'text-[#86868B] hover:text-[#1D1D1F] hover:bg-black/[0.04]'
+                  }`}
+                >
+                  <Wallet size={15} className={budgetSubTab === 'vaults' ? 'text-amber-400' : 'text-amber-600'} />
+                  <span>2. منظومة الخزائن المالية والمسحوبات المصنفة</span>
                 </button>
               </div>
 
-              {/* Strict Prohibition Warning */}
-              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-950 text-xs flex items-center gap-3">
-                <AlertTriangle size={20} className="text-rose-600 shrink-0" />
-                <p className="text-[11px] leading-relaxed">
-                  <strong>قاعدة مالية صارمة:</strong> ممنوع خروج أي مبالغ من الخزائن دون تصنيف صريح في الدفاتر (راتب مالك، أرباح معتمدة، شراء مخزون، مصروف تشغيل، أو ضخ رأس مال).
-                </p>
-              </div>
+              {/* SubTab 1: 15,000 EGP Fixed Budget & Targets */}
+              {budgetSubTab === 'budget_target' && (
+                <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6">
+                  <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-black text-[#1D1D1F]">الموازنة الشهرية المعتمدة والتارجت ومسير الرواتب</h2>
+                      <p className="text-xs text-[#86868B]">موازنة الـ 15,000 ج.م الآمنة لحماية مصاريف المتجر والرواتب.</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
+                      <Target size={20} />
+                    </div>
+                  </div>
 
-              {/* 8 Segregated Vaults Live Overview */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                {vaults.map(v => (
-                  <div key={v.id} className="p-3.5 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs space-y-1.5 text-right">
-                    <div className="flex items-center justify-between">
-                      <span className="font-black text-[#1D1D1F] text-xs">{v.name}</span>
-                      <span className="font-mono font-bold text-xs text-[#0071E3]">
-                        {v.currentBalance.toLocaleString('ar-EG')} {settings.currency}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
+                      <span className="text-[#86868B] text-[11px] block font-bold">الموازنة الشهرية الثابتة:</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={localSettings.monthlyFixedBudget}
+                          onChange={(e) => setLocalSettings({ ...localSettings, monthlyFixedBudget: Number(e.target.value) || 0 })}
+                          className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                        />
+                        <span className="font-bold text-[#1D1D1F]">ج</span>
+                      </div>
+                      <span className="text-[10px] text-amber-800 font-bold block">15,000 ج.م المعتمدة رسمياً</span>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
+                      <span className="text-[#86868B] text-[11px] block font-bold">أيام العمل التخطيطية للشهر:</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={localSettings.monthlyWorkDays}
+                          onChange={(e) => setLocalSettings({ ...localSettings, monthlyWorkDays: Number(e.target.value) || 0 })}
+                          className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                        />
+                        <span className="font-bold text-[#1D1D1F]">يوم</span>
+                      </div>
+                      <span className="text-[10px] text-blue-800 font-bold block">معدل: 600 ج.م مساهمة يومية</span>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
+                      <span className="text-[#86868B] text-[11px] block font-bold">التارجت اليومي المستهدف:</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={localSettings.dailyTargetProfit}
+                          onChange={(e) => setLocalSettings({ ...localSettings, dailyTargetProfit: Number(e.target.value) || 0 })}
+                          className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
+                        />
+                        <span className="font-bold text-[#1D1D1F]">ج</span>
+                      </div>
+                      <span className="text-[10px] text-emerald-800 font-bold block">المرحلة الأولى: 600ج / الثانية: 1000ج</span>
+                    </div>
+                  </div>
+
+                  {/* Payroll & Salaries */}
+                  <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-3">
+                    <h3 className="text-xs font-black text-[#1D1D1F] flex items-center gap-1.5">
+                      <Users size={14} className="text-[#0071E3]" />
+                      <span>مسير الرواتب المعتمد ضمن الموازنة:</span>
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
+                        <span className="text-[#86868B] text-[11px] block">راتب الإدارة (د. محمد):</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={localSettings.ownerSalary}
+                            onChange={(e) => setLocalSettings({ ...localSettings, ownerSalary: Number(e.target.value) || 0 })}
+                            className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
+                          />
+                          <span className="font-bold text-xs">ج.م/شهر</span>
+                        </div>
+                        <span className="text-[10px] text-gray-500 block">400 ج.م مخصص يومي في ذمة المتجر</span>
+                      </div>
+
+                      <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
+                        <span className="text-[#86868B] text-[11px] block">المخصص الشهري الخلفي للتشغيل (سري بالنظام):</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={localSettings.employeeBaseSalary}
+                            onChange={(e) => setLocalSettings({ ...localSettings, employeeBaseSalary: Number(e.target.value) || 0 })}
+                            className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
+                          />
+                          <span className="font-bold text-xs">ج.م/شهر</span>
+                        </div>
+                        <span className="text-[10px] text-purple-800 font-bold block">
+                          🔒 بيانات خلفية سرية — يظهر للموظف في الواجهة العمولة (5% - 7%) فقط
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 11 Approved Fixed Budget Items Table */}
+                  <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-black/[0.06]">
+                      <span className="font-black text-xs text-[#1D1D1F]">
+                        تفصيل بنود الموازنة الشهرية المعتمدة (15,000 ج.م / شهر):
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                        معدل يومي: 600 ج.م على 25 يوم عمل
                       </span>
                     </div>
-                    <p className="text-[10px] text-[#86868B] line-clamp-2 leading-relaxed">
-                      {v.description}
-                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-right text-xs">
+                        <thead>
+                          <tr className="border-b border-black/[0.06] text-[#86868B] text-[11px]">
+                            <th className="py-2 font-bold">البند التشغيلي</th>
+                            <th className="py-2 font-bold text-center">المخصص الشهري</th>
+                            <th className="py-2 font-bold text-center">المعدل اليومي (25 يوم)</th>
+                            <th className="py-2 font-bold text-center">التصنيف</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-black/[0.04]">
+                          {APPROVED_FIXED_BUDGET_ITEMS.map(item => (
+                            <tr key={item.id} className="hover:bg-black/[0.02]">
+                              <td className="py-2 font-bold text-[#1D1D1F]">{item.name}</td>
+                              <td className="py-2 font-mono font-bold text-center text-[#0071E3]">{item.monthlyAmount.toLocaleString('ar-EG')} ج</td>
+                              <td className="py-2 font-mono font-bold text-center text-emerald-700">{item.dailyRate.toLocaleString('ar-EG')} ج</td>
+                              <td className="py-2 text-center text-[10px] text-gray-500 font-bold">
+                                {item.category === 'rent' ? 'إيجار ثابت' : item.category === 'salaries' ? 'رواتب كادر' : item.category === 'contingency' ? 'طوارئ وهالك' : 'مرافق وتشغيل'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                ))}
-              </div>
+
+                  <div className="flex items-center justify-end pt-2 border-t border-black/[0.06]">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveSettings()}
+                      className="apple-btn flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-apple-xs transition-all cursor-pointer"
+                    >
+                      <Save size={14} />
+                      <span>حفظ وتوثيق أرقام الموازنة</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* SubTab 2: Financial Vaults Full Management */}
+              {budgetSubTab === 'vaults' && (
+                <div className="space-y-4">
+                  <FinancialVaults
+                    vaults={vaults}
+                    withdrawals={withdrawals}
+                    sales={sales}
+                    expenses={expenses}
+                    settings={localSettings}
+                    onAddWithdrawal={onAddWithdrawal || (() => {})}
+                  />
+                </div>
+              )}
             </div>
           )}
 
           {/* ======================================================== */}
           {/* SECTION 5: PRIVACY & ADMINISTRATIVE SECRETS              */}
           {/* ======================================================== */}
-          {activeSection === 'privacy' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'security_backup') || activeSection === 'privacy') && (
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
                 <div>
@@ -2452,7 +2768,7 @@ export const Settings: React.FC<SettingsProps> = ({
           {/* ======================================================== */}
           {/* SECTION 6: COMPREHENSIVE RECEIPT & PRINT STUDIO          */}
           {/* ======================================================== */}
-          {activeSection === 'pos_receipts' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'pos_receipts') || activeSection === 'pos_receipts') && (
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               {/* Top Header & Quick Global Presets */}
               <div className="pb-4 border-b border-black/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3299,7 +3615,7 @@ export const Settings: React.FC<SettingsProps> = ({
           {/* ======================================================== */}
           {/* SECTION 7: INVENTORY INTELLIGENCE & THRESHOLDS           */}
           {/* ======================================================== */}
-          {activeSection === 'inventory' && (
+          {((activeSection === 'system_settings' && systemSubTab === 'inventory') || activeSection === 'inventory') && (
             <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6 animate-in fade-in duration-150">
               <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
                 <div>
@@ -3607,7 +3923,6 @@ export const Settings: React.FC<SettingsProps> = ({
           )}
 
         </div>
-      </div>
 
       {/* ======================================================== */}
       {/* 3. BOTTLE SIZE ADD / EDIT MODAL                          */}

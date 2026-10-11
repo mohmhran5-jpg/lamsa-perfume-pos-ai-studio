@@ -627,20 +627,28 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
 
         {/* Card 5: Total Paid / Settled */}
         <div className="p-3.5 rounded-2xl bg-purple-50/70 dark:bg-purple-950/20 border border-purple-200/80 dark:border-purple-900/40 shadow-2xs space-y-1">
-          <span className="text-[11px] font-bold text-purple-800 dark:text-purple-300 block">المبالغ المصروفة والمسواة</span>
+          <span className="text-[11px] font-bold text-purple-800 dark:text-purple-300 block">إجمالي المصروف والمسواة</span>
           <strong className="text-base font-black font-mono text-purple-700 dark:text-purple-400 block">
-            {entitlementSummary.totalPreviouslyPaidEgp.toLocaleString('ar-EG')} ج.م
+            {(entitlementSummary.totalExpensesPaidEgp ?? (entitlementSummary.totalPreviouslyPaidEgp + entitlementSummary.approvedDeductionsEgp + entitlementSummary.outstandingAdvancesEgp)).toLocaleString('ar-EG')} ج.م
           </strong>
-          <span className="text-[10px] text-purple-600 block font-mono">تم الصرف وإيصالات الخزنة</span>
+          <span className="text-[10px] text-purple-600 block font-mono">
+            إيصالات: {entitlementSummary.totalPreviouslyPaidEgp} ج | سلف وخصم: {entitlementSummary.approvedDeductionsEgp + entitlementSummary.outstandingAdvancesEgp} ج
+          </span>
         </div>
 
         {/* Card 6: Net Remaining Due */}
         <div className="p-3.5 rounded-2xl bg-amber-500 text-slate-950 shadow-md space-y-1 border border-amber-400">
-          <span className="text-[11px] font-black block">الرصيد المتبقي المستحق</span>
+          <span className="text-[11px] font-black block">المتبقي للتعادل والمستحقات</span>
           <strong className="text-lg font-black font-mono block">
             {entitlementSummary.netRemainingBalanceDueEgp.toLocaleString('ar-EG')} ج.م
           </strong>
-          <span className="text-[10px] font-bold block opacity-90">جاهز للصرف المعتمد</span>
+          <span className="text-[10px] font-bold block opacity-95">
+            {entitlementSummary.totalEntitlementsGrossEgp === 0
+              ? 'لا توجد مستحقات مسجلة'
+              : entitlementSummary.netRemainingBalanceDueEgp === 0
+              ? '✓ تمت تسوية المستحقات بالكامل'
+              : 'صافي (المستحقات - المصروف)'}
+          </span>
         </div>
       </div>
 
@@ -755,7 +763,7 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
                     <strong className="font-mono text-blue-700">+{entitlementSummary.approvedIncentivesPeriodEgp.toLocaleString('ar-EG')} ج.م</strong>
                   </div>
                   <div className="flex justify-between py-1.5 font-black text-emerald-900 dark:text-emerald-300 text-sm pt-2">
-                    <span>إجمالي الإضافات المكتسبة:</span>
+                    <span>إجمالي المستحقات والإضافات:</span>
                     <strong className="font-mono">{entitlementSummary.totalEntitlementsGrossEgp.toLocaleString('ar-EG')} ج.م</strong>
                   </div>
                 </div>
@@ -765,7 +773,7 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
               <div className="p-4 rounded-2xl bg-rose-50/50 dark:bg-rose-950/10 border border-rose-200 dark:border-rose-900/30 space-y-2.5">
                 <h4 className="font-black text-rose-900 dark:text-rose-300 flex items-center gap-1.5 text-xs">
                   <MinusCircle size={15} className="text-rose-600" />
-                  <span>بند الاستقطاعات والمسحوبات (-):</span>
+                  <span>بند الاستقطاعات والمصروفات (-):</span>
                 </h4>
                 <div className="space-y-2 text-slate-800 dark:text-slate-200">
                   <div className="flex justify-between py-1 border-b border-rose-200/50 dark:border-rose-900/20">
@@ -777,11 +785,17 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
                     <strong className="font-mono text-purple-700">-{entitlementSummary.outstandingAdvancesEgp.toLocaleString('ar-EG')} ج.م</strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-rose-200/50 dark:border-rose-900/20">
-                    <span>3. المبالغ المصروفة السابقة (إيصالات):</span>
+                    <span>3. المبالغ المصروفة والمسواة (إيصالات):</span>
                     <strong className="font-mono text-purple-700">-{entitlementSummary.totalPreviouslyPaidEgp.toLocaleString('ar-EG')} ج.م</strong>
                   </div>
-                  <div className="flex justify-between py-1.5 font-black text-amber-900 dark:text-amber-300 text-sm pt-2">
-                    <span>الرصيد المتبقي الصافي المستحق:</span>
+                  <div className="flex justify-between py-1 font-bold text-rose-800 text-xs">
+                    <span>إجمالي المصروف والمسحوبات:</span>
+                    <strong className="font-mono text-rose-700">
+                      -{(entitlementSummary.totalExpensesPaidEgp ?? (entitlementSummary.totalPreviouslyPaidEgp + entitlementSummary.approvedDeductionsEgp + entitlementSummary.outstandingAdvancesEgp)).toLocaleString('ar-EG')} ج.م
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1.5 font-black text-amber-900 dark:text-amber-300 text-sm pt-2 border-t border-amber-300">
+                    <span>المتبقي للتعادل (إجمالي المستحقات - إجمالي المصروف):</span>
                     <strong className="font-mono text-amber-600">{entitlementSummary.netRemainingBalanceDueEgp.toLocaleString('ar-EG')} ج.م</strong>
                   </div>
                 </div>

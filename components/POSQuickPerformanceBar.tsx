@@ -15,6 +15,9 @@ import {
   ChevronUp,
   ShoppingBag,
   Flame,
+  Target,
+  CheckCircle2,
+  Wallet,
 } from 'lucide-react';
 
 interface POSQuickPerformanceBarProps {
@@ -27,6 +30,7 @@ interface POSQuickPerformanceBarProps {
   todayEmployeeAttendance?: StaffAttendanceRecord;
   dailyBaseSalary: number;
   todaysEarnedCommission: number;
+  todaysExpensesTotal?: number;
   todayShortageCount: number;
   onStartWork: () => void;
   onOpenShortages: () => void;
@@ -36,8 +40,12 @@ interface POSQuickPerformanceBarProps {
 
 export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
   todaysSalesList,
+  todaysGrossProfit,
+  dailyCoveredExpense,
   settings,
+  dailyBaseSalary,
   todaysEarnedCommission,
+  todaysExpensesTotal = 0,
   todayShortageCount,
   onOpenShortages,
   onOpenSmartSearch,
@@ -52,6 +60,19 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
   );
   const isBonusTier7 = todaysBottles > 10;
 
+  // 1. Break-Even Telemetry (المتبقي للتعادل)
+  const breakEvenTarget = dailyCoveredExpense || 600;
+  const isBreakEvenCovered = todaysSalesList.length > 0 && todaysGrossProfit >= breakEvenTarget;
+  const remainingForBreakEven = Math.max(0, breakEvenTarget - todaysGrossProfit);
+
+  // 2. Cashier Entitlements vs Expenses (إجمالي المستحقات - إجمالي المصروف)
+  // إجمالي المستحقات: راتب الحضور المكتسب اليوم + عمولات المبيعات
+  const totalCashierEntitlements = Math.round(dailyBaseSalary + todaysEarnedCommission);
+  // إجمالي المصروف: المصروفات والمسحوبات المنصرفة من الدرج اليوم
+  const totalCashierExpenses = Math.round(todaysExpensesTotal);
+  // المتبقي الصافي: (إجمالي المستحقات - إجمالي المصروف)
+  const remainingCashierDue = totalCashierEntitlements - totalCashierExpenses;
+
   return (
     <section
       aria-label="شريط متابعة المبيعات السريع وأسعار العبوات"
@@ -59,8 +80,8 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Right: Clean Live Cashier Telemetry (Tabular Numerals, Unboxed Separators) */}
-        <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs">
-          {/* Today's Sales Metric */}
+        <div className="flex flex-wrap items-center gap-3 sm:gap-5 text-xs">
+          {/* 1. Today's Sales Metric */}
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center shrink-0">
               <ShoppingBag size={14} />
@@ -79,36 +100,69 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
 
           <div className="h-4 w-px bg-slate-200 hidden sm:block" />
 
-          {/* Live Commission & Bonus Tier Metric */}
+          {/* 2. Break-Even Metric: المتبقي للتعادل (استبعاد أي قيم صفرية غير منطقية) */}
           <div className="flex items-center gap-2">
             <div
               className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                isBonusTier7
-                  ? 'bg-amber-500/15 text-amber-600'
-                  : 'bg-emerald-500/10 text-emerald-700'
+                isBreakEvenCovered
+                  ? 'bg-emerald-500/10 text-emerald-700'
+                  : 'bg-amber-500/15 text-amber-700'
               }`}
             >
-              {isBonusTier7 ? <Flame size={14} /> : <Award size={14} />}
+              {isBreakEvenCovered ? <CheckCircle2 size={14} /> : <Target size={14} />}
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-slate-500 font-semibold">عمولة المبيعات:</span>
-              <strong className="font-mono tabular-nums font-black text-sm text-emerald-700">
-                +{Math.round(todaysEarnedCommission)} {settings.currency}
+              <span className="text-slate-500 font-semibold">نقطة التعادل:</span>
+              <strong className={`font-mono tabular-nums font-black text-sm ${
+                isBreakEvenCovered ? 'text-emerald-700' : 'text-amber-800'
+              }`}>
+                {isBreakEvenCovered
+                  ? `✓ تم تأمين التعادل`
+                  : (todaysSalesList.length === 0
+                      ? `المستهدف ${breakEvenTarget} ج`
+                      : `متبقي ${Math.max(1, Math.ceil(remainingForBreakEven))} ج`)}
               </strong>
               <span aria-hidden="true" className="text-slate-300">·</span>
-              <span className={`text-[11px] font-mono tabular-nums font-bold ${
-                isBonusTier7 ? 'text-amber-600' : 'text-slate-500'
-              }`}>
-                {isBonusTier7 ? 'شريحة 7% نشطة' : `شريحة 5% (متبقي ${Math.max(0, 11 - todaysBottles)} للـ 7%)`}
+              <span className="text-[11px] font-mono tabular-nums text-slate-500">
+                {isBreakEvenCovered
+                  ? (todaysGrossProfit > breakEvenTarget
+                      ? `+${Math.round(todaysGrossProfit - breakEvenTarget)} ج أرباح`
+                      : 'تغطية تامة')
+                  : (todaysSalesList.length === 0
+                      ? 'بدء الوردية'
+                      : `مساهمة: ${Math.round(todaysGrossProfit)} ج`)}
+              </span>
+            </div>
+          </div>
+
+          <div className="h-4 w-px bg-slate-200 hidden md:block" />
+
+          {/* 3. Cashier Entitlements Metric: قاعدة الحساب (إجمالي المستحقات - إجمالي المصروف) */}
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-700 flex items-center justify-center shrink-0">
+              <Wallet size={14} />
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-slate-500 font-semibold">مستحقات الكاشير:</span>
+              <strong className="font-mono tabular-nums font-black text-sm text-purple-800">
+                {remainingCashierDue > 0
+                  ? `+${remainingCashierDue} ${settings.currency}`
+                  : remainingCashierDue === 0
+                  ? (totalCashierEntitlements > 0 ? 'مسواة بالكامل' : `${dailyBaseSalary} ${settings.currency}`)
+                  : `${remainingCashierDue} ${settings.currency}`}
+              </strong>
+              <span aria-hidden="true" className="text-slate-300">·</span>
+              <span className="text-[11px] font-mono tabular-nums text-slate-500" title="المعادلة: إجمالي المستحقات (الراتب + العمولة) - إجمالي المصروف">
+                مستحق: {totalCashierEntitlements} ج | مصروف: {totalCashierExpenses} ج
               </span>
               {onOpenStaffEntitlements && (
                 <button
                   type="button"
                   onClick={onOpenStaffEntitlements}
-                  className="mr-1.5 px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black transition-colors cursor-pointer"
-                  title="متابعة المسابقات وعمولات الشهر وطلب سحب أو تسوية"
+                  className="mr-1 px-2 py-0.5 rounded-md bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-black transition-colors cursor-pointer"
+                  title="فتح شاشة مستحقات العاملين، العمولات والتسويات"
                 >
-                  سحب / تسوية ←
+                  المستحقات والتسوية ←
                 </button>
               )}
             </div>

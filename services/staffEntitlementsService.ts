@@ -44,11 +44,11 @@ export const DEFAULT_STAFF_SALARY_CONFIGS: StaffBaseSalaryConfig[] = [
     id: 'sal-cfg-tarek',
     employeeId: 'user-tarek',
     employeeName: 'طارق',
-    monthlySalaryEgp: 1000,
+    monthlySalaryEgp: 1500,
     effectiveStartDate: '2026-01-01',
     payPeriodFrequency: 'monthly',
     approvedBy: 'د. محمد',
-    notes: 'الراتب الثابت الشهري المعتمد (1,000 ج.م)',
+    notes: 'الراتب الثابت الشهري المعتمد (1,500 ج.م)',
   },
 ];
 
@@ -557,11 +557,11 @@ export function computeStaffMemberEntitlementSummary(
   const normName = normalizeEmployeeName(employeeName);
 
   // 1. Base Salary calculation
-  const salConfig = salaryConfigs.find((c) => normalizeEmployeeName(c.employeeName) === normName) || {
-    monthlySalaryEgp: normName === 'طارق' ? 1000 : 0,
-  };
+  const salConfig = salaryConfigs.find((c) => normalizeEmployeeName(c.employeeName) === normName);
+  const monthlyBaseSalaryEgp = (salConfig && salConfig.monthlySalaryEgp >= 1500)
+    ? salConfig.monthlySalaryEgp
+    : (normName === 'طارق' ? 1500 : (salConfig?.monthlySalaryEgp || 0));
 
-  const monthlyBaseSalaryEgp = salConfig.monthlySalaryEgp;
   const dailySalaryRateEgp = Math.round(monthlyBaseSalaryEgp / 25);
   let earnedSalaryPeriodEgp = monthlyBaseSalaryEgp;
   let elapsedWorkDaysPeriod = 25;
@@ -660,11 +660,20 @@ export function computeStaffMemberEntitlementSummary(
   });
   const totalPreviouslyPaidEgp = activeSettlements.reduce((sum, s) => sum + s.totalAmountEgp, 0);
 
-  // Gross Entitlements before deductions
-  const totalEntitlementsGrossEgp = earnedSalaryPeriodEgp + earnedCommissionsPeriodEgp + approvedIncentivesPeriodEgp;
+  // إجمالي المستحقات المكتسبة (راتب أساسي + عمولات مبيعات + حوافز معتمدة)
+  const totalEntitlementsGrossEgp = Math.round(
+    earnedSalaryPeriodEgp + earnedCommissionsPeriodEgp + approvedIncentivesPeriodEgp
+  );
+
+  // إجمالي المصروف والمسحوبات (إيصالات صرف سابقة + سلف مالية قائمة + خصومات معتمدة)
+  const totalExpensesPaidEgp = Math.round(
+    totalPreviouslyPaidEgp + approvedDeductionsEgp + outstandingAdvancesEgp
+  );
+
+  // قاعدة الحساب المحاسبية المعتمدة: (إجمالي المستحقات - إجمالي المصروف)
   const netRemainingBalanceDueEgp = Math.max(
     0,
-    Math.round(totalEntitlementsGrossEgp - approvedDeductionsEgp - totalPreviouslyPaidEgp)
+    totalEntitlementsGrossEgp - totalExpensesPaidEgp
   );
 
   const pendingApprovalsCount = incentives.filter((i) => i.status === 'مسودة').length + settlements.filter((s) => s.status === 'بانتظار_الاعتماد').length;
@@ -684,6 +693,7 @@ export function computeStaffMemberEntitlementSummary(
     outstandingAdvancesEgp,
     approvedDeductionsEgp,
     totalPreviouslyPaidEgp,
+    totalExpensesPaidEgp,
     totalEntitlementsGrossEgp,
     netRemainingBalanceDueEgp,
     pendingApprovalsCount,

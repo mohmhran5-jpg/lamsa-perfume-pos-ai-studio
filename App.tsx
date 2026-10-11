@@ -887,8 +887,8 @@ const App: React.FC = () => {
   const [isDayOpsModalOpen, setIsDayOpsModalOpen] = useState(false);
   const [isDailyReportAutomationModalOpen, setIsDailyReportAutomationModalOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<
-    'loyalty_ai' | 'identity' | 'pricing' | 'budget' | 'vaults' | 'privacy' | 'pos_receipts' | 'inventory' | 'security_backup'
-  >('budget');
+    'pricing' | 'loyalty_ai' | 'identity' | 'budget' | 'vaults' | 'privacy' | 'pos_receipts' | 'inventory' | 'security_backup' | 'staff_management' | 'commission_policies' | 'budget_management' | 'system_settings' | 'audit_log'
+  >('pricing');
 
   // Inventory Intelligence: Purchase Requests, Customer Requests, Stock Checks
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => {
@@ -2775,6 +2775,7 @@ const App: React.FC = () => {
             onSaveMix={handleSaveSavedMix}
             onDeleteMix={handleDeleteSavedMix}
             onDeleteSale={handleDeleteSale}
+            expenses={expenses}
             onAddExpense={(newExp) => {
               handleSetExpenses(prev => [newExp, ...prev]);
               pushTopNotification(
@@ -2987,7 +2988,7 @@ const App: React.FC = () => {
             sales={sales}
             expenses={expenses}
             products={products}
-            currentUser={currentUser}
+            currentUser={effectiveUser}
             users={users}
             auditLogs={auditLogs}
             onSaveAppUser={handleSaveUser}
@@ -2998,6 +2999,12 @@ const App: React.FC = () => {
             customCustomers={customCustomers}
             onAddAuditLog={handleAddAuditLog}
             initialSection={settingsInitialSection}
+            onUpdateSale={handleUpdateSale}
+            onPreviewUserPermissions={(previewUser) => {
+              if (previewUser) {
+                pushTopNotification('info', `وضع معاينة صلاحيات: ${previewUser.displayName}`, 'صلاحيات مخصصة للواجهة');
+              }
+            }}
           />
         );
       case View.STORE_MANAGER:
@@ -3127,8 +3134,8 @@ const App: React.FC = () => {
         }}
       />
 
-      {/* Main Content Area: Responsive padding with max-width containment (md:pr-72 for desktop sidebar) */}
-      <main className="min-h-screen w-full max-w-full overflow-x-hidden relative z-0 md:pr-72 pt-2 sm:pt-3 md:pt-4 transition-all duration-200">
+      {/* Main Content Area: Responsive padding with max-width containment (md:pr-72 for desktop sidebar, pb-20 for mobile bottom dock) */}
+      <main className="min-h-screen w-full max-w-full overflow-x-hidden relative z-0 md:pr-72 pt-2 sm:pt-3 md:pt-4 pb-20 md:pb-6 transition-all duration-200">
         {/* Unified Sleek Top Header Bar & Smart Color-Coded Notification Ticker */}
         <ExecutiveHeaderBar
           currentUser={effectiveUser}

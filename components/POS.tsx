@@ -45,7 +45,9 @@ import {
   analyzeSelectedPerfumeProfile,
   OlfactoryProfileAnalysis,
   getCairoCurrentTimeString,
-  isLiveProductionSale
+  isLiveProductionSale,
+  isActualPaidOperationalExpense,
+  View
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
 import { soundAlertService } from '../services/soundAlertService';
@@ -135,6 +137,8 @@ interface POSProps {
   onClearPreselectedCustomer?: () => void;
   onDeleteSale?: (saleId: string, restoreStock?: boolean) => void;
   onAddExpense?: (expense: Expense) => void;
+  expenses?: Expense[];
+  onNavigate?: (view: any) => void;
   onOpenLoyaltySettings?: () => void;
   savedMixes?: SavedMixFormula[];
   onSaveMix?: (formula: SavedMixFormula) => void;
@@ -178,6 +182,8 @@ const POS: React.FC<POSProps> = ({
   onClearPreselectedCustomer,
   onDeleteSale,
   onAddExpense,
+  expenses = [],
+  onNavigate,
   onOpenLoyaltySettings,
   savedMixes = [],
   onSaveMix,
@@ -807,6 +813,13 @@ const POS: React.FC<POSProps> = ({
       return sum + (s.commissionAmount !== undefined ? s.commissionAmount : Math.round((s.totalPrice || 0) * rate));
     }, 0);
   }, [todaysSalesList, settings.commissionRate]);
+
+  // Today's cash operational expenses paid from the drawer (إجمالي المصروف النقدي اليومي)
+  const todaysExpensesTotal = useMemo(() => {
+    return (expenses || [])
+      .filter(e => e.date && e.date.startsWith(todayIso) && isActualPaidOperationalExpense(e))
+      .reduce((sum, e) => sum + (e.amount || 0), 0);
+  }, [expenses, todayIso]);
 
   // Comprehensive "Start Work" (بدء العمل):
   // 1. Programmatically opens store
@@ -2314,6 +2327,7 @@ const POS: React.FC<POSProps> = ({
         todayEmployeeAttendance={todayEmployeeAttendance}
         dailyBaseSalary={dailyBaseSalary}
         todaysEarnedCommission={todaysEarnedCommission}
+        todaysExpensesTotal={todaysExpensesTotal}
         todayShortageCount={todayShortageProducts.length}
         onStartWork={handleStartWork}
         onOpenShortages={() => {
@@ -2321,6 +2335,7 @@ const POS: React.FC<POSProps> = ({
           setShowShortagesModal(true);
         }}
         onOpenSmartSearch={() => setShowSmartSearchModal(true)}
+        onOpenStaffEntitlements={() => onNavigate?.(View.STAFF_ENTITLEMENTS)}
       />
 
       {/* Top Item Added Toast Notification */}
