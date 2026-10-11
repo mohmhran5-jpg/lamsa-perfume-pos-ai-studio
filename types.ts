@@ -262,6 +262,7 @@ export type ExpenseCategory =
   | 'تسويق وإعلان' 
   | 'صيانة ونثريات' 
   | 'مصاريف تشغيل'
+  | 'رواتب وعمولات'
   | 'أخرى';
 
 export interface Expense {
@@ -1646,6 +1647,7 @@ export enum View {
   MARKETING = 'MARKETING',
   USERS_MANAGEMENT = 'USERS_MANAGEMENT',
   AUDIT_LOGS = 'AUDIT_LOGS',
+  STAFF_ENTITLEMENTS = 'STAFF_ENTITLEMENTS',
   DAY_OPERATIONS = 'DAY_OPERATIONS',
 }
 
@@ -5361,3 +5363,163 @@ export function run20MandatoryAcceptanceTests(): AcceptanceTestResult[] {
 }
 
 
+// Staff entitlements, commissions, salaries and financial settlements.
+export interface CommissionPolicy {
+  id: string;
+  policyName: string;
+  baseRate: number;
+  tieredRate: number;
+  tierThresholdBottles: number;
+  eligibleTypes: PerfumeType[];
+  isRollOnEligible: boolean;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  approvedBy: string;
+  approvedAt: string;
+  reason: string;
+  isActive: boolean;
+}
+
+export interface StaffBaseSalaryConfig {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  monthlySalaryEgp: number;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  payPeriodFrequency: 'monthly' | 'weekly' | 'custom';
+  approvedBy: string;
+  notes?: string;
+}
+
+export interface StaffIncentive {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  incentiveType: 'حافز أداء' | 'مكافأة' | 'مبلغ تشجيعي' | 'بدل إضافي' | 'أخرى';
+  date: string;
+  relevantPeriodStr: string;
+  reason: string;
+  notes?: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'مصروف' | 'ملغى';
+  createdAt: string;
+}
+
+export interface StaffDeduction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  deductionType: 'خصم تأخير' | 'خصم غياب' | 'جزاء إداري' | 'تسوية عجز' | 'أخرى';
+  date: string;
+  relevantPeriodStr: string;
+  reason: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'منفذ' | 'ملغى';
+  createdAt: string;
+}
+
+export interface StaffAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  date: string;
+  reason: string;
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي' | 'آخر';
+  approvedBy: string;
+  repaymentPlan: string;
+  settledAmountEgp: number;
+  remainingAmountEgp: number;
+  status: 'نشطة' | 'مسواة بالكامل' | 'ملغاة';
+  vaultTransactionId?: string;
+  createdAt: string;
+}
+
+export interface StaffSettlementTransaction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  transactionType: 'سحب_من_المستحقات' | 'سلفة' | 'صرف_راتب' | 'صرف_عمولة' | 'صرف_حافز' | 'تسوية_شاملة';
+  totalAmountEgp: number;
+  breakdown: {
+    commissionEgp?: number;
+    salaryEgp?: number;
+    incentiveEgp?: number;
+    advanceEgp?: number;
+    deductionEgp?: number;
+  };
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي';
+  vaultId?: string;
+  executedBy: string;
+  approvedBy: string;
+  reason: string;
+  notes?: string;
+  status: 'مسودة' | 'بانتظار_الاعتماد' | 'معتمدة_للصرف' | 'تم_الصرف' | 'مرفوضة' | 'ملغاة_بقيد_عكسي';
+  receiptReference?: string;
+  reversalReason?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+}
+
+export interface DailyCommissionAuditRecord {
+  id: string;
+  date: string;
+  employeeId: string;
+  employeeName: string;
+  eligibleSalesCount: number;
+  sprayBottlesCount: number;
+  rollOnBottlesCount: number;
+  bottlesAt5Percent: number;
+  bottlesAt7Percent: number;
+  eligibleNetRevenueEgp: number;
+  calculatedCommissionEgp: number;
+  tier1CommissionEgp: number;
+  tier2CommissionEgp: number;
+  adjustmentsAndReturnsEgp: number;
+  policyIdUsed: string;
+  recordedInEntitlementsEgp: number;
+  alreadyPaidEgp: number;
+  remainingDueEgp: number;
+  auditState: 'معتمدة' | 'تحتاج_مراجعة' | 'فرق_غير_معتمد' | 'لم_تُحتسب_بعد';
+  discrepancyDeltaEgp: number;
+  lastCalculatedAt: string;
+  lastApprovedBy?: string;
+  notes?: string;
+}
+
+export interface CommissionAuditLog {
+  id: string;
+  date: string;
+  employeeName: string;
+  previousCommissionEgp: number;
+  newCorrectCommissionEgp: number;
+  differenceDeltaEgp: number;
+  reason: string;
+  triggeringSaleId?: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface StaffMemberEntitlementSummary {
+  employeeId: string;
+  employeeName: string;
+  monthlyBaseSalaryEgp: number;
+  dailySalaryRateEgp: number;
+  elapsedWorkDaysPeriod: number;
+  isCurrentOngoingPeriod: boolean;
+  earnedSalaryPeriodEgp: number;
+  earnedCommissionsPeriodEgp: number;
+  approvedIncentivesPeriodEgp: number;
+  approvedAdditionsEgp: number;
+  outstandingAdvancesEgp: number;
+  approvedDeductionsEgp: number;
+  totalPreviouslyPaidEgp: number;
+  totalEntitlementsGrossEgp: number;
+  netRemainingBalanceDueEgp: number;
+  pendingApprovalsCount: number;
+  discrepanciesAlertCount: number;
+}

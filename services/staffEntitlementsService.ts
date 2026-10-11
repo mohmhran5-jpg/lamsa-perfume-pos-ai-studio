@@ -7,6 +7,7 @@ import {
   Sale,
   PerfumeType,
   FinancialVault,
+  Expense,
   CommissionPolicy,
   StaffBaseSalaryConfig,
   StaffIncentive,
@@ -712,7 +713,7 @@ export function executeStaffPayoutSettlement(params: {
   notes?: string;
   vaults: FinancialVault[];
   onUpdateVaults: (updatedVaults: FinancialVault[]) => void;
-  onAddExpense?: (expense: any) => void;
+  onAddExpense?: (expense: Expense) => void;
 }): StaffSettlementTransaction {
   const normName = normalizeEmployeeName(params.employeeName);
   const nowIso = new Date().toISOString();
@@ -826,4 +827,3 @@ export function calculateIncentiveReserveLedger(
     remainingBalanceAfterPayoutEgp,
   };
 }
-

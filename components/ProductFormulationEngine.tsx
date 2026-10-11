@@ -75,6 +75,9 @@ interface ProductFormulationEngineProps {
   onSaveBatch: (batch: ProductionBatch) => void;
   auditLogs: AuditLogRecord[];
   onAddAuditLog: (log: AuditLogRecord) => void;
+  onLoadMoreAuditLogs?: () => void;
+  hasMoreAuditLogs?: boolean;
+  isLoadingAuditLogs?: boolean;
   onNavigateToPOS?: (product: Product, sizeMl: number, grams: number) => void;
   initialProduct?: Product | null;
 }
@@ -127,6 +130,9 @@ const ProductFormulationEngine: React.FC<ProductFormulationEngineProps> = ({
   onSaveBatch,
   auditLogs,
   onAddAuditLog,
+  onLoadMoreAuditLogs,
+  hasMoreAuditLogs = false,
+  isLoadingAuditLogs = false,
   onNavigateToPOS,
   initialProduct,
 }) => {
@@ -668,7 +674,10 @@ const ProductFormulationEngine: React.FC<ProductFormulationEngineProps> = ({
 
             <button
               type="button"
-              onClick={() => setActiveTab('audit_trail')}
+              onClick={() => {
+                setActiveTab('audit_trail');
+                if (hasMoreAuditLogs) onLoadMoreAuditLogs?.();
+              }}
               className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
                 activeTab === 'audit_trail'
                   ? 'bg-[#1D1D1F] text-white shadow-xs'
@@ -676,7 +685,7 @@ const ProductFormulationEngine: React.FC<ProductFormulationEngineProps> = ({
               }`}
             >
               <History size={14} />
-              <span>٥. سجل الرقابة ({auditLogs.length})</span>
+              <span>٥. سجل الرقابة ({auditLogs.length} محمّلة)</span>
             </button>
           </div>
         </div>
@@ -2096,7 +2105,7 @@ const ProductFormulationEngine: React.FC<ProductFormulationEngineProps> = ({
               </p>
             </div>
             <span className="px-3 py-1 rounded-xl bg-[#F5F5F7] font-mono text-xs font-black text-[#1D1D1F]">
-              {auditLogs.length} سجلات
+              {auditLogs.length} سجلات محمّلة
             </span>
           </div>
 
@@ -2122,6 +2131,18 @@ const ProductFormulationEngine: React.FC<ProductFormulationEngineProps> = ({
               </div>
             ))}
           </div>
+          {hasMoreAuditLogs && onLoadMoreAuditLogs && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={onLoadMoreAuditLogs}
+                disabled={isLoadingAuditLogs}
+                className="px-4 py-2 rounded-xl bg-[#F5F5F7] hover:bg-black/[0.08] text-[#1D1D1F] text-xs font-bold disabled:opacity-50"
+              >
+                {isLoadingAuditLogs ? 'جارٍ تحميل السجلات...' : 'تحميل 100 سجل أقدم'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

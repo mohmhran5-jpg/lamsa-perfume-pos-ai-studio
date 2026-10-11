@@ -4,6 +4,7 @@ import {
   FinancialVault,
   AppUser,
   StoreSettings,
+  Expense,
   CommissionPolicy,
   StaffBaseSalaryConfig,
   StaffIncentive,
@@ -85,7 +86,7 @@ interface StaffEntitlementsProps {
   users?: AppUser[];
   settings?: StoreSettings;
   onUpdateVaults: (vaults: FinancialVault[]) => void;
-  onAddExpense?: (expense: any) => void;
+  onAddExpense?: (expense: Expense) => void;
 }
 
 export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Inventory from './components/Inventory';
@@ -125,7 +125,9 @@ import {
   testFirestoreConnection,
   subscribeToProductionBatches,
   saveProductionBatchCloud,
-  subscribeToAuditLogs,
+  subscribeToTodaysAuditLogs,
+  loadAuditLogsPage,
+  AuditLogPageCursor,
   addAuditLogCloud,
   subscribeToAppUsers,
   saveAppUserCloud,
@@ -295,6 +297,17 @@ const INITIAL_SALES: Sale[] = [];
 // ولا يُسجل فيها إلا ما دُفع فعلياً من الدرج أو الخزنة أثناء التشغيل.
 const INITIAL_EXPENSES: Expense[] = [];
 
+const mergeAuditLogRecords = (
+  existing: AuditLogRecord[],
+  incoming: AuditLogRecord[]
+): AuditLogRecord[] => {
+  const recordsById = new Map(existing.map((record) => [record.id, record]));
+  incoming.forEach((record) => recordsById.set(record.id, record));
+  return Array.from(recordsById.values()).sort(
+    (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+  );
+};
+
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>(View.DASHBOARD);
   const [formulationProduct, setFormulationProduct] = useState<Product | null>(null);
@@ -407,6 +420,67 @@ const App: React.FC = () => {
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>(() => {
     return loadDataSync<AuditLogRecord[]>('lamsa_audit_logs_v1', []);
   });
+  const auditArchiveCursorRef = useRef<AuditLogPageCursor | null>(null);
+  const auditArchiveLoadingRef = useRef(false);
+  const auditArchiveHasMoreRef = useRef(true);
+  const [hasMoreAuditLogs, setHasMoreAuditLogs] = useState(true);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [isLoadingAllAuditLogs, setIsLoadingAllAuditLogs] = useState(false);
+
+  const loadMoreAuditLogs = useCallback(async () => {
+    if (auditArchiveLoadingRef.current || !auditArchiveHasMoreRef.current) return;
+    auditArchiveLoadingRef.current = true;
+    setIsLoadingAuditLogs(true);
+    try {
+      const page = await loadAuditLogsPage(auditArchiveCursorRef.current);
+      auditArchiveCursorRef.current = page.nextCursor;
+      auditArchiveHasMoreRef.current = page.hasMore;
+      setHasMoreAuditLogs(page.hasMore);
+      if (page.records.length > 0) {
+        setAuditLogs((existing) => mergeAuditLogRecords(existing, page.records));
+      }
+    } catch (error) {
+      console.error('Failed to load the next audit-log page:', error);
+    } finally {
+      auditArchiveLoadingRef.current = false;
+      setIsLoadingAuditLogs(false);
+    }
+  }, []);
+
+  const loadAllAuditLogs = useCallback(async () => {
+    if (auditArchiveLoadingRef.current || !auditArchiveHasMoreRef.current) return;
+    auditArchiveLoadingRef.current = true;
+    setIsLoadingAuditLogs(true);
+    setIsLoadingAllAuditLogs(true);
+    try {
+      let hasMore = auditArchiveHasMoreRef.current;
+      while (hasMore) {
+        const page = await loadAuditLogsPage(auditArchiveCursorRef.current);
+        auditArchiveCursorRef.current = page.nextCursor;
+        hasMore = page.hasMore && page.records.length > 0;
+        auditArchiveHasMoreRef.current = hasMore;
+        setHasMoreAuditLogs(hasMore);
+        if (page.records.length > 0) {
+          setAuditLogs((existing) => mergeAuditLogRecords(existing, page.records));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load the complete audit-log archive:', error);
+    } finally {
+      auditArchiveLoadingRef.current = false;
+      setIsLoadingAuditLogs(false);
+      setIsLoadingAllAuditLogs(false);
+    }
+  }, []);
+
+  useEffect(() => subscribeToTodaysAuditLogs((cloudAudit) => {
+    setAuditLogs((existing) => mergeAuditLogRecords(existing, cloudAudit));
+    setIsCloudConnected(true);
+  }), []);
+
+  useEffect(() => {
+    if (currentView === View.AUDIT_LOGS) void loadMoreAuditLogs();
+  }, [currentView, loadMoreAuditLogs]);
 
   // User Accounts & Authentication State (with automatic sanitization so 5188 never forces password change & Dr. Mohamed / Tarek are always present)
   const sanitizeUserAccount = (u: AppUser): AppUser => {
@@ -1157,15 +1231,6 @@ const App: React.FC = () => {
       }
     });
 
-    // Listen to real-time audit logs
-    const unsubAudit = subscribeToAuditLogs((cloudAudit) => {
-      if (cloudAudit) {
-        setAuditLogs(cloudAudit);
-        persistDataDurable('lamsa_audit_logs_v1', cloudAudit);
-        setIsCloudConnected(true);
-      }
-    });
-
     // Listen to real-time app users
     const unsubUsers = subscribeToAppUsers((cloudUsers) => {
       if (cloudUsers && cloudUsers.length > 0) {
@@ -1376,7 +1441,6 @@ const App: React.FC = () => {
       unsubWithdrawals();
       unsubAttendance();
       unsubBatches();
-      unsubAudit();
       unsubUsers();
       unsubClosures();
       unsubPurchases();
@@ -1396,10 +1460,11 @@ const App: React.FC = () => {
     // Initial presence ping
     publishDevicePresence(currentUser, currentView).catch(() => {});
 
-    // Periodic heartbeat every 20 seconds
+    // Presence is informational; one-minute heartbeats reduce background writes
+    // while the onSnapshot streams for sales and operational data stay immediate.
     const interval = setInterval(() => {
       publishDevicePresence(currentUser, currentView).catch(() => {});
-    }, 20000);
+    }, 60000);
 
     const handleBeforeUnload = () => {
       markDeviceOfflineCloud().catch(() => {});
@@ -2814,6 +2879,11 @@ const App: React.FC = () => {
             onUpdateSale={handleUpdateSale}
             onDeleteSale={handleDeleteSale}
             onAddAuditLog={handleAddAuditLog}
+            hasMoreLogs={hasMoreAuditLogs}
+            isLoadingMoreLogs={isLoadingAuditLogs}
+            isLoadingAllLogs={isLoadingAllAuditLogs}
+            onLoadMoreLogs={() => void loadMoreAuditLogs()}
+            onLoadAllLogs={() => void loadAllAuditLogs()}
           />
         );
       case View.FORMULATION_ENGINE:
@@ -2830,6 +2900,9 @@ const App: React.FC = () => {
             onSaveBatch={handleSaveBatch}
             auditLogs={auditLogs}
             onAddAuditLog={handleAddAuditLog}
+            onLoadMoreAuditLogs={() => void loadMoreAuditLogs()}
+            hasMoreAuditLogs={hasMoreAuditLogs}
+            isLoadingAuditLogs={isLoadingAuditLogs}
             initialProduct={formulationProduct}
             onNavigateToPOS={(prod, sizeMl, grams) => {
               setCurrentView(View.POS);
