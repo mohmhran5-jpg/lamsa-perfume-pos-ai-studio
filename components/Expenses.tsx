@@ -177,6 +177,7 @@ const Expenses: React.FC<ExpensesProps> = ({ expenses, setExpenses, settings, sa
     };
 
     setExpenses([newExpense, ...expenses]);
+    dispatchExpenseTelegramAlert(newExpense, settings).catch(e => {});
     setIsAddModalOpen(false);
     setFormData({
       title: '',

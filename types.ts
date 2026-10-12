@@ -232,6 +232,14 @@ export interface Sale {
   packagingRevenueEgp?: number; // إيراد التغليف الفاخر إذا بيع للعميل بصورة مستقلة
   packagingCostEgp?: number; // تكلفة التغليف الفاخر المسجلة
   isBasicBagReplacedByLuxury?: boolean; // تسجيل استبدال الكيس الأساسي (1 ج) بالكيس الفاخر
+  promotionalSavings?: {
+    offerName: string;
+    originalTotal: number;
+    finalTotal: number;
+    savedAmount: number;
+    savingsPercent: number;
+    printedOnReceipt?: boolean;
+  };
   notes?: string;
   employeeName?: string;
   source?: 'المتجر' | 'نشاط ميداني' | 'واتساب' | 'توصيل';
@@ -1076,10 +1084,32 @@ export function convertDigitsToSystem(text: string, system: SiteNumeralSystem = 
 }
 
 /**
- * Resolves the active theme automatically when `themeAutoTimeOfDay` is enabled,
+ * Resolves the active theme automatically per user or when `themeAutoTimeOfDay` is enabled,
  * or returns the user's selected theme from `APP_THEMES`.
  */
-export function resolveActiveAppTheme(settings?: Partial<StoreSettings>): AppThemeDefinition {
+export function resolveActiveAppTheme(settings?: Partial<StoreSettings>, userId?: string): AppThemeDefinition {
+  if (typeof window !== 'undefined') {
+    try {
+      const targetUserId = userId || (() => {
+        try {
+          const sessionUser = sessionStorage.getItem('lamsa_current_user_v1') || localStorage.getItem('lamsa_session_user_v1');
+          if (sessionUser) return JSON.parse(sessionUser)?.id;
+        } catch { return null; }
+        return null;
+      })();
+
+      if (targetUserId) {
+        const userSavedTheme = localStorage.getItem(`lamsa_user_theme_${targetUserId}`);
+        if (userSavedTheme) {
+          const userThemeDef = APP_THEMES.find((t) => t.id === userSavedTheme);
+          if (userThemeDef) return userThemeDef;
+        }
+      }
+    } catch {
+      // fallback
+    }
+  }
+
   if (settings?.themeAutoTimeOfDay) {
     const hour = new Date().getHours();
     let autoId: AppThemeId = 'apple_sonoma_light';
@@ -1099,6 +1129,26 @@ export function resolveActiveAppTheme(settings?: Partial<StoreSettings>): AppThe
 
   const targetId = settings?.activeThemeId || 'apple_sonoma_light';
   return APP_THEMES.find((t) => t.id === targetId) || APP_THEMES[0];
+}
+
+export function saveUserThemePreference(themeId: AppThemeId, userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const targetUserId = userId || (() => {
+      try {
+        const sessionUser = sessionStorage.getItem('lamsa_current_user_v1') || localStorage.getItem('lamsa_session_user_v1');
+        if (sessionUser) return JSON.parse(sessionUser)?.id;
+      } catch { return null; }
+      return null;
+    })();
+
+    if (targetUserId) {
+      localStorage.setItem(`lamsa_user_theme_${targetUserId}`, themeId);
+    }
+    localStorage.setItem('lamsa_active_theme_v1', themeId);
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 export type TypingInteractionStyle = 'pulse' | 'glow' | 'bounce' | 'shake' | 'wave';

@@ -30,6 +30,8 @@ import { ThermalReceiptLiveView } from './ReceiptModal';
 import { AppleThemeStudioPanel } from './AppleThemeStudioModal';
 import { DashboardLayoutStudioPanel } from './DashboardLayoutStudioPanel';
 import UsersManagement from './UsersManagement';
+import { soundAlertService } from '../services/soundAlertService';
+import { loadTelegramSettings, saveTelegramSettings, testTelegramConnection, TelegramSettings } from '../services/telegramNotificationService';
 import AuditLogViewer from './AuditLogViewer';
 import { FinancialVaults } from './FinancialVaults';
 import { canViewProfits, canViewCosts, hashPassword } from '../services/authService';
@@ -81,7 +83,7 @@ import {
   AlignRight,
   AlignLeft,
   History,
-  Radio,
+  Radio, Send,
   Clock,
   Gauge,
   X
@@ -167,6 +169,11 @@ export const Settings: React.FC<SettingsProps> = ({
   });
 
   // System Settings Sub-Tab
+    // Telegram Notifications State
+  const [telegramConfig, setTelegramConfig] = useState<TelegramSettings>(loadTelegramSettings);
+  const [telegramTesting, setTelegramTesting] = useState<boolean>(false);
+  const [telegramStatusMsg, setTelegramStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const [systemSubTab, setSystemSubTab] = useState<'identity' | 'themes' | 'pos_receipts' | 'pricing' | 'inventory' | 'security_backup' | 'loyalty_ai' | 'dashboard_layout'>('identity');
 
   // Budget Management Sub-Tab
@@ -1007,6 +1014,86 @@ export const Settings: React.FC<SettingsProps> = ({
     } catch (err) {
       setPasswordError('حدث خطأ أثناء تشفير كلمة المرور.');
     }
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportRestoreBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) return;
+
+        const data = JSON.parse(text);
+        if (!data || typeof data !== 'object') {
+          alert('ملف النسخة الاحتياطية غير صالح أو تالف.');
+          return;
+        }
+
+        const restoredSettings = data.settings || data.localSettings;
+        const restoredProducts = Array.isArray(data.products) ? data.products : null;
+        const restoredSales = Array.isArray(data.sales) ? data.sales : null;
+        const restoredExpenses = Array.isArray(data.expenses) ? data.expenses : null;
+        const restoredBottleSizes = Array.isArray(data.bottleSizes) ? data.bottleSizes : null;
+        const restoredVaults = Array.isArray(data.vaults) ? data.vaults : null;
+        const restoredWithdrawals = Array.isArray(data.withdrawals) ? data.withdrawals : null;
+
+        const summaryMsg = `تم العثور على البيانات التالية في الملف:
+- الإعدادات: ${restoredSettings ? "موجودة" : "غير موجودة"}
+- العطور والمنتجات: ${restoredProducts ? restoredProducts.length + " صنف" : "0"}
+- المبيعات والفواتير: ${restoredSales ? restoredSales.length + " فاتورة" : "0"}
+- المصروفات: ${restoredExpenses ? restoredExpenses.length + " مصروف" : "0"}
+- أحجام العبوات: ${restoredBottleSizes ? restoredBottleSizes.length + " حجم" : "0"}
+
+هل أنت متأكد من استعادة هذه البيانات واستبدال قاعدة البيانات المحلية الحالية؟`;
+        if (confirm(summaryMsg)) {
+          if (restoredSettings) {
+            setLocalSettings(restoredSettings);
+            setSettings(restoredSettings);
+            localStorage.setItem('lamsa_settings_v1', JSON.stringify(restoredSettings));
+          }
+          if (restoredBottleSizes) {
+            setBottleSizes(restoredBottleSizes);
+            localStorage.setItem('lamsa_bottle_sizes_v2', JSON.stringify(restoredBottleSizes));
+          }
+          if (restoredProducts) {
+            localStorage.setItem('lamsa_products', JSON.stringify(restoredProducts));
+          }
+          if (restoredSales) {
+            localStorage.setItem('lamsa_sales', JSON.stringify(restoredSales));
+          }
+          if (restoredExpenses) {
+            localStorage.setItem('lamsa_expenses_v2', JSON.stringify(restoredExpenses));
+          }
+          if (restoredVaults) {
+            localStorage.setItem('lamsa_vaults_v2', JSON.stringify(restoredVaults));
+          }
+          if (restoredWithdrawals) {
+            localStorage.setItem('lamsa_withdrawals_v2', JSON.stringify(restoredWithdrawals));
+          }
+
+          soundAlertService.playGoalChime();
+          setToastMessage('✅ تم استعادة قاعدة البيانات المحلية بالكامل وتحديث النظام بنجاح!');
+          setIsSavedToast(true);
+
+          setTimeout(() => {
+            window.location.reload();
+          }, 1200);
+        }
+      } catch (err) {
+        console.error('Failed to parse backup JSON:', err);
+        alert('حدث خطأ أثناء قراءة ملف النسخة الاحتياطية. يرجى التأكد من اختيار ملف JSON صحيح.');
+      }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+
+    reader.readAsText(file);
   };
 
   // Export JSON Backup file
@@ -2315,6 +2402,303 @@ export const Settings: React.FC<SettingsProps> = ({
                     placeholder="اختياري للفواتير الضريبية"
                     className="w-full h-11 px-3.5 rounded-xl bg-white border border-black/[0.08] text-xs font-mono outline-none focus:border-[#0071E3] text-right"
                   />
+                </div>
+              </div>
+
+              
+                            
+              {/* Telegram Bot & Channel Notifications Studio (إعدادات بوت التليجرام والتنبيهات المباشرة) */}
+              <div className="p-4 sm:p-6 rounded-3xl bg-gradient-to-br from-sky-950 via-slate-900 to-indigo-950 text-white border border-sky-500/30 shadow-2xl space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
+                  <div className="flex items-start gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 text-white flex items-center justify-center shrink-0 shadow-lg">
+                      <Send size={22} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-base font-black text-white">إرسال تنبيهات المبيعات والمخزون المباشرة عبر تليجرام</h3>
+                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-sky-500 text-white font-black tracking-wide">بديل الواتساب المباشر ⚡</span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                        يرسل تنبيهات فوتوغرافية ومفصلة بالفواتير، نواقص المخزون الحرج، والمصروفات مباشرة إلى قناتك أو البوت الخاص بك فور حدوثها.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextState = !telegramConfig.enabled;
+                      const updated = { ...telegramConfig, enabled: nextState };
+                      setTelegramConfig(updated);
+                      saveTelegramSettings(updated);
+                      setToastMessage(nextState ? 'تم تفعيل تنبيهات التليجرام المباشرة 📲' : 'تم إيقاف تنبيهات التليجرام 🔕');
+                      setIsSavedToast(true);
+                      setTimeout(() => setIsSavedToast(false), 2000);
+                    }}
+                    className={`px-5 py-3 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 ${
+                      telegramConfig.enabled
+                        ? 'bg-gradient-to-r from-sky-500 via-blue-600 to-sky-600 text-white shadow-lg shadow-sky-950/40'
+                        : 'bg-white/10 text-slate-300 hover:bg-white/20 border border-white/10'
+                    }`}
+                  >
+                    {telegramConfig.enabled ? (
+                      <>
+                        <CheckCircle2 size={18} />
+                        <span>التنبيهات مفعّلة (نشطة)</span>
+                      </>
+                    ) : (
+                      <>
+                        <X size={18} />
+                        <span>التنبيهات معطلة</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  <div className="space-y-2">
+                    <label className="font-bold text-slate-200 block text-right">رمز البوت الخاص (Bot Token):</label>
+                    <input
+                      type="password"
+                      placeholder="مثال: 123456789:ABCdefGhIJKlmNoPQ..."
+                      value={telegramConfig.botToken}
+                      onChange={(e) => {
+                        const updated = { ...telegramConfig, botToken: e.target.value };
+                        setTelegramConfig(updated);
+                        saveTelegramSettings(updated);
+                      }}
+                      className="w-full h-11 px-3.5 rounded-xl bg-white/10 border border-white/15 text-white font-mono text-xs outline-none focus:border-sky-400 text-left"
+                    />
+                    <span className="text-[10px] text-slate-400 block text-right">يمكنك إنشاؤه في ثوانٍ عبر التواصل مع @BotFather في تليجرام</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="font-bold text-slate-200 block text-right">معرف القناة أو الشات (Chat ID):</label>
+                    <input
+                      type="text"
+                      placeholder="مثال: @my_store_channel أو -100123456789 أو 987654321"
+                      value={telegramConfig.chatId}
+                      onChange={(e) => {
+                        const updated = { ...telegramConfig, chatId: e.target.value };
+                        setTelegramConfig(updated);
+                        saveTelegramSettings(updated);
+                      }}
+                      className="w-full h-11 px-3.5 rounded-xl bg-white/10 border border-white/15 text-white font-mono text-xs outline-none focus:border-sky-400 text-left"
+                    />
+                    <span className="text-[10px] text-slate-400 block text-right">معرف شات المالك أو معرف القناة الخاصة بعد إضافة البوت مشرفاً فيها</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-white/10 space-y-3">
+                  <span className="text-xs font-bold text-slate-200 block text-right">تحديد التنبيهات المراد استلامها فورياً:</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {[
+                      { key: 'notifySales', label: '🛍️ المبيعات والفواتير' },
+                      { key: 'notifyLowStock', label: '🚨 نواقص المخزون الحرج' },
+                      { key: 'notifyExpenses', label: '💸 المصروفات المسجلة' },
+                      { key: 'notifyDailySummary', label: '📊 الملخص اليومي' },
+                    ].map((item) => {
+                      const isChecked = (telegramConfig as any)[item.key] !== false;
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => {
+                            const updated = { ...telegramConfig, [item.key]: !isChecked };
+                            setTelegramConfig(updated);
+                            saveTelegramSettings(updated);
+                          }}
+                          className={`p-3 rounded-2xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                            isChecked
+                              ? 'bg-sky-500/20 border-sky-400/50 text-white'
+                              : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+                          }`}
+                        >
+                          <span>{item.label}</span>
+                          <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center text-[9px] ${
+                            isChecked ? 'bg-sky-500 border-sky-400 text-white' : 'border-slate-500'
+                          }`}>
+                            {isChecked && '✓'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={telegramTesting || !telegramConfig.botToken || !telegramConfig.chatId}
+                    onClick={async () => {
+                      setTelegramTesting(true);
+                      setTelegramStatusMsg(null);
+                      const res = await testTelegramConnection(
+                        telegramConfig.botToken,
+                        telegramConfig.chatId,
+                        localSettings.storeName
+                      );
+                      setTelegramTesting(false);
+                      if (res.success) {
+                        setTelegramStatusMsg({ type: 'success', text: 'تم إرسال الرسالة التجريبية بنجاح إلى تليجرام! 🚀' });
+                      } else {
+                        setTelegramStatusMsg({ type: 'error', text: `تعذر الإرسال: ${res.error || 'خطأ بالاتصال'}` });
+                      }
+                    }}
+                    className="apple-btn px-5 py-2.5 rounded-2xl bg-sky-500 hover:bg-sky-400 text-white font-black text-xs transition-all cursor-pointer disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-sky-950/30"
+                  >
+                    <Send size={15} className={telegramTesting ? 'animate-spin' : ''} />
+                    <span>{telegramTesting ? 'جاري اختبار الاتصال...' : 'اختبار إرسال رسالة تجريبية للتليجرام 📡'}</span>
+                  </button>
+
+                  {telegramStatusMsg && (
+                    <span className={`text-xs font-bold px-3.5 py-2 rounded-xl border ${
+                      telegramStatusMsg.type === 'success'
+                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                        : 'bg-rose-500/20 border-rose-400/40 text-rose-300'
+                    }`}>
+                      {telegramStatusMsg.text}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+
+              {/* Intelligent Acoustics & Custom Sound Alerts Studio (استوديو النغمات والأصوات التفاعلية المخصصة) */}
+              <div className="p-4 sm:p-6 rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 text-white border border-indigo-500/30 shadow-2xl space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
+                  <div className="flex items-start gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-lg">
+                      <Zap size={22} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-black text-white">استوديو المؤثرات الصوتية والتنبيهات المخصصة</h3>
+                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500 text-white font-black tracking-wide">أصوات مخصصة 100%</span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                        صُممت الأصوات بنظام Web Audio API النقي بدون أي ملفات خارجية. صوت مخصص لكل عملية (بيع، مصروفات، تحذير مخزون، وتحقيق أهداف).
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextState = !soundAlertService.isEnabled();
+                      soundAlertService.setEnabled(nextState);
+                      setToastMessage(nextState ? "تم تفعيل التنبيهات الصوتية 🔊" : "تم كتم التنبيهات الصوتية 🔇");
+                      setIsSavedToast(true);
+                      setTimeout(() => setIsSavedToast(false), 2000);
+                    }}
+                    className={`px-5 py-3 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 ${
+                      soundAlertService.isEnabled()
+                        ? "bg-gradient-to-r from-emerald-500 via-teal-600 to-emerald-600 text-white shadow-lg"
+                        : "bg-white/10 text-slate-300 hover:bg-white/20 border border-white/10"
+                    }`}
+                  >
+                    {soundAlertService.isEnabled() ? (
+                      <>
+                        <CheckCircle2 size={18} />
+                        <span>الأصوات مفعّلة (شغالة)</span>
+                      </>
+                    ) : (
+                      <>
+                        <X size={18} />
+                        <span>الأصوات مكتومة</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Sound Controls & Preview Matrix */}
+                <div className="space-y-4">
+                  {/* Master Volume & Profile Selector */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Volume Slider */}
+                    <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                        <span>شدة الصوت العامة (Master Volume):</span>
+                        <span className="font-mono font-black text-indigo-300">
+                          {Math.round(soundAlertService.getVolume() * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={soundAlertService.getVolume()}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          soundAlertService.setVolume(v);
+                          soundAlertService.playHapticClick();
+                        }}
+                        className="w-full accent-indigo-400 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Acoustic Profile */}
+                    <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <span className="text-xs font-bold text-slate-200 block text-right">نمط الطابع الصوتي (Sound Theme Profile):</span>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[
+                          { id: "modern_luxury", label: "فخامة دافئة" },
+                          { id: "apple_acoustic", label: "Apple Acoustic" },
+                          { id: "minimal_haptic", label: "نقرات سريعة" },
+                        ].map((p) => {
+                          const isSel = soundAlertService.getProfile() === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                soundAlertService.setProfile(p.id as any);
+                                soundAlertService.playSaleChime();
+                              }}
+                              className={`py-2 px-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                                isSel
+                                  ? "bg-indigo-500 text-white shadow-md"
+                                  : "bg-white/5 text-slate-300 hover:bg-white/10"
+                              }`}
+                            >
+                              {p.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Custom Distinct Sound Alert Testers */}
+                  <div className="pt-2">
+                    <label className="text-xs font-bold text-slate-200 block mb-2 text-right">
+                      🎧 اختبر واستمع للأصوات المخصصة لكل إجراء في المتجر:
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                      {[
+                        { key: "sale", label: "🔔 بيع وتحصيل", color: "from-emerald-600 to-teal-700" },
+                        { key: "expense", label: "💸 تسجيل مصروف", color: "from-blue-600 to-indigo-700" },
+                        { key: "stock_warning", label: "🚨 تحذير المخزون", color: "from-rose-600 to-red-700" },
+                        { key: "goal", label: "🎯 إنجاز التارجت", color: "from-amber-500 to-yellow-600" },
+                        { key: "register", label: "👤 دخول وتوثيق", color: "from-purple-600 to-violet-700" },
+                        { key: "add_item", label: "🛒 إضافة للسلة", color: "from-cyan-600 to-blue-600" },
+                        { key: "notification", label: "💬 إشعار ذكي", color: "from-slate-700 to-slate-800" },
+                        { key: "delete", label: "🗑️ حذف وتلغيم", color: "from-zinc-700 to-neutral-800" },
+                      ].map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => soundAlertService.previewSound(item.key as any)}
+                          className={`p-3 rounded-2xl bg-gradient-to-br ${item.color} text-white text-xs font-black hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shadow-md flex items-center justify-between border border-white/20`}
+                        >
+                          <span>{item.label}</span>
+                          <Zap size={14} className="opacity-80 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -4538,23 +4922,55 @@ export const Settings: React.FC<SettingsProps> = ({
                 </form>
               </div>
 
-              {/* Backup & Export */}
-              <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-3">
-                <div className="flex items-center justify-between">
+              {/* Backup & Export / Import Restore */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-white border border-black/[0.08] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/[0.06]">
                   <div>
-                    <h3 className="font-bold text-xs text-[#1D1D1F]">تصدير نسخة احتياطية كاملة (Full Backup):</h3>
-                    <p className="text-[11px] text-[#86868B]">
-                      تصدير كافة المنتجات، الفواتير، المصروفات، الخزائن، وسجلات النظام في ملف JSON مشفر.
+                    <h3 className="font-bold text-xs sm:text-sm text-[#1D1D1F] flex items-center gap-2">
+                      <Download size={16} className="text-[#0071E3]" />
+                      <span>تنزيل نسخة احتياطية كاملة (Full JSON Backup):</span>
+                    </h3>
+                    <p className="text-[11px] text-[#86868B] mt-0.5">
+                      تصدير كافة الأصناف، الفواتير، المصروفات، الخزائن، وسجلات النظام في ملف JSON شامل لاسترجاعه عند الحاجة.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={handleExportBackup}
-                    className="apple-btn flex items-center gap-1.5 px-4 py-2 rounded-xl bg-black/[0.04] hover:bg-[#1D1D1F] hover:text-white text-xs font-bold text-[#1D1D1F] transition-all shrink-0"
+                    className="apple-btn flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-black text-white text-xs font-bold transition-all shrink-0 cursor-pointer shadow-xs"
                   >
                     <Download size={14} />
-                    <span>تنزيل النسخة</span>
+                    <span>تنزيل نسخة JSON الحالية</span>
                   </button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                  <div>
+                    <h3 className="font-bold text-xs sm:text-sm text-[#1D1D1F] flex items-center gap-2">
+                      <Upload size={16} className="text-amber-600" />
+                      <span>استعادة قاعدة البيانات المحلية من ملف (Restore Database):</span>
+                    </h3>
+                    <p className="text-[11px] text-[#86868B] mt-0.5">
+                      استرجاع كافة المنتجات والمبيعات والمصروفات والإعدادات من ملف نسخة احتياطية JSON سابق.
+                    </p>
+                  </div>
+                  <div className="shrink-0">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept=".json"
+                      onChange={handleImportRestoreBackup}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="apple-btn flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all cursor-pointer shadow-xs"
+                    >
+                      <Upload size={14} />
+                      <span>استعادة البيانات من ملف JSON</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

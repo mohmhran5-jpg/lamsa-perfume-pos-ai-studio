@@ -305,11 +305,11 @@ class SoundAlertService {
   }
 
   /**
-   * 4. SMART NOTIFICATION CHIME (إشعارات النظام الحديثة والتنبيهات الذكية)
-   * Modern double-tap acoustic ping (iOS / watchOS inspired).
-   * G5 (784Hz) -> C6 (1046Hz) 65ms apart.
+   * 4. EXPENSE RECORDED CHIME (صوت تسجيل المصروفات)
+   * Distinct, calm, descending metallic acoustic coin/outflow chime.
+   * A4 (440Hz) -> F#4 (369.99Hz) -> D4 (293.66Hz) with gentle warm decay.
    */
-  public playNotificationChime(category?: string): void {
+  public playExpenseChime(): void {
     if (!this.isSoundEnabled || this.volume <= 0) return;
     try {
       const ctx = this.getAudioContext();
@@ -317,26 +317,157 @@ class SoundAlertService {
       const now = ctx.currentTime;
       const vol = this.volume;
 
-      if (category === 'warning' || category === 'alert') {
-        this.playAlertChime();
+      const notes = [
+        { freq: 440.00, time: 0.00, dur: 0.40, gain: 0.22 }, // A4
+        { freq: 369.99, time: 0.08, dur: 0.45, gain: 0.20 }, // F#4
+        { freq: 293.66, time: 0.16, dur: 0.60, gain: 0.24 }, // D4
+      ];
+
+      notes.forEach(note => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(note.freq, now + note.time);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(2400, now + note.time);
+
+        const startTime = now + note.time;
+        const targetGain = note.gain * vol;
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(targetGain, startTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + note.dur);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(startTime);
+        osc.stop(startTime + note.dur + 0.05);
+      });
+    } catch (e) {
+      console.warn('Expense chime error:', e);
+    }
+  }
+
+  /**
+   * 5. STOCK WARNING & INVENTORY ALERT CHIME (صوت تحذيري للمخزون والنواقص)
+   * Distinct, attention-grabbing dual-pulse tritonal warning pulse.
+   * E5 (659Hz) -> Bb4 (466Hz) repeating alert ping (E5 -> Bb4 -> E5).
+   */
+  public playStockWarningChime(): void {
+    if (!this.isSoundEnabled || this.volume <= 0) return;
+    try {
+      const ctx = this.getAudioContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const vol = this.volume;
+
+      const alertPulse = [
+        { freq: 659.25, time: 0.00, dur: 0.18, gain: 0.28 }, // E5
+        { freq: 466.16, time: 0.12, dur: 0.22, gain: 0.26 }, // Bb4
+        { freq: 659.25, time: 0.26, dur: 0.35, gain: 0.30 }, // E5 Warning Resolution
+      ];
+
+      alertPulse.forEach(note => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(note.freq, now + note.time);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1800, now + note.time);
+
+        const startTime = now + note.time;
+        const targetGain = note.gain * vol;
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(targetGain, startTime + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + note.dur);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(startTime);
+        osc.stop(startTime + note.dur + 0.04);
+      });
+    } catch (e) {
+      console.warn('Stock warning chime error:', e);
+    }
+  }
+
+  /**
+   * 6. GOAL / TARGET / CELEBRATION CHIME (صوت إنجاز التارجت والهدف)
+   */
+  public playGoalChime(): void {
+    if (!this.isSoundEnabled || this.volume <= 0) return;
+    try {
+      const ctx = this.getAudioContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const vol = this.volume;
+
+      const fanfare = [
+        { freq: 523.25, time: 0.00, dur: 0.25, gain: 0.22 }, // C5
+        { freq: 659.25, time: 0.09, dur: 0.25, gain: 0.24 }, // E5
+        { freq: 783.99, time: 0.18, dur: 0.30, gain: 0.26 }, // G5
+        { freq: 1046.5, time: 0.28, dur: 0.70, gain: 0.32 }, // C6
+      ];
+
+      fanfare.forEach(note => {
+        this.synthesizeWarmAcousticNote(ctx, note.freq, now + note.time, note.dur, note.gain * vol);
+      });
+    } catch (e) {
+      console.warn('Goal chime error:', e);
+    }
+  }
+
+  /**
+   * 7. SMART NOTIFICATION CHIME (إشعارات النظام الحديثة والتنبيهات الذكية)
+   * Dynamically dispatches custom sound effects based on notification category.
+   */
+  public playNotificationChime(category?: string): void {
+    if (!this.isSoundEnabled || this.volume <= 0) return;
+    try {
+      const ctx = this.getAudioContext();
+      if (!ctx) return;
+
+      const cat = (category || '').toLowerCase();
+
+      if (cat === 'expense' || cat === 'expense_recorded') {
+        this.playExpenseChime();
         return;
       }
-      if (category === 'sale' || category === 'invoice') {
+      if (cat === 'stock' || cat === 'stock_warning' || cat === 'shortage' || cat === 'warning' || cat === 'alert' || cat === 'inventory') {
+        this.playStockWarningChime();
+        return;
+      }
+      if (cat === 'sale' || cat === 'invoice' || cat === 'sale_completed') {
         this.playSaleChime();
         return;
       }
-      if (category === 'goal' || category === 'success') {
-        this.playRegisterSuccessChime();
+      if (cat === 'goal' || cat === 'success' || cat === 'target' || cat === 'achievement') {
+        this.playGoalChime();
+        return;
+      }
+      if (cat === 'delete' || cat === 'reversal' || cat === 'cancel') {
+        this.playDeleteChime();
         return;
       }
 
-      // Elegant Apple-style double acoustic tap
+      // Default: Elegant Apple-style double acoustic tap
+      const now = ctx.currentTime;
+      const vol = this.volume;
       const tap1Time = now;
       const tap2Time = now + 0.075;
 
-      // Note 1: G5
       this.synthesizeWarmAcousticNote(ctx, 783.99, tap1Time, 0.28, 0.20 * vol);
-      // Note 2: C6 (Resolving)
       this.synthesizeWarmAcousticNote(ctx, 1046.50, tap2Time, 0.42, 0.25 * vol);
     } catch (e) {
       console.warn('Notification chime error:', e);
@@ -527,13 +658,22 @@ class SoundAlertService {
    * Preview test suite for UI testing in settings/studio
    */
   public previewSound(
-    type: 'sale' | 'register' | 'add_item' | 'notification' | 'action' | 'warning' | 'delete'
+    type: 'sale' | 'expense' | 'stock_warning' | 'goal' | 'register' | 'add_item' | 'notification' | 'action' | 'warning' | 'delete'
   ): void {
     // Temporarily ensure context is active
     this.getAudioContext();
     switch (type) {
       case 'sale':
         this.playSaleChime();
+        break;
+      case 'expense':
+        this.playExpenseChime();
+        break;
+      case 'stock_warning':
+        this.playStockWarningChime();
+        break;
+      case 'goal':
+        this.playGoalChime();
         break;
       case 'register':
         this.playRegisterSuccessChime();
@@ -548,7 +688,7 @@ class SoundAlertService {
         this.playActionChime();
         break;
       case 'warning':
-        this.playAlertChime();
+        this.playStockWarningChime();
         break;
       case 'delete':
         this.playDeleteChime();

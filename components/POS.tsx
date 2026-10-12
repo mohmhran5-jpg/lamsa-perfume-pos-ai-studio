@@ -51,6 +51,7 @@ import {
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
 import { soundAlertService } from '../services/soundAlertService';
+import { dispatchSaleTelegramAlert, dispatchLowStockTelegramAlert } from '../services/telegramNotificationService';
 import SalesCoachingCard from './SalesCoachingCard';
 import POSQuickPerformanceBar from './POSQuickPerformanceBar';
 import SmartFragranceSearchModal from './SmartFragranceSearchModal';
@@ -2130,6 +2131,19 @@ const POS: React.FC<POSProps> = ({
 
     soundAlertService.playSaleChime();
     onCompleteSale(newSale);
+
+    // Dispatch instant Telegram alert & low stock warning
+    dispatchSaleTelegramAlert(newSale, settings).catch(err => console.warn('Telegram alert error:', err));
+    cart.forEach(item => {
+      const prod = products.find(p => String(p.id) === String(item.productId));
+      if (prod) {
+        const remaining = Math.max(0, prod.stock_grams - (item.essenceGrams * (item.quantity || 1)));
+        const threshold = prod.min_threshold_grams ?? 50;
+        if (remaining <= threshold) {
+          dispatchLowStockTelegramAlert(prod.name, remaining, threshold, settings?.storeName || 'لمسة عطر').catch(e => {});
+        }
+      }
+    });
 
     // If an owner override was granted, register in Audit Log
     if (ownerOverrideGranted && onAddAuditLog) {

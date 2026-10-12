@@ -542,6 +542,50 @@ export const TarekSalesWorkspace: React.FC<TarekSalesWorkspaceProps> = ({
       {/* ======================================================== */}
       {activeTab === 'performance' && (
         <div className="space-y-4">
+                    {/* 🔒 RAW MATERIAL COST ISOLATION & RESTOCK GUARD CARD FOR TAREK */}
+          <div className="rounded-3xl p-4 sm:p-5 bg-gradient-to-r from-amber-950 via-slate-900 to-slate-950 text-white border-2 border-amber-500/40 shadow-xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-lg font-black">
+                  <ShieldCheck size={22} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm sm:text-base font-black text-amber-300">
+                      🔒 المبلغ المفترض عزله بالدرج لحماية تكلفة خامات العطور (خاص بطارق والكاشير)
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-400/40 text-[10px] font-black">
+                      ممنوع السحب أو الصرف ⚠️
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    القيمة الفعلية لتكلفة شراء وتوريد الزيوت العطرية والعبوات المباعة اليوم والتي يجب حجزها لإعادة التوريد.
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-left bg-white/10 px-4 py-2.5 rounded-2xl border border-amber-400/30 shrink-0">
+                <span className="text-[10px] font-bold text-amber-200 block text-right sm:text-left">المبلغ المفترض عزله بالدرج اليوم:</span>
+                <div className="text-2xl font-black font-mono text-amber-400 text-right sm:text-left">
+                  {todayCost.toLocaleString("ar-EG")} <span className="text-xs font-bold text-white">{settings.currency}</span>
+                </div>
+                <span className="text-[10px] text-slate-300 block text-right sm:text-left font-mono">
+                  عن بيع {todaySales.length} فاتورة اليوم
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-2 text-xs text-amber-100 leading-relaxed">
+              <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <strong className="text-amber-300 font-bold block mb-0.5">تنبيه ذكي وواضح لطارق:</strong>
+                <span>
+                  يا طارق، مبلغ الـ <strong className="font-mono text-amber-300 text-sm px-1 font-black">{todayCost.toLocaleString("ar-EG")} {settings.currency}</strong> هو التكلفة المباشرة للزيوت العطرية والعبوات التي بيعت اليوم. **يُمنع بتاتاً سحب هذا المبلغ أو صرفه لأي بند مصروفات أو نثريات أو رواتب**، حيث يُعزل بالدرج ويُرحل لحساب توريد المخزون حتى لا يحدث عجز في مشتريات الزيوت العادلة!
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* Top Performance Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {/* Card 1: Today Sales Revenue & Target */}

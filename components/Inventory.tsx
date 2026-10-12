@@ -977,6 +977,17 @@ const Inventory: React.FC<InventoryProps> = ({
 
         {canAdd && (
           <div className="flex items-center flex-wrap gap-2">
+            {/* Button 0: Export Inventory CSV for Fast Manual Audit */}
+            <button
+              type="button"
+              onClick={handleExportInventoryCsv}
+              className="apple-btn flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs transition-all cursor-pointer"
+              title="تصدير سجل المخزون الحالي بصيغة CSV للجرد اليدوي السريع"
+            >
+              <Download size={15} />
+              <span>تصدير سجل المخزون للجرد (CSV) 📄</span>
+            </button>
+
             {/* Button 1: Direct CSV Upload */}
             <button
               type="button"
@@ -1714,7 +1725,17 @@ const Inventory: React.FC<InventoryProps> = ({
                       <span>{health.status === 'critical' ? 'خط الخطر' : health.status === 'low' ? 'اقترب من النفاد' : 'آمن'}</span>
                     </span>
                   </div>
-                  <h3 className="font-bold text-base text-[#1D1D1F]">{product.name}</h3>
+                                    <h3 className="font-bold text-base text-[#1D1D1F] flex items-center gap-2">
+                    {(health.isCritical || health.isLow) && (
+                      <span className="relative flex items-center justify-center shrink-0" title={health.isCritical ? "🚨 خط الخطر الحرج - تحت حد الطلب الأدنى" : "⚠️ اقترب من النفاد - تحت حد الطلب الأدنى"}>
+                        <span className={`animate-ping absolute inline-flex h-5 w-5 rounded-full opacity-75 ${health.isCritical ? "bg-rose-500" : "bg-amber-500"}`} />
+                        <span className={`relative inline-flex items-center justify-center rounded-full p-1 text-white shadow-sm ${health.isCritical ? "bg-rose-600" : "bg-amber-500"}`}>
+                          <AlertTriangle size={13} className="animate-pulse" />
+                        </span>
+                      </span>
+                    )}
+                    <span>{product.name}</span>
+                  </h3>
                   <p className="text-xs text-[#86868B]">
                     {product.brand} · {product.origin}
                   </p>
@@ -1805,7 +1826,15 @@ const Inventory: React.FC<InventoryProps> = ({
                   }`}
                 >
                   <td className="py-3.5 px-4">
-                    <div className="font-bold text-[#1D1D1F] text-sm flex items-center gap-2">
+                                        <div className="font-bold text-[#1D1D1F] text-sm flex items-center gap-2">
+                      {(health.isCritical || health.isLow) && (
+                        <span className="relative flex items-center justify-center shrink-0" title={health.isCritical ? "🚨 خط الخطر الحرج - تحت حد الطلب الأدنى" : "⚠️ اقترب من النفاد - تحت حد الطلب الأدنى"}>
+                          <span className={`animate-ping absolute inline-flex h-5 w-5 rounded-full opacity-75 ${health.isCritical ? "bg-rose-500" : "bg-amber-500"}`} />
+                          <span className={`relative inline-flex items-center justify-center rounded-full p-1 text-white shadow-sm ${health.isCritical ? "bg-rose-600" : "bg-amber-500"}`}>
+                            <AlertTriangle size={13} className="animate-pulse" />
+                          </span>
+                        </span>
+                      )}
                       <span>{product.name}</span>
                       <button
                         type="button"

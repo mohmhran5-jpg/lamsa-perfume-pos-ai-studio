@@ -688,7 +688,7 @@ const App: React.FC = () => {
   // Synchronize active Apple Theme, Typography, Colors, Weight, Stroke, Numeral System & Surface Styles to document root
   useEffect(() => {
     const applyThemeAttributes = () => {
-      const resolved = resolveActiveAppTheme(settings);
+      const resolved = resolveActiveAppTheme(settings, effectiveUser?.id);
       const root = document.documentElement;
       root.setAttribute('data-theme', resolved.id);
       root.setAttribute('data-theme-mode', resolved.isDark ? 'dark' : 'light');
