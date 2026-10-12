@@ -46,7 +46,15 @@ import {
   Sparkles,
   LogOut,
   Sliders,
-  Store
+  Store,
+  Calendar,
+  Flame,
+  ChevronLeft,
+  ChevronRight,
+  Play,
+  Pause,
+  Target,
+  TrendingUp
 } from 'lucide-react';
 import { verifyPassword, normalizePasswordInput, canAccessView } from '../services/authService';
 
@@ -482,6 +490,296 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     handleInputChange(next);
   };
 
+  // ----------------------------------------------------
+  // REAL-TIME CLOCK & DUAL CALENDAR (HIJRI + GREGORIAN)
+  // ----------------------------------------------------
+  const [liveNow, setLiveNow] = useState<Date>(new Date());
+  useEffect(() => {
+    const clockTimer = setInterval(() => {
+      setLiveNow(new Date());
+    }, 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+
+  const formattedDateAndClock = useMemo(() => {
+    const dayName = liveNow.toLocaleDateString('ar-EG', { weekday: 'long' });
+    const gregorianDate = liveNow.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
+    const timeFormatted = liveNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    let hijriDate = '';
+    try {
+      hijriDate = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-uma', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      }).format(liveNow);
+    } catch {
+      try {
+        hijriDate = new Intl.DateTimeFormat('ar-SA-u-ca-islamic', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        }).format(liveNow);
+      } catch {
+        hijriDate = '';
+      }
+    }
+
+    return {
+      dayName,
+      gregorianDate,
+      hijriDate,
+      timeFormatted,
+      fullDateLabel: `${dayName}، ${gregorianDate} ${hijriDate ? `· ${hijriDate}` : ''}`
+    };
+  }, [liveNow]);
+
+  // Calculate sales in last 60 minutes for sales-driven ticker motivation
+  const recentHourSalesCount = useMemo(() => {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    return sales.filter(s => {
+      if (!isLiveProductionSale(s)) return false;
+      const saleTime = new Date(s.timestamp || s.createdAt || 0).getTime();
+      return saleTime >= oneHourAgo;
+    }).length;
+  }, [sales]);
+
+  // ----------------------------------------------------
+  // DYNAMIC ANIMATED TICKER TAPE MESSAGES CAROUSEL
+  // ----------------------------------------------------
+  const [tickerIndex, setTickerIndex] = useState(0);
+  const [isTickerPaused, setIsTickerPaused] = useState(false);
+  const [tickerMode, setTickerMode] = useState<'marquee' | 'slide'>('marquee');
+
+  const tickerItems = useMemo(() => {
+    const targetGap = Math.max(0, (settings?.dailySalesTarget || 2000) - todayReportData.totalSalesRevenue);
+    const salesCount = todayReportData.todaysSalesCount;
+    const totalRev = todayReportData.totalSalesRevenue;
+    const bottles = todayReportData.totalBottles;
+    // Estimated commission calculation (e.g. 5% tiered rate)
+    const estCommission = Math.round(totalRev * 0.05);
+
+    const baseItems = [
+      {
+        id: 'daily_profit_summary',
+        category: 'profitSummary',
+        badge: '📈 ملخص أرباح ومبيعات اليوم',
+        text: salesCount > 0 
+          ? `ملخص اليوم: ${salesCount} فاتورة بقيمة ${totalRev.toLocaleString('ar-EG')} ${currency} · صافي المساهمة الأرباح الحالية: +${Math.max(0, Math.round(todayReportData.netContribution || 0)).toLocaleString('ar-EG')} ${currency} 📊`
+          : `ملخص اليوم: لم تُسجل عمليات بيع بعد · التارجت المعتمد للوردية: ${(settings?.dailySalesTarget || 2000).toLocaleString('ar-EG')} ${currency} 🚀`,
+        cardStyle: 'bg-gradient-to-r from-emerald-100 via-teal-50 to-emerald-100 dark:from-emerald-950/70 dark:via-teal-950/50 dark:to-emerald-950/70 border-emerald-400 dark:border-emerald-600 shadow-xs',
+        badgeBg: 'bg-gradient-to-r from-emerald-700 to-teal-700 text-white border border-emerald-600 font-black shadow-xs apple-soft-pulse-badge',
+        iconColor: 'text-emerald-700 dark:text-emerald-300',
+        textColor: 'text-emerald-950 dark:text-emerald-50 font-black',
+        icon: TrendingUp
+      },
+      {
+        id: 'salawat_prayer',
+        category: 'prayer',
+        badge: '🕌 الصلاة على النبي',
+        text: 'اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى سَيِّدِنَا مُحَمَّدٍ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ · أكثر من الصلاة على النبي يفتح الله لك أبواب الرزق والتوفيق.',
+        cardStyle: 'bg-gradient-to-r from-emerald-50 via-teal-50/80 to-emerald-50 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-emerald-950/40 border-emerald-300/80 dark:border-emerald-700/50',
+        badgeBg: 'bg-emerald-600 text-white border border-emerald-500/80 font-black shadow-xs apple-soft-pulse-badge',
+        iconColor: 'text-emerald-600 dark:text-emerald-400',
+        textColor: 'text-emerald-950 dark:text-emerald-100 font-bold',
+        icon: Sparkles
+      },
+      {
+        id: 'sales_achievement',
+        category: 'sales',
+        badge: '🎯 موقف المبيعات اليوم',
+        text: salesCount > 0 
+          ? `تم تسجيل ${salesCount} فاتورة بقيمة ${totalRev.toLocaleString('ar-EG')} ${currency} حتى الآن! ${targetGap === 0 ? '🎉 تم تجاوز مستهدف اليوم بالكامل!' : `متبقي ${targetGap.toLocaleString('ar-EG')} ${currency} للوصول للتارجت.`}`
+          : `جاهزون لبدء المبيعات اليومية! المستهدف المعتمد للوردية: ${(settings?.dailySalesTarget || 2000).toLocaleString('ar-EG')} ${currency}`,
+        cardStyle: 'bg-gradient-to-r from-blue-50 via-indigo-50/80 to-blue-50 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-blue-950/40 border-blue-300/80 dark:border-blue-700/50',
+        badgeBg: 'bg-blue-600 text-white border border-blue-500/80 font-black shadow-xs',
+        iconColor: 'text-blue-600 dark:text-blue-400',
+        textColor: 'text-blue-950 dark:text-blue-100 font-bold',
+        icon: Target
+      },
+      {
+        id: 'commission_earnings',
+        category: 'commission',
+        badge: '💰 العمولة والأرباح اليومية',
+        text: `العمولة التقديرية الحالية لمبيعاتك اليوم: ${estCommission.toLocaleString('ar-EG')} ${currency} (بنسبة 5% متدرجة) · كل فاتورة تسجلها ترفع أرباحك ومستحقاتك!`,
+        cardStyle: 'bg-gradient-to-r from-amber-50 via-yellow-50/90 to-amber-50 dark:from-amber-950/40 dark:via-yellow-950/30 dark:to-amber-950/40 border-amber-300/90 dark:border-amber-700/50',
+        badgeBg: 'bg-amber-500 text-amber-950 border border-amber-400/80 font-black shadow-xs',
+        iconColor: 'text-amber-700 dark:text-amber-300',
+        textColor: 'text-amber-950 dark:text-amber-100 font-extrabold',
+        icon: Award
+      },
+      {
+        id: 'bottles_summary',
+        category: 'inventory',
+        badge: '🧴 إجمالي العبوات اليوم',
+        text: `تم تجهيز وتغليف ${bottles} عبوة عطرية اليوم. حرصك على إتقان النسبة ونظافة العبوة يرسخ اسم «لمسة عطر».`,
+        cardStyle: 'bg-gradient-to-r from-sky-50 via-cyan-50/80 to-sky-50 dark:from-sky-950/40 dark:via-cyan-950/30 dark:to-sky-950/40 border-sky-300/80 dark:border-sky-700/50',
+        badgeBg: 'bg-sky-600 text-white border border-sky-500/80 font-black shadow-xs',
+        iconColor: 'text-sky-600 dark:text-sky-400',
+        textColor: 'text-sky-950 dark:text-sky-100 font-bold',
+        icon: Layers
+      },
+      {
+        id: 'breakeven_gap',
+        category: 'sales',
+        badge: '📊 حد التعادل والتارجت',
+        text: targetGap === 0
+          ? '🎉 بطل! تم تحقيق حد التعادل وتجاوز تارجت اليوم وتغطية التكاليف وبدء ربح صافٍ لمتجر لمسة عطر!'
+          : `نقطة التعادل المستهدفة للوردية: ${(settings?.dailySalesTarget || 2000).toLocaleString('ar-EG')} ${currency} · باقي ${targetGap.toLocaleString('ar-EG')} ${currency} للوصول للتعادل وتخطي التكاليف.`,
+        cardStyle: 'bg-gradient-to-r from-teal-50 via-emerald-50/80 to-teal-50 dark:from-teal-950/40 dark:via-emerald-950/30 dark:to-teal-950/40 border-teal-300/80 dark:border-teal-700/50',
+        badgeBg: 'bg-teal-700 text-white border border-teal-600/80 font-black shadow-xs',
+        iconColor: 'text-teal-700 dark:text-teal-300',
+        textColor: 'text-teal-950 dark:text-teal-100 font-bold',
+        icon: Target
+      },
+      {
+        id: 'dhikr_intention',
+        category: 'prayer',
+        badge: '✨ إخلاص النية وذكر الله',
+        text: 'جدّد نيتك لإتقان العمل وإسعاد العملاء: "إن الله يحب إذا عمل أحدكم عملاً أن يتقنه" · سبحان الله وبحمده، سبحان الله العظيم 🤲',
+        cardStyle: 'bg-gradient-to-r from-purple-50 via-fuchsia-50/80 to-purple-50 dark:from-purple-950/40 dark:via-fuchsia-950/30 dark:to-purple-950/40 border-purple-300/80 dark:border-purple-700/50',
+        badgeBg: 'bg-purple-600 text-white border border-purple-500/80 font-black shadow-xs',
+        iconColor: 'text-purple-600 dark:text-purple-400',
+        textColor: 'text-purple-950 dark:text-purple-100 font-bold',
+        icon: Crown
+      },
+      {
+        id: 'inventory_alert',
+        category: 'inventory',
+        badge: '🚨 تنبيه هام للمخزون',
+        text: 'تفقد المخزون: تأكد من كفاية زيوت العطور الفاخرة والعبوات الأكثر طلباً قبل ساعات الذروة لتفادي أي نفاذ مفاجئ.',
+        cardStyle: 'bg-gradient-to-r from-rose-50 via-red-50/90 to-rose-50 dark:from-rose-950/50 dark:via-red-950/40 dark:to-rose-950/50 border-rose-300/90 dark:border-rose-700/60 shadow-2xs',
+        badgeBg: 'bg-rose-600 text-white border border-rose-500 font-black shadow-xs animate-pulse',
+        iconColor: 'text-rose-600 dark:text-rose-400',
+        textColor: 'text-rose-950 dark:text-rose-100 font-black',
+        icon: AlertCircle
+      },
+      {
+        id: 'sales_boost_ideas',
+        category: 'tips',
+        badge: '💡 أفكار وتنشيط المبيعات',
+        text: 'فكرة بيعية ذكية: تجربة العطر على معصم العميل واقتراح إضافة عطر جيب أو عطور زيتية رفيعة يرفع متوسط الفاتورة بنسبة 30%!',
+        cardStyle: 'bg-gradient-to-r from-fuchsia-50 via-pink-50/80 to-fuchsia-50 dark:from-fuchsia-950/40 dark:via-pink-950/30 dark:to-fuchsia-950/40 border-fuchsia-300/80 dark:border-fuchsia-700/50',
+        badgeBg: 'bg-fuchsia-600 text-white border border-fuchsia-500/80 font-black shadow-xs',
+        iconColor: 'text-fuchsia-600 dark:text-fuchsia-400',
+        textColor: 'text-fuchsia-950 dark:text-fuchsia-100 font-bold',
+        icon: Sparkles
+      },
+      {
+        id: 'store_cleanliness',
+        category: 'cleanliness',
+        badge: '✨ تنظيم ونظافة المتجر',
+        text: 'ترتيب وتنظيم المتجر: تلميع واجهات الزجاج، مسح عبوات العرض، وتبخير جو المتجر بلمسة بخور فاخرة تجذب الزوار وتعزز الشعور الملكي.',
+        cardStyle: 'bg-gradient-to-r from-indigo-50 via-slate-50/80 to-indigo-50 dark:from-indigo-950/40 dark:via-slate-900/30 dark:to-indigo-950/40 border-indigo-300/80 dark:border-indigo-700/50',
+        badgeBg: 'bg-indigo-600 text-white border border-indigo-500/80 font-black shadow-xs',
+        iconColor: 'text-indigo-600 dark:text-indigo-400',
+        textColor: 'text-indigo-950 dark:text-indigo-100 font-bold',
+        icon: Store
+      },
+      {
+        id: 'store_royal_welcome',
+        category: 'welcome',
+        badge: '👑 متجر لمسة عطر',
+        text: `أهلاً بك في نظام التشغيل المالي والبيعي الفاخر لمتجر «${storeName}» · أثرٌ يبقى وذكرى تدوم ✨ استقبالك الحار للعملاء هو السر الحقيقي للنجاح.`,
+        cardStyle: 'bg-gradient-to-r from-amber-100/90 via-yellow-50 to-amber-100/90 dark:from-amber-950/60 dark:via-yellow-950/40 dark:to-amber-950/60 border-amber-400/90 dark:border-amber-600/70 shadow-2xs',
+        badgeBg: 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white border border-amber-500 font-black shadow-xs',
+        iconColor: 'text-amber-700 dark:text-amber-300',
+        textColor: 'text-amber-950 dark:text-amber-100 font-black',
+        icon: Crown
+      }
+    ];
+
+    // Sales-Driven Ticker Behavior: If sales in last hour are quiet (< 2 sales), inject high-priority motivational sales tips
+    if (recentHourSalesCount < 2) {
+      baseItems.push(
+        {
+          id: 'low_sales_motivation_1',
+          category: 'tips',
+          badge: '🔥 تنشيط المبيعات الآن',
+          text: 'المبيعات هادئة في الساعة الأخيرة؟ نصيحة ذكية: رش عينات العطور الجديدة للعملاء عند المدخل واعرض حزم الهدايا الزيتية الفاخرة لتنشيط الحركة!',
+          cardStyle: 'bg-gradient-to-r from-orange-100 via-amber-50 to-orange-100 dark:from-orange-950/60 dark:via-amber-950/40 dark:to-orange-950/60 border-orange-400 dark:border-orange-600 shadow-2xs',
+          badgeBg: 'bg-gradient-to-r from-orange-600 to-amber-600 text-white border border-orange-500 font-black shadow-xs animate-pulse',
+          iconColor: 'text-orange-600 dark:text-orange-400',
+          textColor: 'text-orange-950 dark:text-orange-100 font-extrabold',
+          icon: Flame
+        },
+        {
+          id: 'low_sales_motivation_2',
+          category: 'tips',
+          badge: '💡 رفع متوسط الفاتورة',
+          text: 'اقتراح ذكي لتوليد مبيعات فورا: اعرض تجربة زيت عطر المسك أو العود الفاخر مجاناً واقترح إضافة عطر جيب صغير يضاعف قيمة الفاتورة!',
+          cardStyle: 'bg-gradient-to-r from-pink-100 via-rose-50 to-pink-100 dark:from-pink-950/60 dark:via-rose-950/40 dark:to-pink-950/60 border-pink-400 dark:border-pink-600 shadow-2xs',
+          badgeBg: 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border border-pink-500 font-black shadow-xs',
+          iconColor: 'text-pink-600 dark:text-pink-400',
+          textColor: 'text-pink-950 dark:text-pink-100 font-extrabold',
+          icon: Sparkles
+        }
+      );
+    }
+
+    return baseItems;
+  }, [todayReportData, settings, currency, storeName, recentHourSalesCount]);
+
+  const filteredTickerItems = useMemo(() => {
+    const topics = settings?.newsTickerTopics || {};
+    const filtered = tickerItems.filter(item => {
+      if (item.id === 'sales_achievement' || item.id === 'breakeven_gap' || item.id === 'daily_profit_summary') return topics.sales !== false;
+      if (item.id === 'commission_earnings') return topics.commission !== false;
+      if (item.id === 'inventory_alert' || item.id === 'bottles_summary') return topics.inventory !== false;
+      if (item.id === 'salawat_prayer' || item.id === 'dhikr_intention') return topics.prayers !== false;
+      if (item.id === 'sales_boost_ideas' || item.id.startsWith('low_sales_motivation')) return topics.salesTips !== false;
+      if (item.id === 'store_cleanliness') return topics.storeCleanliness !== false;
+      return true;
+    });
+
+    const baseList = filtered.length > 0 ? filtered : tickerItems;
+
+    // Smart non-consecutive category interleaving algorithm
+    // Guarantees no two adjacent items ever share the same category
+    const pool = [...baseList];
+    const interleaved: typeof baseList = [];
+    let lastCategory = '';
+
+    while (pool.length > 0) {
+      let candidates = pool.filter(item => item.category !== lastCategory);
+      if (candidates.length === 0) {
+        candidates = pool;
+      }
+
+      // Sort by remaining category count in pool (highest first) to avoid trapped duplicate trailing items
+      const catCounts = new Map<string, number>();
+      pool.forEach(p => catCounts.set(p.category, (catCounts.get(p.category) || 0) + 1));
+      candidates.sort((a, b) => (catCounts.get(b.category) || 0) - (catCounts.get(a.category) || 0));
+
+      const selected = candidates[0];
+      interleaved.push(selected);
+      lastCategory = selected.category;
+
+      const idx = pool.indexOf(selected);
+      if (idx !== -1) pool.splice(idx, 1);
+    }
+
+    return interleaved;
+  }, [tickerItems, settings?.newsTickerTopics]);
+
+  const tickerSpeedSeconds = useMemo(() => {
+    const speed = settings?.newsTickerSpeed || 'medium';
+    const count = filteredTickerItems.length || 1;
+    // Ultra-calm, unhurried reading speed for supreme comfort (further slowed):
+    if (speed === 'slow') return Math.max(380, count * 38);
+    if (speed === 'fast') return Math.max(160, count * 16);
+    return Math.max(280, count * 28); // medium default (ultra-slow & perfectly readable)
+  }, [settings?.newsTickerSpeed, filteredTickerItems.length]);
+
+  // Auto-advance ticker every 4.5 seconds unless paused
+  useEffect(() => {
+    if (isTickerPaused || tickerItems.length === 0) return;
+    const interval = setInterval(() => {
+      setTickerIndex(prev => (prev + 1) % tickerItems.length);
+    }, 4500);
+    return () => clearInterval(interval);
+  }, [isTickerPaused, tickerItems.length]);
+
   // Single quiet current status headline for Dynamic Island
   const currentStatusHeadline = useMemo(() => {
     if (currentClosure?.status !== 'مفتوح') {
@@ -497,7 +795,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       };
     }
     return {
-      text: 'المتجر متصل بالسحابة والوردية نشطة وجاهزة لتسجيل المبيعات',
+      text: 'الوردية نشطة وجاهزة لتسجيل المبيعات اليومية',
       type: 'info' as const,
     };
   }, [currentClosure?.status, todayReportData.todaysSalesCount, todayReportData.totalSalesRevenue, currency]);
@@ -739,20 +1037,22 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 </button>
               )}
 
-              {/* 4. Settings & Control Hub Capsule - Always visible and responsive */}
-              <button
-                type="button"
-                onClick={() => onNavigate?.(View.SETTINGS)}
-                className={`apple-pill-btn halo-amber h-10 sm:h-11 px-2.5 sm:px-3.5 text-xs font-bold relative cursor-pointer transition-all ${
-                  currentView === View.SETTINGS 
-                    ? 'bg-[#1D1D1F] text-amber-300 shadow-apple-xs ring-1 ring-amber-400/40' 
-                    : 'text-[#1D1D1F] hover:bg-amber-500/10'
-                }`}
-                title="مركز التحكم والإعدادات الإدارية"
-              >
-                <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
-                <span className="hidden sm:inline">الإعدادات</span>
-              </button>
+              {/* 4. Settings & Control Hub Capsule - Strictly hidden if unauthorized */}
+              {canAccessView(currentUser, View.SETTINGS) && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.(View.SETTINGS)}
+                  className={`apple-pill-btn halo-amber h-10 sm:h-11 px-2.5 sm:px-3.5 text-xs font-bold relative cursor-pointer transition-all ${
+                    currentView === View.SETTINGS 
+                      ? 'bg-[#1D1D1F] text-amber-300 shadow-apple-xs ring-1 ring-amber-400/40' 
+                      : 'text-[#1D1D1F] hover:bg-amber-500/10'
+                  }`}
+                  title="مركز التحكم والإعدادات الإدارية"
+                >
+                  <Sliders size={15} className={currentView === View.SETTINGS ? 'text-amber-400 shrink-0' : 'text-amber-600 shrink-0'} strokeWidth={2} />
+                  <span className="hidden sm:inline">الإعدادات</span>
+                </button>
+              )}
 
               {/* 5. CONSOLIDATED TOOLS MENU CAPSULE */}
               <div className="relative" ref={toolsMenuRef}>
@@ -784,7 +1084,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                       </div>
 
                       {/* Control Hub Direct Link in Menu */}
-                      {(isOwner || currentUser?.permissions?.canManageSettings || currentUser?.role === 'ADMIN') && onNavigate && (
+                      {canAccessView(currentUser, View.SETTINGS) && onNavigate && (
                         <button
                           type="button"
                           onClick={() => {
@@ -823,8 +1123,8 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         </button>
                       )}
 
-                      {/* Connected Devices */}
-                      {onOpenConnectedDevices && (
+                      {/* Connected Devices (خاص بالمالك د. محمد فقط) */}
+                      {isOwner && onOpenConnectedDevices && (
                         <button
                           type="button"
                           onClick={() => {
@@ -911,14 +1211,14 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
           </div>
 
           {/* ---------------------------------------------------- */}
-          {/* ROW 2: STORE SHIFT CAPSULE + INVOICES LOG BUTTON    */}
+          {/* ROW 2: STORE SHIFT CAPSULE + LIVE CLOCK & DATE + INVOICES LOG BUTTON */}
           {/* ---------------------------------------------------- */}
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-black/[0.04]">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-black/[0.04]">
             {/* RIGHT SIDE: Store Branch & Shift Capsule */}
             <button
               type="button"
               onClick={onOpenDayOperations}
-              className="apple-pill-btn halo-emerald h-9 px-3.5 text-xs font-bold text-[#1D1D1F] max-w-[70%] sm:max-w-none"
+              className="apple-pill-btn halo-emerald h-9 px-3.5 text-xs font-bold text-[#1D1D1F] max-w-[50%] sm:max-w-none shrink-0"
               title="فتح وإغلاق اليوم والدرج"
             >
               <Store size={13} className="text-emerald-600 shrink-0" />
@@ -931,14 +1231,28 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               <ChevronDown size={12} className="text-[#86868B] shrink-0" />
             </button>
 
+            {/* CENTER / ELEGANT APPLE CLOCK & CALENDAR WIDGET */}
+            <div className="px-3.5 py-1.5 rounded-full bg-[#1D1D1F] text-white border border-white/10 shadow-sm flex items-center gap-2 text-xs sm:text-sm font-mono font-bold dir-rtl shrink-0 mx-auto sm:mx-0">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+              </span>
+              <Clock size={13} className="text-amber-400 shrink-0" />
+              <span className="text-amber-300 font-extrabold tracking-tight">{formattedDateAndClock.timeFormatted}</span>
+              <span className="text-white/30">|</span>
+              <span className="text-zinc-200 text-[11px] sm:text-xs font-sans font-bold">{formattedDateAndClock.dayName}</span>
+              <span className="text-white/30">·</span>
+              <span className="text-zinc-300 text-[11px] sm:text-xs font-sans font-medium">{formattedDateAndClock.gregorianDate}</span>
+            </div>
+
             {/* LEFT SIDE: Invoices Log Capsule */}
             <button
               type="button"
               onClick={() => onNavigate?.(View.REPORTS)}
-              className={`apple-pill-btn halo-blue h-9 px-3 sm:px-3.5 text-xs font-bold ${currentView === View.REPORTS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
+              className={`apple-pill-btn halo-blue h-9 px-3 sm:px-3.5 text-xs font-bold shrink-0 ${currentView === View.REPORTS ? 'bg-[#0071E3] text-white shadow-apple-xs' : 'text-[#1D1D1F]'}`}
               title="سجل الفواتير والعمليات المعتمدة"
             >
-              <Clock size={14} className={currentView === View.REPORTS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
+              <FileText size={14} className={currentView === View.REPORTS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
               <span>سجل الفواتير</span>
             </button>
           </div>
@@ -981,20 +1295,48 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
           )}
 
           {/* ---------------------------------------------------- */}
-          {/* ROW 4: SUBTLE DYNAMIC ISLAND STATUS NOTIFICATION     */}
+          {/* ROW 4: APPLE LIQUID GLASS LIVE BROADCAST STREAM      */}
           {/* ---------------------------------------------------- */}
-          <div className="flex items-center justify-between text-[11px] px-1 text-[#86868B] font-medium">
-            <div className="flex items-center gap-1.5 truncate">
-              <span className={`w-1.5 h-1.5 rounded-full ${currentStatusHeadline.type === 'error' ? 'bg-rose-500' : currentStatusHeadline.type === 'success' ? 'bg-[#34C759]' : 'bg-[#0071E3]'}`} />
-              <span className="truncate">{currentStatusHeadline.text}</span>
-            </div>
+          {settings?.showNewsTickerBar !== false && (
+            <div 
+              className="relative rounded-2xl apple-ticker-glass-glow border border-amber-300/40 dark:border-amber-500/30 shadow-md flex items-center overflow-hidden h-10 sm:h-11 my-1 transition-all duration-500 hover:border-amber-400/60"
+              onMouseEnter={() => setIsTickerPaused(true)}
+              onMouseLeave={() => setIsTickerPaused(false)}
+            >
+              {/* Apple Ambient Iridescent Accent Line */}
+              <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-amber-500 via-emerald-500 to-blue-500 opacity-60 z-20" />
 
-            <div className="hidden sm:flex items-center gap-2 font-mono text-[10.5px] shrink-0">
-              <span>مبيعات اليوم: <strong className="text-[#1D1D1F]">{todayReportData.totalSalesRevenue.toLocaleString('ar-EG')} {currency}</strong></span>
-              <span>·</span>
-              <span>العبوات: <strong className="text-[#0071E3]">{todayReportData.totalBottles}</strong></span>
+              {/* Subtle Edge Vignette Fade Effects for Apple Aesthetic */}
+              <div className="absolute left-0 top-0 bottom-0 w-8 z-20 pointer-events-none bg-gradient-to-r from-white via-white/80 to-transparent dark:from-zinc-900 dark:via-zinc-900/80" />
+              <div className="absolute right-0 top-0 bottom-0 w-8 z-20 pointer-events-none bg-gradient-to-l from-white via-white/80 to-transparent dark:from-zinc-900 dark:via-zinc-900/80" />
+
+              {/* Continuous Smooth Broadcast Ticker Stream (Apple Liquid Glass Marquee) */}
+              <div className="apple-ticker-mask w-full overflow-hidden relative py-0.5 px-3">
+                <div 
+                  className={`apple-ticker-track-right flex items-center gap-4 sm:gap-5 ${isTickerPaused ? 'apple-ticker-paused' : ''}`}
+                  style={{ animationDuration: `${tickerSpeedSeconds}s` }}
+                >
+                  {[...filteredTickerItems, ...filteredTickerItems, ...filteredTickerItems, ...filteredTickerItems].map((item, idx) => {
+                    const ItemIcon = item.icon;
+                    return (
+                      <div
+                        key={`${item.id}-broadcast-${idx}`}
+                        className={`flex items-center gap-2.5 shrink-0 whitespace-nowrap text-xs sm:text-[13px] font-bold dir-rtl px-3 py-1 rounded-xl border shadow-2xs transition-all duration-300 ${item.cardStyle || 'bg-slate-50 dark:bg-zinc-800/80 border-slate-200/90 dark:border-white/10'}`}
+                      >
+                        <span className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black shrink-0 ${item.badgeBg || 'bg-slate-100 text-slate-800 border border-slate-200'}`}>
+                          {item.badge}
+                        </span>
+                        <ItemIcon size={15} className={`shrink-0 ${item.iconColor || 'text-amber-500'}`} />
+                        <span className={`font-extrabold tracking-tight ${item.textColor || 'text-slate-900 dark:text-zinc-100'}`}>
+                          {item.text}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </header>
 

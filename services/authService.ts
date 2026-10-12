@@ -112,7 +112,10 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return Boolean(p?.canRecordSale);
 
     case View.STAFF_ENTITLEMENTS:
-      return Boolean(p?.canRequestWithdrawal || p?.canApproveWithdrawal || p?.canRecordSale);
+      return Boolean(p?.canRequestWithdrawal || p?.canApproveWithdrawal || p?.canRecordSale || user?.role === 'STORE_MANAGER');
+
+    case View.TAREK_WORKSPACE:
+      return Boolean((user?.role as string) === 'OWNER' || (user?.role as string) === 'STORE_MANAGER' || user?.role === 'SALES_REP' || p?.canAccessSalesActivation);
 
     case View.ANALYZER:
       return Boolean(p?.canViewStock || p?.canRecordSale);
@@ -134,7 +137,7 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return Boolean(p?.canViewStock || p?.canRecordShortage || p?.canStockCheck || p?.canCreatePurchaseRequest);
 
     case View.FORMULATION_ENGINE:
-      return Boolean(p?.canEditProductCost && p?.canViewCosts);
+      return Boolean((p?.canEditProductCost && p?.canViewCosts) || p?.canRecordSale);
 
     case View.FINANCIAL_VAULTS:
       return Boolean(p?.canViewVaults && p?.canApproveWithdrawal);
@@ -143,7 +146,7 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return hasPermission(user, 'canViewExpenses') || hasPermission(user, 'canEditBudget');
 
     case View.OPERATIONS_SYSTEM:
-      return hasPermission(user, 'canAccessOperationsSystem') && hasPermission(user, 'canEditBudget');
+      return Boolean(hasPermission(user, 'canAccessOperationsSystem') || user?.role === 'STORE_MANAGER');
 
     case View.SETTINGS:
       return hasPermission(user, 'canManageSettings');
@@ -158,7 +161,7 @@ export function canAccessView(user: AppUser | null, view: View | string): boolea
       return hasPermission(user, 'canExportData');
 
     case View.MARKETING:
-      return hasPermission(user, 'canViewExecutiveDashboard');
+      return Boolean(hasPermission(user, 'canViewExecutiveDashboard') || p?.canManageCustomers);
 
     default:
       // Rule 9: Default Deny for any unlisted or newly added view
@@ -275,6 +278,24 @@ export function clearSessionUser(): void {
       localStorage.removeItem(SESSION_USER_KEY);
     }
   } catch {}
+}
+
+/**
+ * Checks if user has permission to record sales with historical / backdated timestamps
+ */
+export function canRecordBackdatedSales(user: AppUser | null): boolean {
+  if (!user || !user.isActive) return false;
+  if (user.role === 'OWNER') return true;
+  return Boolean(user.permissions?.canRecordBackdatedSales);
+}
+
+/**
+ * Checks if user is permitted to view real-time connected devices & alert radar
+ */
+export function canViewDeviceAlerts(user: AppUser | null): boolean {
+  if (!user || !user.isActive) return false;
+  if (user.role === 'OWNER') return true;
+  return Boolean(user.permissions?.canViewDeviceAlerts);
 }
 
 

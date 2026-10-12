@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Product, CustomCustomerRecord, Sale, StoreSettings, APP_SYSTEM_VERSION } from '../types';
+import { View, Product, CustomCustomerRecord, Sale, StoreSettings, AppUser, APP_SYSTEM_VERSION } from '../types';
+import { canAccessView } from '../services/authService';
 import {
   Sparkles,
   ShieldCheck,
@@ -30,6 +31,7 @@ interface AppleSignatureFooterProps {
   customCustomers?: CustomCustomerRecord[];
   sales?: Sale[];
   settings?: StoreSettings;
+  currentUser?: AppUser | null;
   onSelectCustomerForPOS?: (cust: { name: string; phone: string }) => void;
   onOpenFormulationForProduct?: (product: Product) => void;
 }
@@ -43,6 +45,7 @@ export const AppleSignatureFooter: React.FC<AppleSignatureFooterProps> = ({
   customCustomers = [],
   sales = [],
   settings,
+  currentUser,
   onSelectCustomerForPOS,
   onOpenFormulationForProduct,
 }) => {
@@ -109,7 +112,7 @@ export const AppleSignatureFooter: React.FC<AppleSignatureFooterProps> = ({
       { id: View.INVENTORY_INTELLIGENCE, label: 'ذكاء المخزون والنواقص الحرجة', hint: 'Alt + 5', icon: Package, color: 'text-amber-600 bg-amber-50' },
       { id: View.REPORTS, label: 'سجل المبيعات والفواتير الشامل', hint: 'تقارير', icon: FileText, color: 'text-cyan-600 bg-cyan-50' },
       { id: View.SETTINGS, label: 'لوحة الإعدادات والتحكم الشاملة', hint: 'إعدادات', icon: Sliders, color: 'text-slate-700 bg-slate-100' },
-    ].filter((item) => !q || item.label.toLowerCase().includes(q));
+    ].filter((item) => canAccessView(currentUser || null, item.id) && (!q || item.label.toLowerCase().includes(q)));
 
     const matchedProducts = q
       ? products
@@ -491,9 +494,15 @@ export const AppleSignatureFooter: React.FC<AppleSignatureFooterProps> = ({
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span>الإصدار: {APP_SYSTEM_VERSION}</span>
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-white/10 text-[10px] font-mono text-sky-300 border border-sky-500/30">
-                  ⚡ تزامن فوري نشط
-                </span>
+                {currentUser?.role === 'OWNER' ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-white/10 text-[10px] font-mono text-sky-300 border border-sky-500/30">
+                    ⚡ تزامن فوري نشط
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full bg-white/10 text-[10px] font-mono text-amber-300 border border-amber-500/30">
+                    🛡️ حماية النظام والبيانات
+                  </span>
+                )}
               </div>
             </div>
 

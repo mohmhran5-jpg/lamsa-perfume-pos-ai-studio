@@ -367,9 +367,31 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<StoreSettings>(() => {
     const parsed = loadDataSync<Partial<StoreSettings>>('lamsa_settings_v2', DEFAULT_SETTINGS);
     const savedQuickTheme = typeof window !== 'undefined' ? localStorage.getItem('lamsa_active_theme_v1') : null;
+
+    // Explicit Salary Migration Check:
+    // If older salary values were stored (e.g. employee 1500 and owner 10000), update to 1000 and 10500
+    let employeeBaseSalary = parsed.employeeBaseSalary ?? DEFAULT_SETTINGS.employeeBaseSalary;
+    let ownerSalary = parsed.ownerSalary ?? DEFAULT_SETTINGS.ownerSalary;
+    if (employeeBaseSalary === 1500 && (ownerSalary === 10000 || !ownerSalary)) {
+      employeeBaseSalary = 1000;
+      ownerSalary = 10500;
+    } else if (employeeBaseSalary === 1500) {
+      employeeBaseSalary = 1000;
+      ownerSalary = (ownerSalary || 10000) + 500;
+    }
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
+      employeeBaseSalary,
+      ownerSalary,
+      customBudgetItems: parsed.customBudgetItems && parsed.customBudgetItems.length > 0 
+        ? parsed.customBudgetItems.map(item => {
+            if (item.id === 'salary_owner' && item.monthlyAmount === 10000) return { ...item, monthlyAmount: 10500, dailyRate: 420 };
+            if (item.id === 'salary_tarek' && item.monthlyAmount === 1500) return { ...item, monthlyAmount: 1000, dailyRate: 40 };
+            return item;
+          })
+        : undefined,
       activeThemeId: parsed.activeThemeId || savedQuickTheme || DEFAULT_SETTINGS.activeThemeId,
       themeContrastLevel: parsed.themeContrastLevel || 'ultra_crisp',
       themeSurfaceStyle: parsed.themeSurfaceStyle || 'neo_precision_2027_glass',
@@ -589,6 +611,18 @@ const App: React.FC = () => {
   const [rejectedAttemptsCount, setRejectedAttemptsCount] = useState<number>(0);
 
   const effectiveUser = previewModeUser || currentUser;
+
+  // Auto-redirect unauthorized views immediately to Tarek Workspace or POS
+  useEffect(() => {
+    if (effectiveUser && !canAccessView(effectiveUser, currentView)) {
+      const fallbackView = canAccessView(effectiveUser, View.TAREK_WORKSPACE)
+        ? View.TAREK_WORKSPACE
+        : canAccessView(effectiveUser, View.POS)
+        ? View.POS
+        : View.POS;
+      setCurrentView(fallbackView);
+    }
+  }, [effectiveUser, currentView]);
 
   // Apple Top Dynamic Island Notifications State
   const [topNotifications, setTopNotifications] = useState<AppleNotificationItem[]>([]);
@@ -1480,8 +1514,8 @@ const App: React.FC = () => {
 
   // Real-time Notification for Store Owner when new devices connect
   useEffect(() => {
-    const isOwner = currentUser?.role === 'OWNER';
-    if (isOwner && prevDeviceCountRef.current > 0 && connectedDevices.length > prevDeviceCountRef.current) {
+    const isOwnerOnly = effectiveUser?.role === 'OWNER';
+    if (isOwnerOnly && prevDeviceCountRef.current > 0 && connectedDevices.length > prevDeviceCountRef.current) {
       const newlyJoined = connectedDevices.find((d) => d.deviceId !== getLocalDeviceId());
       if (newlyJoined) {
         soundAlertService.playActionChime();
@@ -1496,7 +1530,7 @@ const App: React.FC = () => {
       }
     }
     prevDeviceCountRef.current = connectedDevices.length;
-  }, [connectedDevices.length, currentUser]);
+  }, [connectedDevices.length, effectiveUser]);
 
   // Sync state changes to durable storage (localStorage + IndexedDB)
   useEffect(() => {
@@ -2670,27 +2704,28 @@ const App: React.FC = () => {
     // Strictly isolate confidential areas from unauthorized employees (Rules 1, 2, 3, 6, 9)
     if (!canAccessView(effectiveUser, currentView)) {
       logRejectedAccessAttempt(effectiveUser, currentView, undefined, 'محاولة وصول مباشر لصفحة غير مصرح بها');
+      const targetFallback = canAccessView(effectiveUser, View.TAREK_WORKSPACE) ? View.TAREK_WORKSPACE : View.POS;
 
       return (
         <div className="p-6 sm:p-12 max-w-xl mx-auto my-12 text-center animate-in fade-in duration-200" dir="rtl">
-          <div className="apple-glass-card rounded-3xl p-8 border border-rose-500/30 shadow-apple-lg space-y-4 bg-rose-50/10 backdrop-blur-xl">
-            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
+          <div className="apple-glass-card rounded-3xl p-8 border border-amber-500/30 shadow-apple-lg space-y-4 bg-amber-50/10 backdrop-blur-xl">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
               <Lock size={32} />
             </div>
-            <h2 className="text-xl font-black text-[#1D1D1F]">هذا القسم غير متاح لحسابك</h2>
+            <h2 className="text-xl font-black text-[#1D1D1F]">جاري التوجيه إلى واجهتك المخصصة</h2>
             <p className="text-xs text-[#86868B] leading-relaxed">
-              تتطلب هذه الشاشة صلاحيات إدارية خاصة بحساب المالك (د. محمد).
+              هذه الشاشة مخصصة لحساب المالك (د. محمد). تم توجيهك تلقائياً إلى مساحتك المخصصة.
             </p>
             <div className="p-3 rounded-2xl bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 text-[11px] font-mono border border-slate-200 dark:border-white/10">
               المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'طارق'} ({effectiveUser?.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : effectiveUser?.role})</strong>
             </div>
-            <div className="pt-2">
+            <div className="pt-2 flex items-center justify-center gap-2">
               <button
                 type="button"
-                onClick={() => setCurrentView(View.POS)}
-                className="apple-btn px-6 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-md cursor-pointer transition-all"
+                onClick={() => setCurrentView(targetFallback)}
+                className="apple-btn px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all"
               >
-                العودة إلى المبيعات
+                الانتقال لمساحتي المخصصة (واجهة طارق)
               </button>
             </div>
           </div>
@@ -2970,6 +3005,8 @@ const App: React.FC = () => {
           <FragranceAnalyzer
             products={products}
             setProducts={handleSetProducts}
+            sales={sales}
+            settings={settings}
             onNavigateToPOS={(product) => setCurrentView(View.POS)}
             currentUser={currentUser}
             fragranceDatabase={fragranceDatabase}
@@ -3274,15 +3311,27 @@ const App: React.FC = () => {
 
               <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
                 {/* 1. Open Radar/Today's Notifications */}
-                <button
-                  type="button"
-                  onClick={() => setIsOwnerLiveRadarOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-white/70 hover:bg-white dark:bg-white/10 dark:hover:bg-white/20 text-slate-700 dark:text-slate-200 text-xs font-bold border border-slate-200/60 dark:border-white/10 transition-colors cursor-pointer flex items-center gap-1"
-                  title="عرض في قسم الإشعارات اليومية والتنبيهات الهامة"
-                >
-                  <ExternalLink size={12} />
-                  <span>قسم الإشعارات</span>
-                </button>
+                {(effectiveUser?.role === 'OWNER' || Boolean(effectiveUser?.permissions?.canViewDeviceAlerts)) ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsOwnerLiveRadarOpen(true)}
+                    className="px-3 py-1.5 rounded-xl bg-white/70 hover:bg-white dark:bg-white/10 dark:hover:bg-white/20 text-slate-700 dark:text-slate-200 text-xs font-bold border border-slate-200/60 dark:border-white/10 transition-colors cursor-pointer flex items-center gap-1"
+                    title="عرض في قسم الإشعارات اليومية والتنبيهات الهامة"
+                  >
+                    <ExternalLink size={12} />
+                    <span>رادار الإدارة</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentView(View.TAREK_WORKSPACE)}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center gap-1"
+                    title="الانتقال إلى واجهة طارق ومتابعة العمولات والتارجت"
+                  >
+                    <ExternalLink size={12} />
+                    <span>واجهتي والتارجت</span>
+                  </button>
+                )}
 
                 {/* 2. Acknowledge Receipt Button */}
                 {activeBroadcastForDisplay.requiresAcknowledgement && (
@@ -3331,6 +3380,7 @@ const App: React.FC = () => {
           customCustomers={customCustomers}
           sales={sales}
           settings={settings}
+          currentUser={effectiveUser}
           onSelectCustomerForPOS={(cust) => {
             setPreselectedPosCustomer(cust);
             setCurrentView(View.POS);
@@ -3429,16 +3479,16 @@ const App: React.FC = () => {
 
       {/* Owner Live Alerts Radar Modal (رادار التنبيهات الفورية للمالك وتزامن الأجهزة في الوقت الفعلي) */}
       <OwnerLiveAlertsRadarModal
-        isOpen={isOwnerLiveRadarOpen}
+        isOpen={isOwnerLiveRadarOpen && effectiveUser?.role === 'OWNER'}
         onClose={() => setIsOwnerLiveRadarOpen(false)}
         recentSales={sales}
         currency={settings.currency}
         isCloudConnected={isCloudConnected}
-        isOwner={currentUser?.role === 'OWNER'}
+        isOwner={effectiveUser?.role === 'OWNER'}
         broadcasts={ownerBroadcasts}
         onSendBroadcast={handleSendOwnerBroadcast}
         onAcknowledgeBroadcast={handleAcknowledgeOwnerBroadcast}
-        currentUser={currentUser}
+        currentUser={effectiveUser}
         onTriggerTestAlert={() => {
           pushTopNotification(
             'goal',
@@ -3457,12 +3507,12 @@ const App: React.FC = () => {
 
       {/* Real-time Connected Devices & Multi-Device Turbo Sync Modal */}
       <ConnectedDevicesSyncModal
-        isOpen={isConnectedDevicesModalOpen}
+        isOpen={isConnectedDevicesModalOpen && effectiveUser?.role === 'OWNER'}
         onClose={() => setIsConnectedDevicesModalOpen(false)}
         devices={connectedDevices}
-        isOwner={currentUser?.role === 'OWNER'}
+        isOwner={effectiveUser?.role === 'OWNER'}
         onTriggerInstantSync={async () => {
-          await publishDevicePresence(currentUser, currentView);
+          await publishDevicePresence(effectiveUser, currentView);
           pushTopNotification(
             'goal',
             '⚡ تم التزامن اللحظي بنجاح',

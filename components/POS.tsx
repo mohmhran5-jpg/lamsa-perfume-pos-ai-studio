@@ -300,6 +300,27 @@ const POS: React.FC<POSProps> = ({
   const [ownerExceptionNotes, setOwnerExceptionNotes] = useState('');
   const [ownerOverrideGranted, setOwnerOverrideGranted] = useState(false);
 
+  // Historical / Backdated Paper Book Sales State (تسجيل مبيعات الدفتر الورقي بتاريخ سابق)
+  const [isBackdatedSaleMode, setIsBackdatedSaleMode] = useState<boolean>(false);
+  const [customSaleDate, setCustomSaleDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [customSaleTime, setCustomSaleTime] = useState<string>(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+  const [backdatedSaleNote, setBackdatedSaleNote] = useState<string>('تسجيل من الدفتر الورقي اليومي');
+
+  // Duplicate Warning Modal State (كشف التكرار غير المقصود لمبيعات الدفتر)
+  const [duplicateWarningModalOpen, setDuplicateWarningModalOpen] = useState<boolean>(false);
+  const [pendingDuplicateSale, setPendingDuplicateSale] = useState<Sale | null>(null);
+  const [potentialDuplicateMatches, setPotentialDuplicateMatches] = useState<Sale[]>([]);
+
+  const canRecordBackdated = useMemo(() => {
+    return Boolean(
+      currentUser?.role === 'OWNER' ||
+      currentUser?.permissions?.canRecordBackdatedSales
+    );
+  }, [currentUser]);
+
   // Success Modal
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
   const [addedItemFlash, setAddedItemFlash] = useState<string | null>(null);
@@ -797,9 +818,9 @@ const POS: React.FC<POSProps> = ({
     return todaysSalesList.reduce((sum, s) => sum + (s.totalPrice || 0), 0);
   }, [todaysSalesList]);
 
-  // Daily fixed salary for Tarek (60 EGP) - unconditionally earned upon attendance/store opening!
+  // Daily fixed salary for Tarek (40 EGP) - unconditionally earned upon attendance/store opening!
   const dailyBaseSalary = useMemo(() => {
-    const monthlySalary = settings.employeeBaseSalary || 1500;
+    const monthlySalary = settings.employeeBaseSalary || 1000;
     const workDays = settings.monthlyWorkDays || 25;
     return Math.round(monthlySalary / workDays);
   }, [settings.employeeBaseSalary, settings.monthlyWorkDays]);
@@ -1090,7 +1111,13 @@ const POS: React.FC<POSProps> = ({
     return configPriceCheck.price;
   }, [configuringProduct, selectedBottle, configPriceCheck]);
 
-  const configItemFinalPrice = customPrice === '' ? configItemSuggestedPrice : Number(customPrice);
+  const isOwner = currentUser?.role === 'OWNER';
+  const rawCustomPrice = customPrice === '' ? null : Number(customPrice);
+  // Strict Protection: Non-owner staff (e.g. Tarek) cannot sell below suggested price!
+  const configItemFinalPrice = (!isOwner && rawCustomPrice !== null && rawCustomPrice < configItemSuggestedPrice)
+    ? configItemSuggestedPrice
+    : (rawCustomPrice !== null ? rawCustomPrice : configItemSuggestedPrice);
+
   // Roll-ons have 0% commission; spray bottles use rounded 5% commission per Section 10 of Reference
   const configItemCommission = selectedBottle.isRollOn ? 0 : Math.round(configItemFinalPrice * (settings.commissionRate || 0.05));
   const configItemNetProfit = configItemFinalPrice - configItemCost - configItemCommission;
@@ -1113,6 +1140,11 @@ const POS: React.FC<POSProps> = ({
   // Add configured item to cart (with specified quantity)
   const handleAddToCart = () => {
     if (!configuringProduct || !selectedBottle) return;
+
+    if (!isOwner && customPrice !== '' && Number(customPrice) < configItemSuggestedPrice) {
+      alert(`⚠️ غير مسموح بالبيع بأقل من السعر المقترح المعتمد (${configItemSuggestedPrice} ${settings.currency}) لحماية إيرادات المتجر ومستحقات التشغيل.`);
+      return;
+    }
 
     const qty = Math.max(1, configQuantity || 1);
     const displayName = effectiveIsColored
@@ -1608,6 +1640,12 @@ const POS: React.FC<POSProps> = ({
     if (!mixAccounting.canApproveMix) {
       return;
     }
+
+    const isOwner = currentUser?.role === 'OWNER';
+    if (!isOwner && mixCustomPrice !== '' && Number(mixCustomPrice) < mixAccounting.suggestedSellingPriceEgp) {
+      alert(`⚠️ غير مسموح بالبيع بأقل من السعر المقترح المعتمد (${mixAccounting.suggestedSellingPriceEgp} ${settings.currency}) لمزيج العطور.`);
+      return;
+    }
     const qty = Math.max(1, configQuantity || 1);
     const displayName = mixFormulaName.trim()
       ? `ميكس: ${mixFormulaName.trim()} (${mixBottle.sizeMl} مل)`
@@ -1935,8 +1973,8 @@ const POS: React.FC<POSProps> = ({
     setShowSuggestions(false);
   };
 
-  // Final checkout confirmation with pre-sale verification
-  const handleConfirmOrder = () => {
+  // Final checkout confirmation with pre-sale verification and backdated sales support
+  const handleConfirmOrder = (skipDuplicateCheck = false) => {
     if (cart.length === 0) return;
 
     // Hard Rule 16 Check: Block selling below cost unless Owner override granted
@@ -1945,9 +1983,80 @@ const POS: React.FC<POSProps> = ({
       return;
     }
 
+    // Determine actual sale date & time vs system recording time
+    let effectiveSaleIso = new Date().toISOString();
+    let isBackdated = false;
+    if (isBackdatedSaleMode && canRecordBackdated && customSaleDate) {
+      const parsed = new Date(`${customSaleDate}T${customSaleTime || '12:00'}:00`);
+      if (!isNaN(parsed.getTime())) {
+        effectiveSaleIso = parsed.toISOString();
+        isBackdated = effectiveSaleIso.slice(0, 10) < new Date().toISOString().slice(0, 10);
+      }
+    }
+
+    const targetDateStr = effectiveSaleIso.slice(0, 10);
+    const actorName = currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || currentUser?.displayName || 'طارق';
+
+    // Duplicate detection check (منع التكرار غير المقصود لمبيعات الدفتر الورقي)
+    if (!skipDuplicateCheck) {
+      const potentialMatches = (salesHistory || []).filter(s => {
+        if (s.isReversed) return false;
+        const sameDate = s.date.slice(0, 10) === targetDateStr;
+        const sameTotal = Math.abs(s.totalPrice - cartFinalTotal) < 1;
+        const sameItemCount = s.items.length === cart.length;
+        const samePhone = Boolean(customerPhone.trim() && s.customerPhone && s.customerPhone.trim() === customerPhone.trim());
+        return sameDate && sameTotal && (sameItemCount || samePhone);
+      });
+
+      if (potentialMatches.length > 0) {
+        setPotentialDuplicateMatches(potentialMatches);
+        setPendingDuplicateSale({
+          id: Date.now().toString(),
+          date: effectiveSaleIso,
+          items: cart.map(item => ({
+            id: item.id,
+            productId: item.productId,
+            productName: item.productName,
+            productType: item.productType,
+            bottleSize: item.bottleSize,
+            essenceGrams: item.essenceGrams * (item.quantity || 1),
+            cost: item.cost * (item.quantity || 1),
+            sellingPrice: item.sellingPrice * (item.quantity || 1),
+            profit: item.profit * (item.quantity || 1),
+            quantity: item.quantity || 1,
+            isColoredBottle: item.isColoredBottle,
+            isRollOn: item.isRollOn,
+            isMix: Boolean(item.isMix),
+            compositionType: item.compositionType || (item.isMix ? 'ميكس' : 'عطر فردي'),
+            mixComponents: item.mixComponents,
+            customFormulaName: item.customFormulaName,
+          })),
+          totalPrice: cartFinalTotal,
+          totalCost: cartTotalCost,
+          totalProfit: cartTotalNetProfit,
+          paymentMethod,
+        });
+        setDuplicateWarningModalOpen(true);
+        return;
+      }
+    }
+
     const newSale: Sale = {
       id: Date.now().toString(),
-      date: new Date().toISOString(),
+      date: effectiveSaleIso,
+      recordedAt: new Date().toISOString(),
+      recordedBy: actorName,
+      isBackdated,
+      saleDateNote: isBackdated ? backdatedSaleNote : undefined,
+      duplicateCheckHash: `${targetDateStr}_${cart.length}_${cartFinalTotal}_${customerPhone.trim() || 'walkin'}`,
+      auditTrail: [
+        {
+          action: isBackdated ? 'تسجيل مبيعات دفتر ورقي بأثر رجعي' : 'تسجيل بيع فوري',
+          performedBy: actorName,
+          timestamp: new Date().toISOString(),
+          details: `تاريخ البيع الفعلي: ${targetDateStr} | القيمة: ${cartFinalTotal} ج.م | الأصناف: ${cart.length} | المسجل: ${actorName}`
+        }
+      ],
       items: cart.map(item => ({
         id: item.id,
         productId: item.productId,
@@ -2008,13 +2117,14 @@ const POS: React.FC<POSProps> = ({
             exceptionReason: `${ownerExceptionReason} - ${ownerExceptionNotes}`,
           }
         : {}),
-      employeeName: currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || currentUser?.displayName || 'طارق',
+      employeeName: actorName,
       source: 'المتجر',
       notes: ownerOverrideGranted 
         ? `[استثناء معتمد من الإدارة العامة: ${ownerExceptionReason}] ${ownerExceptionNotes}` 
         : [
             packagingId !== 'basic_bag' ? packagingAccounting.accountingNote : '',
-            redeemedLoyaltyPoints > 0 ? `خصم نقاط ولاء فوري: -${loyaltyDiscountAmount} ج.م (${redeemedLoyaltyPoints} نقطة)` : ''
+            redeemedLoyaltyPoints > 0 ? `خصم نقاط ولاء فوري: -${loyaltyDiscountAmount} ج.م (${redeemedLoyaltyPoints} نقطة)` : '',
+            isBackdated ? `[مبيعات دفتر ورقي: ${targetDateStr}] ${backdatedSaleNote}` : ''
           ].filter(Boolean).join(' · ') || undefined
     };
 
@@ -3465,16 +3575,28 @@ const POS: React.FC<POSProps> = ({
 
                   {/* السعر النهائي وإمكانية تعديل السعر */}
                   <div className="pt-2 border-t border-black/[0.05] flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="text-[11px] font-bold text-[#636366]">
-                      سعر بيع زجاجة الميكس (المقترح الموزون: {mixAccounting.suggestedSellingPriceEgp} {settings.currency}):
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-bold text-[#636366]">
+                        سعر بيع زجاجة الميكس (المقترح الموزون: {mixAccounting.suggestedSellingPriceEgp} {settings.currency}):
+                      </span>
+                      {!isOwner && (
+                        <span className="text-[9.5px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                          🔒 الحد الأدنى: {mixAccounting.suggestedSellingPriceEgp} ج
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1.5">
                       <input
                         type="number"
+                        min={!isOwner ? mixAccounting.suggestedSellingPriceEgp : 0}
                         placeholder={`${mixAccounting.suggestedSellingPriceEgp}`}
                         value={mixCustomPrice}
                         onChange={(e) => setMixCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-24 h-8 px-2 rounded-xl bg-white border border-black/[0.1] text-center font-mono font-black text-xs outline-none focus:border-[#0071E3]"
+                        className={`w-24 h-8 px-2 rounded-xl bg-white border text-center font-mono font-black text-xs outline-none ${
+                          !isOwner && mixCustomPrice !== '' && Number(mixCustomPrice) < mixAccounting.suggestedSellingPriceEgp
+                            ? 'border-rose-500 text-rose-600 bg-rose-50'
+                            : 'border-black/[0.1] focus:border-[#0071E3]'
+                        }`}
                       />
                       <span className="font-mono text-[10px] text-[#86868B]">{settings.currency}</span>
                       {mixCustomPrice !== '' && (
@@ -5184,9 +5306,67 @@ const POS: React.FC<POSProps> = ({
                   </div>
                 </div>
 
+                {/* Historical / Backdated Paper Book Sales Selector */}
+                {canRecordBackdated && (
+                  <div className="pt-2 pb-1 border-t border-slate-800 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isBackdatedSaleMode}
+                          onChange={(e) => setIsBackdatedSaleMode(e.target.checked)}
+                          className="rounded text-amber-500 focus:ring-amber-500"
+                        />
+                        <span>تسجيل بيع بتاريخ سابق (الدفتر الورقي)</span>
+                      </label>
+                      {isBackdatedSaleMode && (
+                        <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                          أثر رجعي
+                        </span>
+                      )}
+                    </div>
+
+                    {isBackdatedSaleMode && (
+                      <div className="p-2.5 rounded-xl bg-slate-900 border border-amber-500/30 space-y-2 animate-in fade-in duration-150">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 block mb-0.5">تاريخ البيع الفعلي:</label>
+                            <input
+                              type="date"
+                              value={customSaleDate}
+                              max={new Date().toISOString().slice(0, 10)}
+                              onChange={(e) => setCustomSaleDate(e.target.value)}
+                              className="w-full h-8 px-2 rounded-lg bg-black/40 border border-slate-700 text-white font-mono text-xs font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 block mb-0.5">توقيت البيع التقريبي:</label>
+                            <input
+                              type="time"
+                              value={customSaleTime}
+                              onChange={(e) => setCustomSaleTime(e.target.value)}
+                              className="w-full h-8 px-2 rounded-lg bg-black/40 border border-slate-700 text-white font-mono text-xs font-bold"
+                            />
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="ملاحظة الإدخال (مثال: مبيعات الدفتر الورقي - الأحد الماضي)"
+                          value={backdatedSaleNote}
+                          onChange={(e) => setBackdatedSaleNote(e.target.value)}
+                          className="w-full h-7 px-2 rounded-lg bg-black/40 border border-slate-700 text-slate-300 text-[11px]"
+                        />
+                        <p className="text-[9.5px] text-amber-300/80 leading-tight">
+                          💡 تنبيه محاسبي: تُحتسب الفاتورة ضمن مبيعات وعمولات يوم {customSaleDate} الفعلي، دون احتسابها كبيع لليوم الحالي.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <button
                   type="button"
-                  onClick={handleConfirmOrder}
+                  onClick={() => handleConfirmOrder(false)}
                   disabled={cart.length === 0 || (isCartBelowCost && !ownerOverrideGranted)}
                   className={`w-full py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
                     cart.length > 0 && (!isCartBelowCost || ownerOverrideGranted)
@@ -5974,18 +6154,35 @@ const POS: React.FC<POSProps> = ({
 
                   {/* Custom Price Overwrite */}
                   <div className="p-2.5 rounded-2xl bg-[#F5F5F7]/90 border border-black/[0.06] flex flex-col justify-between text-xs">
-                    <span className="font-black text-[11px] text-[#1D1D1F] block mb-1">
-                      السعر ({configItemSuggestedPrice} ج):
-                    </span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-black text-[11px] text-[#1D1D1F]">
+                        السعر ({configItemSuggestedPrice} ج):
+                      </span>
+                      {!isOwner && (
+                        <span className="text-[9.5px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                          🔒 الحد الأدنى: {configItemSuggestedPrice} ج
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1">
                       <input
                         type="number"
+                        min={!isOwner ? configItemSuggestedPrice : 0}
                         placeholder={`${configItemSuggestedPrice}`}
                         value={customPrice}
                         onChange={(e) => setCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-full h-7 px-2 rounded-xl bg-white border border-black/[0.08] focus:border-[#0071E3] font-mono text-xs font-black text-center outline-none"
+                        className={`w-full h-7 px-2 rounded-xl bg-white border font-mono text-xs font-black text-center outline-none ${
+                          !isOwner && customPrice !== '' && Number(customPrice) < configItemSuggestedPrice
+                            ? 'border-rose-500 text-rose-600 bg-rose-50'
+                            : 'border-black/[0.08] focus:border-[#0071E3]'
+                        }`}
                       />
                     </div>
+                    {!isOwner && customPrice !== '' && Number(customPrice) < configItemSuggestedPrice && (
+                      <span className="text-[9.5px] text-rose-600 font-bold mt-1 block">
+                        ⚠️ لا يمكن البيع بأقل من {configItemSuggestedPrice} ج (السعر المعتمد)
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -6125,6 +6322,78 @@ const POS: React.FC<POSProps> = ({
           }}
           isInitialShiftOpen={isInitialShiftOpenAlert}
         />
+      )}
+
+      {/* ======================================================== */}
+      {/* DUPLICATE WARNING MODAL (منع تكرار فواتير الدفتر الورقي) */}
+      {/* ======================================================== */}
+      {duplicateWarningModalOpen && pendingDuplicateSale && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-3xl bg-slate-900 border-2 border-amber-500/50 p-5 shadow-2xl space-y-4 text-white">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                <AlertTriangle size={22} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-black text-amber-300">
+                  تنبيه كشف التكرار (منع تكرار الدفتر الورقي غير المقصود)
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  تم العثور على {potentialDuplicateMatches.length} فاتورة مسجلة مسبقاً بنفس التاريخ والقيمة الإجمالية والأصناف:
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-black/40 border border-white/10 space-y-2 text-xs">
+              <div className="flex justify-between font-bold text-amber-300">
+                <span>تاريخ البيع المحدد:</span>
+                <span className="font-mono">{pendingDuplicateSale.date.slice(0, 10)}</span>
+              </div>
+              <div className="flex justify-between font-bold text-slate-200">
+                <span>القيمة الإجمالية:</span>
+                <span className="font-mono">{pendingDuplicateSale.totalPrice.toLocaleString('ar-EG')} {settings.currency}</span>
+              </div>
+              <div className="border-t border-white/10 pt-1.5 space-y-1">
+                <span className="text-[10px] text-slate-400 block">الفواتير المتطابقة المسجلة سابقاً:</span>
+                {potentialDuplicateMatches.map(m => (
+                  <div key={m.id} className="p-1.5 rounded-lg bg-white/5 flex justify-between items-center text-[11px] font-mono">
+                    <span className="text-slate-300">#{m.id.slice(-6)} ({m.items.length} صنف)</span>
+                    <span className="text-amber-400 font-bold">{m.totalPrice} ج.م</span>
+                    <span className="text-slate-500">{m.customerName || 'عميل نقدي'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-300 leading-relaxed bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20">
+              💡 هل هذه عملية بيع منفصلة ومستقلة تماماً وتريد تسجيلها، أم تكرار بالخطأ لفاتورة مسجلة من الدفتر؟
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateWarningModalOpen(false);
+                  setPendingDuplicateSale(null);
+                  setPotentialDuplicateMatches([]);
+                }}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold text-xs cursor-pointer"
+              >
+                إلغاء وفحص الفواتير
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateWarningModalOpen(false);
+                  handleConfirmOrder(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md cursor-pointer transition-all"
+              >
+                نعم، بيع منفصل جديد (متابعة التسجيل)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ======================================================== */}

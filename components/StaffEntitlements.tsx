@@ -13,8 +13,10 @@ import {
   StaffSettlementTransaction,
   DailyCommissionAuditRecord,
   CommissionAuditLog,
+  IncentiveFundingSource,
   DEFAULT_SETTINGS
 } from '../types';
+import { SmoothNumberInput } from './SmoothNumberInput';
 import {
   DEFAULT_COMMISSION_POLICY,
   loadCommissionPolicies,
@@ -76,7 +78,8 @@ import {
   HelpCircle,
   Copy,
   Lock,
-  Edit3
+  Edit3,
+  Target
 } from 'lucide-react';
 
 interface StaffEntitlementsProps {
@@ -137,6 +140,7 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
   const [showIncentiveModal, setShowIncentiveModal] = useState(false);
   const [incentiveAmount, setIncentiveAmount] = useState<number>(100);
   const [incentiveType, setIncentiveType] = useState<'حافز أداء' | 'مكافأة' | 'مبلغ تشجيعي' | 'بدل إضافي' | 'أخرى'>('حافز أداء');
+  const [incentiveFundingSource, setIncentiveFundingSource] = useState<IncentiveFundingSource>('owner_salary');
   const [incentiveReason, setIncentiveReason] = useState('تميز في مبيعات العطور والخدمة الممتازة');
 
   // Advance Modal State
@@ -259,6 +263,15 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
     return calculateIncentiveReserveLedger(incentives, settlements, 500, 0, 0);
   }, [incentives, settlements]);
 
+  // Funding source descriptive labels
+  const FUNDING_SOURCE_LABELS: Record<IncentiveFundingSource, string> = {
+    owner_salary: 'خصم من راتب المدير (د. محمد مهران - 10,500 ج)',
+    owner_profits: 'خصم من أرباح المتجر التشغيلية الصافية',
+    contingency: 'خصم من بند احتياطي الطوارئ والهالك (300 ج)',
+    store_budget: 'خصم من الموازنة التشغيلية المفتوحة',
+    operating_surplus: 'خصم من فائض مساهمة المبيعات فوق التارجت',
+  };
+
   // Handle Adding Incentive
   const handleAddIncentive = (e: React.FormEvent) => {
     e.preventDefault();
@@ -266,18 +279,15 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
       showNotification('إضافة الحوافز والمكافآت من صلاحية د. محمد (المالك) فقط.');
       return;
     }
-    if (incentiveAmount > incentiveReserveLedger.availableForApprovalEgp) {
-      const confirmExceed = window.confirm(
-        `⚠️ المخصص المتاح للاعتماد في بند احتياطي الحوافز هو ${incentiveReserveLedger.availableForApprovalEgp} ج.م.\n\nالمبلغ المطلوب (${incentiveAmount} ج.م) يتجاوز الرصيد المتاح من مخصص الـ 500 ج.م المعتمدة شهرياً.\nهل تؤكد اعتماد هذا الحافز بقرار استثنائي موثق من المالك د. محمد؟`
-      );
-      if (!confirmExceed) return;
-    }
+    const fundingLabel = FUNDING_SOURCE_LABELS[incentiveFundingSource] || 'معتمد من الإدارة';
     const newInc: StaffIncentive = {
       id: `inc-${Date.now()}`,
       employeeId: selectedEmployeeName === 'طارق' ? 'user-tarek' : 'user-custom',
       employeeName: selectedEmployeeName,
       amountEgp: incentiveAmount,
       incentiveType,
+      fundingSource: incentiveFundingSource,
+      fundingSourceLabel: fundingLabel,
       date: new Date().toISOString().slice(0, 10),
       relevantPeriodStr: selectedPeriod === 'ALL' ? new Date().toISOString().slice(0, 7) : selectedPeriod,
       reason: incentiveReason,
@@ -289,7 +299,7 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
     setIncentives(next);
     saveStaffIncentives(next);
     setShowIncentiveModal(false);
-    showNotification(`تمت إضافة ${incentiveType} بقيمة ${incentiveAmount} ج.م للموظف ${selectedEmployeeName}`);
+    showNotification(`تمت إضافة ${incentiveType} بقيمة ${incentiveAmount} ج.م لـ ${selectedEmployeeName} بتمويل: (${fundingLabel})`);
   };
 
   // Handle Adding Advance
@@ -801,6 +811,173 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Live Commission & Daily Incentive Progress Dashboard for Tarek */}
+            {(() => {
+              const todayStr = new Date().toISOString().slice(0, 10);
+              const todayCommissionCalc = calculateExactDailyCommission(
+                sales,
+                selectedEmployeeName,
+                todayStr,
+                policies[0] || DEFAULT_COMMISSION_POLICY
+              );
+              const sprayCount = todayCommissionCalc.totalSprayBottlesCount;
+              const threshold = policies[0]?.tierThresholdBottles || 10;
+              const progressPct = Math.min(100, Math.round((sprayCount / threshold) * 100));
+              const remainingToTier2 = Math.max(0, threshold - sprayCount);
+
+              return (
+                <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-slate-900 via-[#1A1A1E] to-slate-950 text-white shadow-xl border border-amber-500/30 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black">
+                        <TrendingUp size={20} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-white flex items-center gap-2">
+                          <span>لوحة عمولة ومبيعات اليوم المباشرة لـ ({selectedEmployeeName})</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            محدث لحظياً
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-slate-300 mt-0.5">
+                          تحديث فوري لكل زجاجة تباع مع بيان العمولة المحسوبة وشريحة الحافز (10 عبوات بخاخ).
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-black text-amber-400 bg-amber-500/10 border border-amber-400/30 px-3 py-1.5 rounded-xl">
+                        عمولة اليوم: {Number(todayCommissionCalc.calculatedCommissionEgp ?? todayCommissionCalc.totalCommissionEgp ?? 0).toLocaleString('ar-EG')} ج.م
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress Meter to 7% Tier */}
+                  <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-slate-300 flex items-center gap-1.5">
+                        <Target size={14} className="text-amber-400" />
+                        <span>شريحة الحافز اليومي (10 عبوات بخاخ لفتح عمولة 7%):</span>
+                      </span>
+                      <span className="font-mono text-amber-300">
+                        {sprayCount} من {threshold} عبوة ({progressPct}%)
+                      </span>
+                    </div>
+
+                    <div className="w-full h-3 rounded-full bg-black/40 overflow-hidden border border-white/10">
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          sprayCount >= threshold
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-sm'
+                            : 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                        }`}
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      {sprayCount >= threshold ? (
+                        <span className="text-emerald-400 font-bold flex items-center gap-1">
+                          <CheckCircle2 size={13} />
+                          <span>🎉 تم تفعيل شريحة الـ 7% الفائقة على كافة العبوات الزائدة اليوم ({sprayCount - threshold} عبوة إضافية)!</span>
+                        </span>
+                      ) : (
+                        <span className="text-amber-300 font-medium">
+                          ⚡ متبقي {remainingToTier2} عبوة بخاخ اليوم لتفعيل العمولة الفائقة 7% بدلاً من 5%!
+                        </span>
+                      )}
+                      <span className="font-mono text-slate-400">
+                        شريحة 5%: {todayCommissionCalc.bottlesAt5PercentCount} عبوة ({todayCommissionCalc.tier1CommissionEgp} ج)
+                        {todayCommissionCalc.bottlesAt7PercentCount > 0 && ` | شريحة 7%: ${todayCommissionCalc.bottlesAt7PercentCount} عبوة (${todayCommissionCalc.tier2CommissionEgp} ج)`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bottle Details for Today if any */}
+                  {todayCommissionCalc.bottleDetails.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                        <span>الزجاجات المباعة اليوم وعمولتها المباشرة ({todayCommissionCalc.bottleDetails.length} عبوة):</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBottleDetailDate(todayStr)}
+                          className="text-[11px] text-amber-400 hover:underline font-bold"
+                        >
+                          عرض الكشف الكامل
+                        </button>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/30">
+                        <table className="w-full text-right text-[11px]">
+                          <thead className="bg-white/5 text-slate-300 font-black">
+                            <tr>
+                              <th className="py-2 px-2.5">الرقم</th>
+                              <th className="py-2 px-2.5">اسم العطر</th>
+                              <th className="py-2 px-2.5">النوع والحجم</th>
+                              <th className="py-2 px-2.5">سعر البيع</th>
+                              <th className="py-2 px-2.5">الشريحة</th>
+                              <th className="py-2 px-2.5">العمولة</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 font-mono">
+                            {todayCommissionCalc.bottleDetails.map((b, idx) => (
+                              <tr key={idx} className="hover:bg-white/5">
+                                <td className="py-1.5 px-2.5 font-bold text-amber-400">
+                                  {b.isRollOn ? 'رول' : `#${b.bottleNumberToday}`}
+                                </td>
+                                <td className="py-1.5 px-2.5 font-sans font-bold text-white">{b.productName}</td>
+                                <td className="py-1.5 px-2.5 text-slate-300">{b.bottleSize}مل ({b.productType})</td>
+                                <td className="py-1.5 px-2.5 text-white">{b.netEligiblePrice} ج</td>
+                                <td className="py-1.5 px-2.5">
+                                  <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold ${
+                                    b.appliedRate === 0.07 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                                  }`}>
+                                    {b.tierLabel}
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2.5 font-black text-emerald-400">+{b.commissionEgp} ج</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Incentives with Funding Sources Breakdown */}
+                  {incentives.filter(i => i.employeeName === selectedEmployeeName).length > 0 && (
+                    <div className="p-3 rounded-2xl bg-blue-950/40 border border-blue-500/30 text-xs space-y-2">
+                      <div className="flex items-center justify-between font-bold text-blue-200">
+                        <span className="flex items-center gap-1.5">
+                          <Sparkles size={14} className="text-blue-400" />
+                          <span>الحوافز والمكافآت المعتمدة لـ ({selectedEmployeeName}) ومصادر تمويلها:</span>
+                        </span>
+                      </div>
+                      <div className="divide-y divide-blue-800/40">
+                        {incentives
+                          .filter(i => i.employeeName === selectedEmployeeName)
+                          .map((inc) => (
+                            <div key={inc.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px]">
+                              <div>
+                                <span className="font-bold text-white">{inc.incentiveType || 'حافز أداء'}</span>
+                                <span className="text-slate-300 mx-1.5">— {inc.reason}</span>
+                                <span className="text-slate-400 text-[10px]">({inc.date})</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-bold border border-blue-400/30">
+                                  {inc.fundingSourceLabel || 'معتمد من الإدارة'}
+                                </span>
+                                <strong className="font-mono text-emerald-400 font-black">+{inc.amountEgp} ج.م</strong>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1363,22 +1540,21 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
               </button>
             </div>
 
-            <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-xs space-y-1">
+            <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-xs space-y-1.5">
               <div className="flex justify-between font-bold text-blue-900 dark:text-blue-200">
-                <span>مخصص بند الحوافز المعتمد:</span>
-                <span className="font-mono">{incentiveReserveLedger.monthlyAllocationEgp} ج.م / شهرياً</span>
+                <span>الموظف المستفيد:</span>
+                <span className="font-mono">{selectedEmployeeName} (مسؤول المبيعات)</span>
               </div>
               <div className="flex justify-between text-slate-700 dark:text-slate-300">
-                <span>الرصيد المتاح للاعتماد حالياً:</span>
-                <strong className="font-mono text-emerald-600 dark:text-emerald-400">{incentiveReserveLedger.availableForApprovalEgp} ج.م</strong>
+                <span>المصدر التمويلي المختار:</span>
+                <strong className="text-blue-700 dark:text-blue-300 font-bold">{FUNDING_SOURCE_LABELS[incentiveFundingSource]}</strong>
               </div>
-              <div className="flex justify-between text-slate-700 dark:text-slate-300">
-                <span>المصروف فعلياً هذا الشهر:</span>
-                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{incentiveReserveLedger.actuallyPaidIncentivesEgp} ج.م</span>
-              </div>
+              <p className="text-[10px] text-gray-500 pt-0.5 border-t border-blue-200/60 dark:border-blue-900/40">
+                💡 يتم تحميل الحافز محاسبياً على البند المختار دون الإخلال بسلامة ميزانية المتجر أو التأثير على رأس المال التشغيلي.
+              </p>
             </div>
 
-            <form onSubmit={handleAddIncentive} className="space-y-3 text-xs">
+            <form onSubmit={handleAddIncentive} className="space-y-3.5 text-xs">
               <div>
                 <label className="font-bold block mb-1">نوع الإضافة:</label>
                 <select
@@ -1393,15 +1569,39 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
                 </select>
               </div>
 
+              {/* Funding Source Selector */}
+              <div>
+                <label className="font-bold block mb-1 text-slate-900 dark:text-white">
+                  بند تمويل وخصم الحافز خلال الشهر:
+                </label>
+                <select
+                  value={incentiveFundingSource}
+                  onChange={(e) => setIncentiveFundingSource(e.target.value as IncentiveFundingSource)}
+                  className="w-full p-2.5 rounded-xl border-2 border-blue-500/40 font-bold bg-blue-50/50 dark:bg-blue-950/30 text-blue-950 dark:text-blue-200 outline-none"
+                >
+                  <option value="owner_salary">👤 من مخصص راتب المدير د. محمد مهران (خصم مباشر من 10,500 ج)</option>
+                  <option value="owner_profits">💰 من أرباح المتجر التشغيلية الصافية الفائضة</option>
+                  <option value="contingency">🛡️ من بند احتياطي الطوارئ والهالك المعتمد (300 ج)</option>
+                  <option value="store_budget">📦 من الموازنة التشغيلية المفتوحة (مصروف حافز إداري)</option>
+                  <option value="operating_surplus">📈 من فائض مساهمة المبيعات فوق تارجت الـ 600 ج</option>
+                </select>
+                <span className="text-[10px] text-gray-500 block mt-1">
+                  {incentiveFundingSource === 'owner_salary' && '📌 سيتم تسجيل الخصم من مستحقات المدير د. محمد مهران، ولن يتحمل المتجر أي عبء إضافي.'}
+                  {incentiveFundingSource === 'owner_profits' && '📌 سيتم الخصم من صافي أرباح المحل بعد تغطية المصروفات الثابتة.'}
+                  {incentiveFundingSource === 'contingency' && '📌 سيتم الخصم من بند الطوارئ الشهري المحجوز بالدفاتر.'}
+                  {incentiveFundingSource === 'store_budget' && '📌 سيتم قيده كمصروف تشغيلي دوري ضمن حسابات الشهر.'}
+                  {incentiveFundingSource === 'operating_surplus' && '📌 سيتم تمويله من أرباح المبيعات الزائدة المحققة فعلياً.'}
+                </span>
+              </div>
+
               <div>
                 <label className="font-bold block mb-1">مبلغ الحافز (ج.م):</label>
-                <input
-                  type="number"
-                  required
-                  min="1"
+                <SmoothNumberInput
                   value={incentiveAmount}
-                  onChange={(e) => setIncentiveAmount(Number(e.target.value))}
-                  className="w-full p-2.5 rounded-xl border border-slate-300 font-mono font-black text-sm"
+                  onChange={setIncentiveAmount}
+                  quickDeltas={[50, 100, 200, 500]}
+                  suffix="ج.م"
+                  size="md"
                 />
               </div>
 
@@ -1412,16 +1612,16 @@ export const StaffEntitlements: React.FC<StaffEntitlementsProps> = ({
                   required
                   value={incentiveReason}
                   onChange={(e) => setIncentiveReason(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-300"
+                  className="w-full p-2.5 rounded-xl border border-slate-300 font-bold outline-none"
                 />
               </div>
 
               <div className="pt-2 flex justify-end gap-2">
-                <button type="button" onClick={() => setShowIncentiveModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 font-bold">
+                <button type="button" onClick={() => setShowIncentiveModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 font-bold cursor-pointer">
                   إلغاء
                 </button>
-                <button type="submit" className="px-5 py-2 rounded-xl bg-blue-600 text-white font-black shadow-md cursor-pointer">
-                  اعتماد وإضافة الحافز ✓
+                <button type="submit" className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black shadow-md cursor-pointer transition-all">
+                  اعتماد وتوثيق الحافز ✓
                 </button>
               </div>
             </form>

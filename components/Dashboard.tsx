@@ -679,17 +679,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </span>
                 </span>
 
-                {/* Real-time Multi-Device Sync Badge in Owner's Dashboard */}
-                <button
-                  type="button"
-                  onClick={onOpenConnectedDevices}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[10px] font-black border bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 border-emerald-500/30 transition-all cursor-pointer shadow-2xs"
-                  title="انقر لعرض قائمة الأجهزة المتصلة في الوقت الفعلي والتزامن اللحظي"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                  <Radio size={11} className="text-emerald-600 animate-pulse" />
-                  <span>{connectedDevices.length} أجهزة متصلة بالوقت الفعلي</span>
-                </button>
+                {/* Real-time Multi-Device Sync Badge in Owner's Dashboard (خاص بالمالك د. محمد فقط) */}
+                {isOwner && (
+                  <button
+                    type="button"
+                    onClick={onOpenConnectedDevices}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[10px] font-black border bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 border-emerald-500/30 transition-all cursor-pointer shadow-2xs"
+                    title="انقر لعرض قائمة الأجهزة المتصلة في الوقت الفعلي والتزامن اللحظي"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                    <Radio size={11} className="text-emerald-600 animate-pulse" />
+                    <span>{connectedDevices.length} أجهزة متصلة بالوقت الفعلي</span>
+                  </button>
+                )}
               </div>
               <h1 className="text-lg sm:text-xl font-black tracking-tight text-[#0F172A] leading-tight">
                 متجر <span className="text-[#0067C0]">{settings.storeName || 'لمسة عطر'}</span>
@@ -770,39 +772,41 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* Real-time Multi-Device Sync Executive Status Banner */}
-      <div className="order-none rounded-2xl p-3 sm:p-3.5 bg-gradient-to-r from-emerald-500/[0.08] via-sky-500/[0.05] to-transparent border border-emerald-500/25 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
-            <Radio size={18} className="animate-pulse" />
-          </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-black text-slate-900 dark:text-white">
-                تزامن فوري بين الأجهزة (Multi-Device Real-Time Sync)
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono font-black border border-emerald-500/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                <span>{connectedDevices.length} أجهزة متصلة ونشطة في الوقت الفعلي</span>
-              </span>
+      {/* Real-time Multi-Device Sync Executive Status Banner (خاص بالمالك د. محمد فقط) */}
+      {isOwner && (
+        <div className="order-none rounded-2xl p-3 sm:p-3.5 bg-gradient-to-r from-emerald-500/[0.08] via-sky-500/[0.05] to-transparent border border-emerald-500/25 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+              <Radio size={18} className="animate-pulse" />
             </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400">
-              تحديث فوري تلقائي لكافة الفواتير والمخزون وحركات الخزينة بين هاتف الكاشير ولابتوب المالك بدقة 100%.
-            </p>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black text-slate-900 dark:text-white">
+                  تزامن فوري بين الأجهزة (Multi-Device Real-Time Sync)
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono font-black border border-emerald-500/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                  <span>{connectedDevices.length} أجهزة متصلة ونشطة في الوقت الفعلي</span>
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                تحديث فوري تلقائي لكافة الفواتير والمخزون وحركات الخزينة بين هاتف الكاشير ولابتوب المالك بدقة 100%.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mr-auto sm:mr-0">
+            <button
+              type="button"
+              onClick={onOpenConnectedDevices}
+              className="apple-btn px-3 py-1.5 rounded-xl bg-white dark:bg-white/10 hover:bg-slate-50 text-slate-800 dark:text-white font-black text-xs border border-slate-200 dark:border-white/15 flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <Smartphone size={13} className="text-[#0071E3]" />
+              <span>رادار الأجهزة والمزامنة الفورية</span>
+            </button>
           </div>
         </div>
-
-        <div className="flex items-center gap-2 mr-auto sm:mr-0">
-          <button
-            type="button"
-            onClick={onOpenConnectedDevices}
-            className="apple-btn px-3 py-1.5 rounded-xl bg-white dark:bg-white/10 hover:bg-slate-50 text-slate-800 dark:text-white font-black text-xs border border-slate-200 dark:border-white/15 flex items-center gap-1.5 shadow-2xs cursor-pointer"
-          >
-            <Smartphone size={13} className="text-[#0071E3]" />
-            <span>رادار الأجهزة والمزامنة الفورية</span>
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* ======================================================== */}
       {/* 2. APPLE INTELLIGENCE BENTO ROW: ADVISOR + TARGET ENGINE */}

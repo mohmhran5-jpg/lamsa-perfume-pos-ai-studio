@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Product, PerfumeAnalysis, FragranceDatabaseEntry, AppUser } from '../types';
+import { Product, PerfumeAnalysis, FragranceDatabaseEntry, AppUser, Sale, StoreSettings, isLiveProductionSale, getApprovedOilGramCost } from '../types';
 import { analyzePerfumeDetails, auditAndUpdateFullInventoryLocally } from '../services/geminiService';
 import { 
   getLocalFragranceDatabase, 
@@ -39,12 +39,18 @@ import {
   Tag,
   Sliders,
   Filter,
-  X
+  X,
+  TrendingUp,
+  DollarSign,
+  ShoppingCart,
+  Share2
 } from 'lucide-react';
 
 interface FragranceAnalyzerProps {
   products: Product[];
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
+  sales?: Sale[];
+  settings?: StoreSettings;
   onNavigateToPOS?: (product: Product) => void;
   currentUser?: AppUser | null;
   fragranceDatabase?: FragranceDatabaseEntry[];
@@ -54,6 +60,8 @@ interface FragranceAnalyzerProps {
 const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
   products,
   setProducts,
+  sales = [],
+  settings,
   onNavigateToPOS,
   currentUser,
   fragranceDatabase = [],
@@ -74,6 +82,154 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
   const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
   const [adminStatusMessage, setAdminStatusMessage] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'profitable_blends'>('analyzer');
+  const [copiedFormulaNotice, setCopiedFormulaNotice] = useState<string | null>(null);
+
+  // Monthly Best Sellers Analysis & Profitable Blend Recommendations
+  const monthlyBestSellersAnalysis = useMemo(() => {
+    if (!sales || sales.length === 0) return { topSellers: [], totalMonthlySalesCount: 0, totalMonthlyGrams: 0 };
+    const currentMonthStr = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const tallyMap = new Map<string, { product: Product; gramsSold: number; salesCount: number; revenue: number }>();
+    let totalMonthlySalesCount = 0;
+    let totalMonthlyGrams = 0;
+
+    sales.forEach(s => {
+      if (s.date && s.date.startsWith(currentMonthStr) && isLiveProductionSale(s)) {
+        totalMonthlySalesCount++;
+        (s.items || []).forEach(it => {
+          const grams = Number(it.essenceGrams) || 0;
+          totalMonthlyGrams += grams;
+
+          const found = products.find(p => String(p.id) === String(it.productId) || p.name.trim().toLowerCase() === (it.productName || '').trim().toLowerCase());
+          if (found) {
+            const key = String(found.id);
+            const curr = tallyMap.get(key) || { product: found, gramsSold: 0, salesCount: 0, revenue: 0 };
+            tallyMap.set(key, {
+              product: found,
+              gramsSold: curr.gramsSold + grams,
+              salesCount: curr.salesCount + (it.quantity || 1),
+              revenue: curr.revenue + (it.totalPrice || it.unitPrice || 0)
+            });
+          }
+        });
+      }
+    });
+
+    const sortedTopSellers = Array.from(tallyMap.values())
+      .sort((a, b) => b.gramsSold - a.gramsSold);
+
+    return {
+      topSellers: sortedTopSellers,
+      totalMonthlySalesCount,
+      totalMonthlyGrams
+    };
+  }, [sales, products]);
+
+  // Generate 3 High-Profit Blend Recommendations based on Top Sellers
+  const profitableBlendRecommendations = useMemo(() => {
+    const topSellers = monthlyBestSellersAnalysis.topSellers;
+    const p1 = topSellers[0]?.product || products[0];
+    const p2 = topSellers[1]?.product || products[1] || p1;
+    const p3 = topSellers[2]?.product || products[2] || p2;
+    const p4 = topSellers[3]?.product || products[3] || p1;
+
+    if (!p1) return [];
+
+    const cost1 = getApprovedOilGramCost(p1.type, settings);
+    const cost2 = p2 ? getApprovedOilGramCost(p2.type, settings) : cost1;
+    const cost3 = p3 ? getApprovedOilGramCost(p3.type, settings) : cost1;
+
+    const bottleCost = 25; // EGP bottle & packaging
+
+    // Blend 1: Royal Best Seller Duo (70% P1 + 30% P2) - 50ml bottle (15g essence)
+    const b1Grams1 = 10.5;
+    const b1Grams2 = 4.5;
+    const b1TotalOilCost = Math.round((b1Grams1 * cost1) + (b1Grams2 * cost2));
+    const b1TotalCost = b1TotalOilCost + bottleCost;
+    const b1Price = Math.round(b1TotalCost * 2.5);
+    const b1Profit = b1Price - b1TotalCost;
+    const b1Margin = Math.round((b1Profit / b1Price) * 100);
+
+    // Blend 2: Tri-Note Crown Elegance (50% P1 + 30% P2 + 20% P3) - 50ml bottle (15g essence)
+    const b2Grams1 = 7.5;
+    const b2Grams2 = 4.5;
+    const b2Grams3 = 3.0;
+    const b2TotalOilCost = Math.round((b2Grams1 * cost1) + (b2Grams2 * cost2) + (b2Grams3 * cost3));
+    const b2TotalCost = b2TotalOilCost + bottleCost;
+    const b2Price = Math.round(b2TotalCost * 2.8);
+    const b2Profit = b2Price - b2TotalCost;
+    const b2Margin = Math.round((b2Profit / b2Price) * 100);
+
+    // Blend 3: Niche Luxury Evening Elixir (60% P1 + 40% P2) - 100ml bottle (30g essence)
+    const b3Grams1 = 18;
+    const b3Grams2 = 12;
+    const b3TotalOilCost = Math.round((b3Grams1 * cost1) + (b3Grams2 * cost2));
+    const b3TotalCost = b3TotalOilCost + 35;
+    const b3Price = Math.round(b3TotalCost * 2.6);
+    const b3Profit = b3Price - b3TotalCost;
+    const b3Margin = Math.round((b3Profit / b3Price) * 100);
+
+    return [
+      {
+        id: 'blend-rec-1',
+        title: `خلطة الهيبة والفوحان الملكي (${p1?.name || 'عطر المتجر'} × ${p2?.name || 'مسك ختام'})`,
+        badge: '🏆 الخلطة الأعلى ربحية ومبيعات هذا الشهر',
+        badgeColor: 'bg-amber-500/10 text-amber-700 border-amber-300',
+        bottleSizeMl: 50,
+        totalEssenceGrams: 15,
+        components: [
+          { product: p1, percentage: 70, grams: b1Grams1, costPerGram: cost1, totalCost: Math.round(b1Grams1 * cost1) },
+          { product: p2, percentage: 30, grams: b1Grams2, costPerGram: cost2, totalCost: Math.round(b1Grams2 * cost2) }
+        ],
+        oilCost: b1TotalOilCost,
+        bottleCost,
+        totalCost: b1TotalCost,
+        suggestedSellingPrice: b1Price,
+        netProfit: b1Profit,
+        profitMarginPercent: b1Margin,
+        commercialReason: `تعتمد على الزيتين الأكثر طلباً وسحباً في متجرك هذا الشهر (${monthlyBestSellersAnalysis.topSellers[0]?.gramsSold || 50} جم مبيعات). الدمج يمنح ثباتاً مضاعفاً وفوحاناً راقياً يرفع متوسط سعر العبوة.`
+      },
+      {
+        id: 'blend-rec-2',
+        title: `إكسير التاج الثلاثي الفاخر (${p1?.name || 'عطر أول'} + ${p2?.name || 'عطر ثاني'} + ${p3?.name || 'عطر ثالث'})`,
+        badge: '✨ التركيبة الثلاثية الأكثر تعقيداً وفوحاناً',
+        badgeColor: 'bg-purple-500/10 text-purple-700 border-purple-300',
+        bottleSizeMl: 50,
+        totalEssenceGrams: 15,
+        components: [
+          { product: p1, percentage: 50, grams: b2Grams1, costPerGram: cost1, totalCost: Math.round(b2Grams1 * cost1) },
+          { product: p2, percentage: 30, grams: b2Grams2, costPerGram: cost2, totalCost: Math.round(b2Grams2 * cost2) },
+          { product: p3, percentage: 20, grams: b2Grams3, costPerGram: cost3, totalCost: Math.round(b2Grams3 * cost3) }
+        ],
+        oilCost: b2TotalOilCost,
+        bottleCost,
+        totalCost: b2TotalCost,
+        suggestedSellingPrice: b2Price,
+        netProfit: b2Profit,
+        profitMarginPercent: b2Margin,
+        commercialReason: `دمج ذكي لأعلى 3 أصناف مبيعاً هذا الشهر. توفر رائحة نيش خاصة بالمحل لا يمكن تقليدها، مما يمنحك حصريّة كاملة وتجربة فاخرة للعملاء.`
+      },
+      {
+        id: 'blend-rec-3',
+        title: `خلطة السهرة المزدوجة 100 مل (${p1?.name || 'عطر نيش'} مع ${p4?.name || p2?.name || 'عطر شرقي'})`,
+        badge: '💎 عبوة VIP كبرى - أعلى صافي ربح للقطعة',
+        badgeColor: 'bg-emerald-500/10 text-emerald-700 border-emerald-300',
+        bottleSizeMl: 100,
+        totalEssenceGrams: 30,
+        components: [
+          { product: p1, percentage: 60, grams: b3Grams1, costPerGram: cost1, totalCost: Math.round(b3Grams1 * cost1) },
+          { product: p4 || p2, percentage: 40, grams: b3Grams2, costPerGram: cost2, totalCost: Math.round(b3Grams2 * cost2) }
+        ],
+        oilCost: b3TotalOilCost,
+        bottleCost: 35,
+        totalCost: b3TotalCost,
+        suggestedSellingPrice: b3Price,
+        netProfit: b3Profit,
+        profitMarginPercent: b3Margin,
+        commercialReason: `عبوة ضخمة 100 مل تحقق صافي ربح مباشر مرتفع (${b3Profit} ج لكل عبوة)، مثالية للهدايا والمناسبات والتسويق لعملاء النخبة.`
+      }
+    ];
+  }, [monthlyBestSellersAnalysis, products, settings]);
 
   // Active database list
   const currentDb = useMemo(() => {
@@ -297,8 +453,205 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
         </div>
       )}
 
-      {/* Main Grid: Selector & Search (col-span-4) + Analysis Card (col-span-8) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* Copied Notice Toast */}
+      {copiedFormulaNotice && (
+        <div className="p-3 rounded-2xl bg-emerald-700 text-white text-xs font-bold text-center shadow-lg animate-in fade-in duration-150 flex items-center justify-center gap-2">
+          <CheckCircle2 size={16} />
+          <span>{copiedFormulaNotice}</span>
+        </div>
+      )}
+
+      {/* Tab Switcher: Fragrance Encyclopedia vs Monthly Profitable Blends */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700/60 w-fit">
+        <button
+          type="button"
+          onClick={() => setActiveTab('analyzer')}
+          className={`apple-btn px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'analyzer'
+              ? 'bg-purple-600 text-white shadow-md'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+          }`}
+        >
+          <BookOpen size={15} />
+          <span>موسوعة الهرم العطري والتحليل</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('profitable_blends')}
+          className={`apple-btn px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'profitable_blends'
+              ? 'bg-gradient-to-r from-amber-500 to-emerald-600 text-white shadow-md'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+          }`}
+        >
+          <Sparkles size={15} className="text-amber-300" />
+          <span>محلل واقتراحات الخلطات الأكثر ربحية (مبيعات الشهر)</span>
+          <span className="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-900 text-[10px] font-black">ذكاء المبيعات</span>
+        </button>
+      </div>
+
+      {/* IF TAB IS PROFITABLE BLENDS */}
+      {activeTab === 'profitable_blends' ? (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Monthly Sales Performance Summary Banner */}
+          <div className="p-5 rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white border border-indigo-800/40 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-800/30">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-500/30">
+                  <TrendingUp size={20} />
+                </div>
+                <div>
+                  <h2 className="text-base font-black">تحليل مبيعات الشهر وتوليد الخلطات الأكثر ربحية</h2>
+                  <p className="text-xs text-indigo-200/80">
+                    استنتاج تلقائي لأفضل التركيبات العطرية بناءً على سحوبات العملاء هذا الشهر
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-mono font-bold">
+                  فواتير الشهر: {monthlyBestSellersAnalysis.totalMonthlySalesCount} فاتورة
+                </span>
+                <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
+                  إجمالي الزيت المباع: {monthlyBestSellersAnalysis.totalMonthlyGrams.toLocaleString('ar-EG')} جرام
+                </span>
+              </div>
+            </div>
+
+            {/* Top 3 Best Selling Oils This Month */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-indigo-300 block">🏆 الزيوت العطرية الأكثر مبيعاً وسحباً في محلك هذا الشهر:</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {monthlyBestSellersAnalysis.topSellers.slice(0, 3).map((item, idx) => (
+                  <div key={item.product.id} className="p-3 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-black text-amber-300 block">المركز #{idx + 1}</span>
+                      <span className="text-xs font-bold text-white block truncate">{item.product.name}</span>
+                      <span className="text-[10px] text-indigo-200/70">{item.product.brand} · {item.product.type}</span>
+                    </div>
+                    <div className="text-left shrink-0">
+                      <span className="text-xs font-black font-mono text-emerald-300 block tabular-nums">{item.gramsSold} جم</span>
+                      <span className="text-[10px] text-indigo-200/60 tabular-nums">{item.salesCount} عمليات بيع</span>
+                    </div>
+                  </div>
+                ))}
+                {monthlyBestSellersAnalysis.topSellers.length === 0 && (
+                  <div className="col-span-3 text-center py-2 text-xs text-indigo-300/70">
+                    جاري التقييم... قم بتسجيل عمليات بيع هذا الشهر لعرض التحليل اللحظي للزيوت الأكثر طلباً.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Profitable Blend Cards List */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-black text-[#1D1D1F] dark:text-white flex items-center gap-2">
+              <Beaker size={18} className="text-purple-600" />
+              <span>مقترحات الخلطات العطرية الأعلى ربحية ومبيعات (ربح صافي يصل إلى 70%):</span>
+            </h3>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              {profitableBlendRecommendations.map((blend) => (
+                <div 
+                  key={blend.id} 
+                  className="apple-glass-card rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-apple-md bg-white dark:bg-slate-900 space-y-4 flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    {/* Header & Badge */}
+                    <div className="space-y-1.5">
+                      <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-black border ${blend.badgeColor}`}>
+                        {blend.badge}
+                      </span>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white leading-snug">
+                        {blend.title}
+                      </h4>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                        حجم العبوة المقترح: <strong>{blend.bottleSizeMl} مل</strong> ({blend.totalEssenceGrams} جرام زيت خام)
+                      </span>
+                    </div>
+
+                    {/* Formula Ingredients */}
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 space-y-2 text-xs">
+                      <span className="font-bold text-slate-700 dark:text-slate-300 block text-[11px]">💧 مكونات ونسب التركيبة:</span>
+                      <div className="space-y-1.5">
+                        {blend.components.map((comp, cIdx) => (
+                          <div key={cIdx} className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold text-slate-900 dark:text-slate-100">
+                              {comp.product?.name || 'زيت عطري'} ({comp.percentage}%)
+                            </span>
+                            <span className="font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                              {comp.grams} جم · {comp.totalCost} ج
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Financial Breakdown */}
+                    <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                      <div className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                        <span className="text-slate-500 dark:text-slate-400 block">التكلفة الشاملة</span>
+                        <span className="font-bold font-mono text-slate-900 dark:text-white tabular-nums">{blend.totalCost} ج</span>
+                      </div>
+                      <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40">
+                        <span className="text-amber-800 dark:text-amber-300 block">السعر المقترح</span>
+                        <span className="font-bold font-mono text-amber-900 dark:text-amber-200 tabular-nums">{blend.suggestedSellingPrice} ج</span>
+                      </div>
+                      <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40">
+                        <span className="text-emerald-800 dark:text-emerald-300 block">الربح الصافي</span>
+                        <span className="font-black font-mono text-emerald-700 dark:text-emerald-300 tabular-nums">+{blend.netProfit} ج ({blend.profitMarginPercent}%)</span>
+                      </div>
+                    </div>
+
+                    {/* Commercial Rationale */}
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed bg-indigo-50/50 dark:bg-indigo-950/20 p-2.5 rounded-xl border border-indigo-100 dark:border-indigo-900/30">
+                      💡 <strong>مبرر الربحية:</strong> {blend.commercialReason}
+                    </p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const recipeText = `وصفة خلطة ${blend.title}:\n` +
+                          `- حجم الزجاجة: ${blend.bottleSizeMl} مل\n` +
+                          blend.components.map(c => `- ${c.product?.name}: ${c.grams} جرام (${c.percentage}%)\n`).join('') +
+                          `سعر البيع المقترح: ${blend.suggestedSellingPrice} ج`;
+                        navigator.clipboard.writeText(recipeText);
+                        setCopiedFormulaNotice(`تم نسخ وصفة «${blend.title}» إلى الحافظة!`);
+                        setTimeout(() => setCopiedFormulaNotice(null), 3000);
+                      }}
+                      className="apple-btn px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy size={13} />
+                      <span>نسخ الوصفة</span>
+                    </button>
+
+                    {onNavigateToPOS && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (blend.components[0]?.product) {
+                            onNavigateToPOS(blend.components[0].product);
+                          }
+                        }}
+                        className="apple-btn flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <ShoppingCart size={14} />
+                        <span>تحضير وبيع في الكاشير</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* IF TAB IS ANALYZER / ENCYCLOPEDIA (Existing Grid) */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
         {/* Left Column: Perfume Search & Selector */}
         <div className="lg:col-span-4 space-y-4">
@@ -634,6 +987,7 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* Smart Natural Search Modal */}
       <SmartFragranceSearchModal

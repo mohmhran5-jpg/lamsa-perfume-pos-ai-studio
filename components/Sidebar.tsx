@@ -117,6 +117,16 @@ const Sidebar: React.FC<SidebarProps> = ({
       dotColor: 'bg-[#0067C0]',
       items: [
         {
+          id: View.TAREK_WORKSPACE,
+          label: '🎯 لوحة طارق وتنشيط المبيعات',
+          shortLabel: 'لوحة طارق',
+          icon: Target,
+          badge: 'نشط',
+          iconBg: 'bg-amber-500/15',
+          iconColor: 'text-amber-600',
+          activeGradient: 'from-amber-600 via-orange-600 to-amber-700',
+        },
+        {
           id: View.POS,
           label: 'الكاشير والمبيعات السريعة',
           shortLabel: 'الكاشير',
@@ -364,41 +374,78 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // Primary 4 Direct Mobile Buttons (Fastest 1-Click Access)
-  const primaryMobileButtons: NavItemConfig[] = [
-    {
-      id: View.POS,
-      label: 'الكاشير',
-      icon: ShoppingBag,
-      iconBg: 'bg-blue-500/15',
-      iconColor: 'text-blue-600',
-      activeGradient: 'from-blue-600 to-indigo-600',
-    },
-    {
-      id: View.DASHBOARD,
-      label: 'الرئيسية',
-      icon: LayoutDashboard,
-      iconBg: 'bg-indigo-500/15',
-      iconColor: 'text-indigo-600',
-      activeGradient: 'from-indigo-600 to-blue-700',
-    },
-    {
-      id: View.REPORTS,
-      label: 'الفواتير',
-      icon: FileText,
-      iconBg: 'bg-amber-500/15',
-      iconColor: 'text-amber-600',
-      activeGradient: 'from-amber-500 to-orange-600',
-    },
-    {
-      id: View.INVENTORY,
-      label: 'المخزون',
-      icon: Box,
-      badge: lowStockCount > 0 ? lowStockCount : null,
-      iconBg: 'bg-emerald-500/15',
-      iconColor: 'text-emerald-600',
-      activeGradient: 'from-emerald-600 to-teal-600',
-    },
-  ].filter((item) => canAccessView(currentUser ?? null, item.id as View));
+  const isOwner = currentUser?.role === 'OWNER';
+  const primaryMobileButtons: NavItemConfig[] = (isOwner
+    ? [
+        {
+          id: View.POS,
+          label: 'الكاشير',
+          icon: ShoppingBag,
+          iconBg: 'bg-blue-500/15',
+          iconColor: 'text-blue-600',
+          activeGradient: 'from-blue-600 to-indigo-600',
+        },
+        {
+          id: View.DASHBOARD,
+          label: 'الرئيسية',
+          icon: LayoutDashboard,
+          iconBg: 'bg-indigo-500/15',
+          iconColor: 'text-indigo-600',
+          activeGradient: 'from-indigo-600 to-blue-700',
+        },
+        {
+          id: View.REPORTS,
+          label: 'الفواتير',
+          icon: FileText,
+          iconBg: 'bg-amber-500/15',
+          iconColor: 'text-amber-600',
+          activeGradient: 'from-amber-500 to-orange-600',
+        },
+        {
+          id: View.INVENTORY,
+          label: 'المخزون',
+          icon: Box,
+          badge: lowStockCount > 0 ? lowStockCount : null,
+          iconBg: 'bg-emerald-500/15',
+          iconColor: 'text-emerald-600',
+          activeGradient: 'from-emerald-600 to-teal-600',
+        },
+      ]
+    : [
+        {
+          id: View.TAREK_WORKSPACE,
+          label: 'لوحتي',
+          icon: Target,
+          iconBg: 'bg-amber-500/15',
+          iconColor: 'text-amber-600',
+          activeGradient: 'from-amber-600 to-orange-600',
+        },
+        {
+          id: View.POS,
+          label: 'الكاشير',
+          icon: ShoppingBag,
+          iconBg: 'bg-blue-500/15',
+          iconColor: 'text-blue-600',
+          activeGradient: 'from-blue-600 to-indigo-600',
+        },
+        {
+          id: View.CUSTOMERS_LOYALTY,
+          label: 'العملاء',
+          icon: Award,
+          iconBg: 'bg-purple-500/15',
+          iconColor: 'text-purple-600',
+          activeGradient: 'from-purple-600 to-indigo-600',
+        },
+        {
+          id: View.REPORTS,
+          label: 'الفواتير',
+          icon: FileText,
+          iconBg: 'bg-amber-500/15',
+          iconColor: 'text-amber-600',
+          activeGradient: 'from-amber-500 to-orange-600',
+        },
+      ]
+  ).filter((item) => canAccessView(currentUser ?? null, item.id as View));
 
   const handleItemClick = (item: NavItemConfig) => {
     setMobilePopoverCategory(null);
@@ -526,8 +573,8 @@ const Sidebar: React.FC<SidebarProps> = ({
               ))}
             </div>
 
-            {/* Mobile Radar Alerts Quick Button */}
-            {onOpenLiveAlertsRadar && (
+            {/* Mobile Radar Alerts Quick Button (خاص بالمالك د. محمد فقط) */}
+            {isOwner && onOpenLiveAlertsRadar && (
               <div className="pt-2 border-t border-black/[0.06]">
                 <button
                   type="button"
@@ -773,7 +820,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Store Footer with Theme Studio & Signature */}
         <div className="pt-2.5 border-t border-black/[0.06] px-1 space-y-2 shrink-0">
-          {onOpenLiveAlertsRadar && (
+          {isOwner && onOpenLiveAlertsRadar && (
             <button
               type="button"
               onClick={onOpenLiveAlertsRadar}
@@ -870,90 +917,118 @@ const Sidebar: React.FC<SidebarProps> = ({
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-black/[0.08] shadow-apple-lg px-2 py-1 select-none"
       >
         <div className="flex items-center justify-around gap-1 max-w-md mx-auto">
-          {/* 1. POS */}
-          <button
-            type="button"
-            onClick={() => setCurrentView(View.POS)}
-            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
-              currentView === View.POS
-                ? 'text-[#0071E3] font-black'
-                : 'text-[#86868B] hover:text-[#1D1D1F]'
-            }`}
-          >
-            <div className={`p-1 rounded-lg ${currentView === View.POS ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
-              <ShoppingBag size={18} />
-            </div>
-            <span className="text-[10px] leading-none">الكاشير</span>
-          </button>
+          {/* Tarek Workspace / Performance Space */}
+          {canAccessView(currentUser, View.TAREK_WORKSPACE) && (
+            <button
+              type="button"
+              onClick={() => setCurrentView(View.TAREK_WORKSPACE)}
+              className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+                currentView === View.TAREK_WORKSPACE
+                  ? 'text-amber-600 font-black'
+                  : 'text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              <div className={`p-1 rounded-lg ${currentView === View.TAREK_WORKSPACE ? 'bg-amber-500/15 text-amber-600' : ''}`}>
+                <Target size={18} />
+              </div>
+              <span className="text-[10px] leading-none">مساحتي</span>
+            </button>
+          )}
 
-          {/* 2. Dashboard */}
-          <button
-            type="button"
-            onClick={() => setCurrentView(View.DASHBOARD)}
-            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
-              currentView === View.DASHBOARD
-                ? 'text-[#0071E3] font-black'
-                : 'text-[#86868B] hover:text-[#1D1D1F]'
-            }`}
-          >
-            <div className={`p-1 rounded-lg ${currentView === View.DASHBOARD ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
-              <LayoutDashboard size={18} />
-            </div>
-            <span className="text-[10px] leading-none">الرئيسية</span>
-          </button>
+          {/* POS */}
+          {canAccessView(currentUser, View.POS) && (
+            <button
+              type="button"
+              onClick={() => setCurrentView(View.POS)}
+              className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+                currentView === View.POS
+                  ? 'text-[#0071E3] font-black'
+                  : 'text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              <div className={`p-1 rounded-lg ${currentView === View.POS ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+                <ShoppingBag size={18} />
+              </div>
+              <span className="text-[10px] leading-none">الكاشير</span>
+            </button>
+          )}
 
-          {/* 3. Reports */}
-          <button
-            type="button"
-            onClick={() => setCurrentView(View.REPORTS)}
-            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
-              currentView === View.REPORTS
-                ? 'text-[#0071E3] font-black'
-                : 'text-[#86868B] hover:text-[#1D1D1F]'
-            }`}
-          >
-            <div className={`p-1 rounded-lg ${currentView === View.REPORTS ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
-              <FileText size={18} />
-            </div>
-            <span className="text-[10px] leading-none">الفواتير</span>
-          </button>
+          {/* Executive Dashboard */}
+          {canAccessView(currentUser, View.DASHBOARD) && (
+            <button
+              type="button"
+              onClick={() => setCurrentView(View.DASHBOARD)}
+              className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+                currentView === View.DASHBOARD
+                  ? 'text-[#0071E3] font-black'
+                  : 'text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              <div className={`p-1 rounded-lg ${currentView === View.DASHBOARD ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+                <LayoutDashboard size={18} />
+              </div>
+              <span className="text-[10px] leading-none">الرئيسية</span>
+            </button>
+          )}
 
-          {/* 4. Inventory */}
-          <button
-            type="button"
-            onClick={() => setCurrentView(View.INVENTORY)}
-            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer relative ${
-              currentView === View.INVENTORY
-                ? 'text-[#0071E3] font-black'
-                : 'text-[#86868B] hover:text-[#1D1D1F]'
-            }`}
-          >
-            <div className={`p-1 rounded-lg ${currentView === View.INVENTORY ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
-              <Box size={18} />
-            </div>
-            <span className="text-[10px] leading-none">المخزون</span>
-            {lowStockCount > 0 && (
-              <span className="absolute top-0 right-2 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-            )}
-          </button>
+          {/* Reports */}
+          {canAccessView(currentUser, View.REPORTS) && (
+            <button
+              type="button"
+              onClick={() => setCurrentView(View.REPORTS)}
+              className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+                currentView === View.REPORTS
+                  ? 'text-[#0071E3] font-black'
+                  : 'text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              <div className={`p-1 rounded-lg ${currentView === View.REPORTS ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+                <FileText size={18} />
+              </div>
+              <span className="text-[10px] leading-none">الفواتير</span>
+            </button>
+          )}
 
-          {/* 5. Settings */}
-          <button
-            type="button"
-            onClick={() => setCurrentView(View.SETTINGS)}
-            className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
-              currentView === View.SETTINGS
-                ? 'text-amber-600 font-black'
-                : 'text-[#86868B] hover:text-[#1D1D1F]'
-            }`}
-          >
-            <div className={`p-1 rounded-lg ${currentView === View.SETTINGS ? 'bg-amber-500/15 text-amber-600' : ''}`}>
-              <Sliders size={18} />
-            </div>
-            <span className="text-[10px] leading-none">الإعدادات</span>
-          </button>
+          {/* Inventory */}
+          {canAccessView(currentUser, View.INVENTORY) && (
+            <button
+              type="button"
+              onClick={() => setCurrentView(View.INVENTORY)}
+              className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer relative ${
+                currentView === View.INVENTORY
+                  ? 'text-[#0071E3] font-black'
+                  : 'text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              <div className={`p-1 rounded-lg ${currentView === View.INVENTORY ? 'bg-[#0071E3]/10 text-[#0071E3]' : ''}`}>
+                <Box size={18} />
+              </div>
+              <span className="text-[10px] leading-none">المخزون</span>
+              {lowStockCount > 0 && (
+                <span className="absolute top-0 right-2 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              )}
+            </button>
+          )}
 
-          {/* 6. All Sections Drawer */}
+          {/* Settings */}
+          {canAccessView(currentUser, View.SETTINGS) && (
+            <button
+              type="button"
+              onClick={() => setCurrentView(View.SETTINGS)}
+              className={`flex-1 py-1 px-0.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all cursor-pointer ${
+                currentView === View.SETTINGS
+                  ? 'text-amber-600 font-black'
+                  : 'text-[#86868B] hover:text-[#1D1D1F]'
+              }`}
+            >
+              <div className={`p-1 rounded-lg ${currentView === View.SETTINGS ? 'bg-amber-500/15 text-amber-600' : ''}`}>
+                <Sliders size={18} />
+              </div>
+              <span className="text-[10px] leading-none">الإعدادات</span>
+            </button>
+          )}
+
+          {/* All Sections Drawer */}
           <button
             type="button"
             onClick={() => setMobileMenuOpen(true)}

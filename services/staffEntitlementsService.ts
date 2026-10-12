@@ -44,11 +44,11 @@ export const DEFAULT_STAFF_SALARY_CONFIGS: StaffBaseSalaryConfig[] = [
     id: 'sal-cfg-tarek',
     employeeId: 'user-tarek',
     employeeName: 'طارق',
-    monthlySalaryEgp: 1500,
+    monthlySalaryEgp: 1000,
     effectiveStartDate: '2026-01-01',
     payPeriodFrequency: 'monthly',
     approvedBy: 'د. محمد',
-    notes: 'الراتب الثابت الشهري المعتمد (1,500 ج.م)',
+    notes: 'الراتب الثابت الشهري المعتمد (1,000 ج.م)',
   },
 ];
 
@@ -77,7 +77,13 @@ export function saveCommissionPolicies(policies: CommissionPolicy[]): void {
 }
 
 export function loadStaffSalaryConfigs(): StaffBaseSalaryConfig[] {
-  return loadDataSync<StaffBaseSalaryConfig[]>(KEYS.SALARIES, DEFAULT_STAFF_SALARY_CONFIGS);
+  const loaded = loadDataSync<StaffBaseSalaryConfig[]>(KEYS.SALARIES, DEFAULT_STAFF_SALARY_CONFIGS);
+  return loaded.map((cfg) => {
+    if ((cfg.employeeName === 'طارق' || cfg.employeeId === 'user-tarek') && cfg.monthlySalaryEgp === 1500) {
+      return { ...cfg, monthlySalaryEgp: 1000, notes: 'الراتب الثابت الشهري المعتمد (1,000 ج.م)' };
+    }
+    return cfg;
+  });
 }
 
 export function saveStaffSalaryConfigs(configs: StaffBaseSalaryConfig[]): void {
@@ -194,6 +200,7 @@ export interface DetailedDailyCommissionCalculation {
   tier1CommissionEgp: number; // 5% tier sum
   tier2CommissionEgp: number; // 7% tier sum
   totalCommissionEgp: number;
+  calculatedCommissionEgp: number; // Alias for seamless compatibility
   eligibleNetRevenueEgp: number;
   bottleDetails: BottleCommissionDetail[];
 }
@@ -232,6 +239,7 @@ export function calculateExactDailyCommission(
       tier1CommissionEgp: 0,
       tier2CommissionEgp: 0,
       totalCommissionEgp: 0,
+      calculatedCommissionEgp: 0,
       eligibleNetRevenueEgp: 0,
       bottleDetails: [],
     };
@@ -355,6 +363,7 @@ export function calculateExactDailyCommission(
     tier1CommissionEgp,
     tier2CommissionEgp,
     totalCommissionEgp,
+    calculatedCommissionEgp: totalCommissionEgp,
     eligibleNetRevenueEgp,
     bottleDetails,
   };
@@ -558,9 +567,7 @@ export function computeStaffMemberEntitlementSummary(
 
   // 1. Base Salary calculation
   const salConfig = salaryConfigs.find((c) => normalizeEmployeeName(c.employeeName) === normName);
-  const monthlyBaseSalaryEgp = (salConfig && salConfig.monthlySalaryEgp >= 1500)
-    ? salConfig.monthlySalaryEgp
-    : (normName === 'طارق' ? 1500 : (salConfig?.monthlySalaryEgp || 0));
+  const monthlyBaseSalaryEgp = salConfig?.monthlySalaryEgp ?? (normName === 'طارق' ? 1000 : 0);
 
   const dailySalaryRateEgp = Math.round(monthlyBaseSalaryEgp / 25);
   let earnedSalaryPeriodEgp = monthlyBaseSalaryEgp;

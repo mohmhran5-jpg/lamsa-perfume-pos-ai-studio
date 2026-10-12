@@ -22,8 +22,10 @@ import {
   buildCommercialReferenceRow,
   isLiveProductionSale,
   isLiveProductionWithdrawal,
-  APPROVED_FIXED_BUDGET_ITEMS
+  APPROVED_FIXED_BUDGET_ITEMS,
+  FixedBudgetItem
 } from '../types';
+import { SmoothNumberInput } from './SmoothNumberInput';
 import { ThermalReceiptLiveView } from './ReceiptModal';
 import { AppleThemeStudioPanel } from './AppleThemeStudioModal';
 import { DashboardLayoutStudioPanel } from './DashboardLayoutStudioPanel';
@@ -78,7 +80,11 @@ import {
   AlignCenter,
   AlignRight,
   AlignLeft,
-  History
+  History,
+  Radio,
+  Clock,
+  Gauge,
+  X
 } from 'lucide-react';
 
 export type SettingsSection = 
@@ -241,6 +247,127 @@ export const Settings: React.FC<SettingsProps> = ({
     }, 280);
     return () => clearTimeout(timer);
   }, [localSettings, settings, setSettings]);
+
+  // Dynamic Budget Management State & Calculations
+  const [showAddBudgetItemModal, setShowAddBudgetItemModal] = useState<boolean>(false);
+  const [newBudgetItemName, setNewBudgetItemName] = useState<string>('');
+  const [newBudgetItemAmount, setNewBudgetItemAmount] = useState<number>(500);
+  const [newBudgetItemCategory, setNewBudgetItemCategory] = useState<string>('utilities');
+
+  const currentBudgetItems: FixedBudgetItem[] = useMemo(() => {
+    if (localSettings.customBudgetItems && localSettings.customBudgetItems.length > 0) {
+      return localSettings.customBudgetItems;
+    }
+    return APPROVED_FIXED_BUDGET_ITEMS.map((item) => {
+      if (item.id === 'salary_owner') {
+        const amt = localSettings.ownerSalary || 10500;
+        return {
+          ...item,
+          monthlyAmount: amt,
+          dailyRate: Math.round(amt / (localSettings.monthlyWorkDays || 25)),
+        };
+      }
+      if (item.id === 'salary_tarek') {
+        const amt = localSettings.employeeBaseSalary || 1000;
+        return {
+          ...item,
+          monthlyAmount: amt,
+          dailyRate: Math.round(amt / (localSettings.monthlyWorkDays || 25)),
+        };
+      }
+      return item;
+    });
+  }, [
+    localSettings.customBudgetItems,
+    localSettings.ownerSalary,
+    localSettings.employeeBaseSalary,
+    localSettings.monthlyWorkDays,
+  ]);
+
+  const computedTotalBudget = useMemo(() => {
+    return currentBudgetItems.reduce((acc, it) => acc + (Number(it.monthlyAmount) || 0), 0);
+  }, [currentBudgetItems]);
+
+  const computedDailyShare = useMemo(() => {
+    const days = localSettings.monthlyWorkDays || 25;
+    return days > 0 ? Math.round(computedTotalBudget / days) : 0;
+  }, [computedTotalBudget, localSettings.monthlyWorkDays]);
+
+  const handleUpdateBudgetItemAmount = (id: string, newAmount: number) => {
+    const updated = currentBudgetItems.map((item) => {
+      if (item.id === id) {
+        return {
+          ...item,
+          monthlyAmount: newAmount,
+          dailyRate: Math.round(newAmount / (localSettings.monthlyWorkDays || 25)),
+        };
+      }
+      return item;
+    });
+    const newTotal = updated.reduce((acc, it) => acc + (Number(it.monthlyAmount) || 0), 0);
+    let nextOwnerSalary = localSettings.ownerSalary;
+    let nextEmployeeSalary = localSettings.employeeBaseSalary;
+    if (id === 'salary_owner') nextOwnerSalary = newAmount;
+    if (id === 'salary_tarek') nextEmployeeSalary = newAmount;
+
+    setLocalSettings((prev) => ({
+      ...prev,
+      customBudgetItems: updated,
+      monthlyFixedBudget: newTotal,
+      ownerSalary: nextOwnerSalary,
+      employeeBaseSalary: nextEmployeeSalary,
+    }));
+  };
+
+  const handleAddBudgetItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBudgetItemName.trim() || newBudgetItemAmount <= 0) return;
+    const newItem: FixedBudgetItem = {
+      id: `budget-custom-${Date.now()}`,
+      name: newBudgetItemName.trim(),
+      category: newBudgetItemCategory,
+      monthlyAmount: newBudgetItemAmount,
+      dailyRate: Math.round(newBudgetItemAmount / (localSettings.monthlyWorkDays || 25)),
+      icon: 'Box',
+    };
+    const updated = [...currentBudgetItems, newItem];
+    const newTotal = updated.reduce((acc, it) => acc + (Number(it.monthlyAmount) || 0), 0);
+    setLocalSettings((prev) => ({
+      ...prev,
+      customBudgetItems: updated,
+      monthlyFixedBudget: newTotal,
+    }));
+    setShowAddBudgetItemModal(false);
+    setNewBudgetItemName('');
+    setNewBudgetItemAmount(500);
+  };
+
+  const handleRemoveBudgetItem = (id: string) => {
+    const updated = currentBudgetItems.filter((item) => item.id !== id);
+    const newTotal = updated.reduce((acc, it) => acc + (Number(it.monthlyAmount) || 0), 0);
+    setLocalSettings((prev) => ({
+      ...prev,
+      customBudgetItems: updated,
+      monthlyFixedBudget: newTotal,
+    }));
+  };
+
+  const handleResetBudgetDefaults = () => {
+    const resetItems = APPROVED_FIXED_BUDGET_ITEMS.map((item) => {
+      if (item.id === 'salary_owner') return { ...item, monthlyAmount: 10500, dailyRate: 420 };
+      if (item.id === 'salary_tarek') return { ...item, monthlyAmount: 1000, dailyRate: 40 };
+      return item;
+    });
+    setLocalSettings((prev) => ({
+      ...prev,
+      customBudgetItems: resetItems,
+      monthlyFixedBudget: 15000,
+      ownerSalary: 10500,
+      employeeBaseSalary: 1000,
+      monthlyWorkDays: 25,
+      dailyTargetProfit: 600,
+    }));
+  };
 
   // Sample sale for Live Receipt Preview in Settings (Strictly isolated as DOC_EXAMPLE)
   const samplePreviewSale: Sale = useMemo(() => {
@@ -2191,6 +2318,272 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
 
+              {/* Broadcast News Ticker Advanced Control Studio (إدارة شريط الأخبار والسرعة والمواضيع) */}
+              <div className="p-4 sm:p-6 rounded-3xl bg-gradient-to-br from-slate-950 via-zinc-900 to-slate-900 text-white border border-white/10 shadow-2xl space-y-5">
+                {/* Header & Main Toggle */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
+                  <div className="flex items-start gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-red-600 to-rose-700 text-white border border-red-400/40 flex items-center justify-center shrink-0 shadow-lg">
+                      <Radio size={22} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-black text-white">استوديو التحكم لشريط الأخبار والأنباء العاجلة</h3>
+                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-red-600 text-white font-black tracking-wide shadow-xs">بث مباشر</span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                        تتيح لك هذه الشاشة إظهار أو إخفاء شريط الشريط العلوي، ضبط سرعة الانسياب الحركي، وتخصيص الأخبار والمواضيع المعروضة للكاشير والمالك.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextVal = !(localSettings.showNewsTickerBar !== false);
+                      const updated = { ...localSettings, showNewsTickerBar: nextVal };
+                      setLocalSettings(updated);
+                      setSettings(updated);
+                      setToastMessage(nextVal ? 'تم إظهار شريط الأخبار المباشر 📡' : 'تم إخفاء شريط الأخبار 🚫');
+                      setIsSavedToast(true);
+                      setTimeout(() => setIsSavedToast(false), 2500);
+                    }}
+                    className={`px-5 py-3 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 ${
+                      localSettings.showNewsTickerBar !== false
+                        ? 'bg-gradient-to-r from-emerald-500 via-teal-600 to-emerald-600 text-white shadow-lg shadow-emerald-950/40'
+                        : 'bg-white/10 text-slate-300 hover:bg-white/20 border border-white/10'
+                    }`}
+                  >
+                    {localSettings.showNewsTickerBar !== false ? (
+                      <>
+                        <CheckCircle2 size={18} />
+                        <span>الشريط مفعّل (ظاهر)</span>
+                      </>
+                    ) : (
+                      <>
+                        <EyeOff size={18} />
+                        <span>الشريط موقف (مخفي)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Sub-controls: Ticker Speed & Topic Checkboxes */}
+                {localSettings.showNewsTickerBar !== false && (
+                  <div className="space-y-4 pt-1 animate-in fade-in duration-200">
+                    {/* Speed Selector */}
+                    <div>
+                      <label className="text-xs font-bold text-slate-200 block mb-2 flex items-center gap-1.5">
+                        <Gauge size={15} className="text-amber-400" />
+                        <span>سرعة حركة انسياب الشريط الإخباري:</span>
+                      </label>
+                      <div className="grid grid-cols-3 gap-2.5">
+                        {[
+                          { id: 'slow', label: 'هادئة (بطيئة)', desc: 'حرية قراءة متأنية' },
+                          { id: 'medium', label: 'متزنة (متوسطة)', desc: 'السرعة القياسية' },
+                          { id: 'fast', label: 'حماسية (سريعة)', desc: 'تحديث ديناميكي سريع' },
+                        ].map((speed) => {
+                          const currentSpeed = localSettings.newsTickerSpeed || 'medium';
+                          const isSelected = currentSpeed === speed.id;
+                          return (
+                            <button
+                              key={speed.id}
+                              type="button"
+                              onClick={() => {
+                                const updated = { ...localSettings, newsTickerSpeed: speed.id as any };
+                                setLocalSettings(updated);
+                                setSettings(updated);
+                                setToastMessage(`تم تغيير سرعة الشريط إلى: ${speed.label} ⚡`);
+                                setIsSavedToast(true);
+                                setTimeout(() => setIsSavedToast(false), 2000);
+                              }}
+                              className={`p-3 rounded-xl border text-right transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-gradient-to-r from-amber-500/20 via-yellow-500/15 to-amber-500/10 border-amber-400/60 text-amber-200 shadow-md ring-1 ring-amber-400/30'
+                                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-black">{speed.label}</span>
+                                {isSelected && <Check size={14} className="text-amber-400 shrink-0" />}
+                              </div>
+                              <span className="text-[10px] text-slate-400 block mt-0.5">{speed.desc}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Topics Selector Checkboxes */}
+                    <div className="pt-2">
+                      <label className="text-xs font-bold text-slate-200 block mb-2 flex items-center gap-1.5">
+                        <Sparkles size={15} className="text-rose-400" />
+                        <span>تحديد القطاعات والمواضيع الظاهرة بالشريط:</span>
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {[
+                          { key: 'sales', label: '🎯 المبيعات والتارجت اليومي', desc: 'عدد الفواتير وقيمتها والمسافة للتعادل' },
+                          { key: 'commission', label: '💰 العمولة والأرباح اليومية', desc: 'حساب العمولة المتدرجة لمبيعات اليوم' },
+                          { key: 'inventory', label: '📦 تنبيهات المخزون والعبوات', desc: 'تفقد الزيوت والعبوات وعدد المنتجات' },
+                          { key: 'prayers', label: '🕌 الأدعية والذكر والصلاة على النبي', desc: 'تذكير بالصلاة على النبي وإخلاص النية' },
+                          { key: 'salesTips', label: '💡 أفكار وتنشيط المبيعات', desc: 'نصائح لرفع متوسط الفاتورة وإرضاء الزائر' },
+                          { key: 'storeCleanliness', label: '✨ تنظيم ونظافة المتجر', desc: 'تلميع الواجهات وترتيب وتطبيب الجو' },
+                        ].map((topic) => {
+                          const topicsObj = localSettings.newsTickerTopics || {
+                            sales: true,
+                            inventory: true,
+                            prayers: true,
+                            salesTips: true,
+                            storeCleanliness: true,
+                            commission: true,
+                          };
+                          const isChecked = topicsObj[topic.key as keyof typeof topicsObj] !== false;
+                          return (
+                            <button
+                              key={topic.key}
+                              type="button"
+                              onClick={() => {
+                                const nextTopics = { ...topicsObj, [topic.key]: !isChecked };
+                                const updated = { ...localSettings, newsTickerTopics: nextTopics };
+                                setLocalSettings(updated);
+                                setSettings(updated);
+                                setToastMessage(!isChecked ? `تم تفعيل: ${topic.label}` : `تم إيقاف: ${topic.label}`);
+                                setIsSavedToast(true);
+                                setTimeout(() => setIsSavedToast(false), 2000);
+                              }}
+                              className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex items-start gap-2.5 ${
+                                isChecked
+                                  ? 'bg-white/10 border-emerald-500/50 text-white shadow-xs'
+                                  : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/[0.07]'
+                              }`}
+                            >
+                              <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                                isChecked ? 'bg-emerald-500 text-slate-950 font-bold' : 'bg-white/10 text-transparent border border-white/20'
+                              }`}>
+                                <Check size={12} strokeWidth={3} />
+                              </div>
+                              <div>
+                                <span className="text-xs font-bold block text-slate-100">{topic.label}</span>
+                                <span className="text-[10px] text-slate-400 leading-tight block mt-0.5">{topic.desc}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* News Item Frequencies Selector (تواتر ظهور أنواع الأخبار) */}
+                    <div className="pt-3 border-t border-white/10">
+                      <label className="text-xs font-bold text-slate-200 block mb-2 flex items-center gap-1.5">
+                        <Clock size={15} className="text-cyan-400" />
+                        <span>ضبط تواتر ونظام تكرار ظهور كل نوع من الأخبار:</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mb-3">
+                        حدد الفاصل الزمني المطلوب بين كل ظهور لضمان الموازنة وعدم إزعاج المستخدم (مثل: الأدعية كل 10 دقائق، تنبيهات المخزون فورية).
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {[
+                          {
+                            key: 'prayers',
+                            label: '🕌 الأدعية والذكر والصلاة على النبي',
+                            defaultFreq: 'every_10m',
+                            options: [
+                              { value: 'every_3m', label: 'كل 3 دقائق' },
+                              { value: 'every_5m', label: 'كل 5 دقائق' },
+                              { value: 'every_10m', label: 'كل 10 دقائق (الموصى به)' },
+                              { value: 'every_15m', label: 'كل 15 دقيقة' },
+                              { value: 'every_30m', label: 'كل 30 دقيقة' },
+                            ],
+                          },
+                          {
+                            key: 'inventory',
+                            label: '🚨 تنبيهات النواقص والمخزون',
+                            defaultFreq: 'instant',
+                            options: [
+                              { value: 'instant', label: 'فورية ودورية (الموصى به)' },
+                              { value: 'every_5m', label: 'كل 5 دقائق' },
+                              { value: 'every_10m', label: 'كل 10 دقائق' },
+                              { value: 'every_15m', label: 'كل 15 دقيقة' },
+                            ],
+                          },
+                          {
+                            key: 'salesTips',
+                            label: '💡 نصائح وأفكار تنشيط المبيعات',
+                            defaultFreq: 'every_5m',
+                            options: [
+                              { value: 'every_3m', label: 'كل 3 دقائق' },
+                              { value: 'every_5m', label: 'كل 5 دقائق (الموصى به)' },
+                              { value: 'every_10m', label: 'كل 10 دقائق' },
+                              { value: 'every_15m', label: 'كل 15 دقيقة' },
+                            ],
+                          },
+                          {
+                            key: 'profitSummary',
+                            label: '📈 ملخص الأرباح والمبيعات اليومية',
+                            defaultFreq: 'every_15m',
+                            options: [
+                              { value: 'every_5m', label: 'كل 5 دقائق' },
+                              { value: 'every_10m', label: 'كل 10 دقائق' },
+                              { value: 'every_15m', label: 'كل 15 دقيقة (الموصى به)' },
+                              { value: 'every_30m', label: 'كل 30 دقيقة' },
+                              { value: 'hourly', label: 'مرة كل ساعة' },
+                            ],
+                          },
+                          {
+                            key: 'commission',
+                            label: '💰 العمولة ومستحقات اليوم',
+                            defaultFreq: 'every_10m',
+                            options: [
+                              { value: 'every_5m', label: 'كل 5 دقائق' },
+                              { value: 'every_10m', label: 'كل 10 دقائق (الموصى به)' },
+                              { value: 'every_15m', label: 'كل 15 دقيقة' },
+                              { value: 'every_30m', label: 'كل 30 دقيقة' },
+                            ],
+                          },
+                          {
+                            key: 'storeCleanliness',
+                            label: '✨ تنظيم ونظافة ورونق المتجر',
+                            defaultFreq: 'every_30m',
+                            options: [
+                              { value: 'every_15m', label: 'كل 15 دقيقة' },
+                              { value: 'every_30m', label: 'كل 30 دقيقة (الموصى به)' },
+                              { value: 'hourly', label: 'مرة كل ساعة' },
+                            ],
+                          },
+                        ].map((freqItem) => {
+                          const freqsObj = localSettings.newsTickerFrequencies || {};
+                          const currentVal = freqsObj[freqItem.key as keyof typeof freqsObj] || freqItem.defaultFreq;
+                          return (
+                            <div key={freqItem.key} className="p-3 rounded-2xl bg-white/5 border border-white/10 space-y-1.5">
+                              <label className="text-xs font-bold text-slate-200 block text-right">{freqItem.label}</label>
+                              <select
+                                value={currentVal}
+                                onChange={(e) => {
+                                  const nextFreqs = { ...freqsObj, [freqItem.key]: e.target.value as any };
+                                  const updated = { ...localSettings, newsTickerFrequencies: nextFreqs };
+                                  setLocalSettings(updated);
+                                  setSettings(updated);
+                                  setToastMessage(`تم تعديل تواتر ${freqItem.label}`);
+                                  setIsSavedToast(true);
+                                  setTimeout(() => setIsSavedToast(false), 2000);
+                                }}
+                                className="w-full h-9 px-3 rounded-xl bg-slate-900 border border-white/20 text-xs font-bold text-cyan-300 outline-none focus:border-cyan-400 dir-rtl cursor-pointer"
+                              >
+                                {freqItem.options.map((opt) => (
+                                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Owner Quick Access to Dashboard Cards Customization inside Store Identity Settings */}
               {isOwner && (
                 <div className="pt-4 border-t border-black/[0.06]">
@@ -2526,148 +2919,393 @@ export const Settings: React.FC<SettingsProps> = ({
                 </button>
               </div>
 
-              {/* SubTab 1: 15,000 EGP Fixed Budget & Targets */}
+              {/* SubTab 1: Interactive Real-time Editable Fixed Budget & Targets */}
               {budgetSubTab === 'budget_target' && (
                 <div className="apple-glass rounded-3xl p-5 sm:p-7 border border-black/[0.06] shadow-apple-card space-y-6">
-                  <div className="pb-3 border-b border-black/[0.06] flex items-center justify-between">
+                  {/* Executive Header */}
+                  <div className="pb-4 border-b border-black/[0.06] flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-lg font-black text-[#1D1D1F]">الموازنة الشهرية المعتمدة والتارجت ومسير الرواتب</h2>
-                      <p className="text-xs text-[#86868B]">موازنة الـ 15,000 ج.م الآمنة لحماية مصاريف المتجر والرواتب.</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-lg font-black text-[#1D1D1F]">الموازنة الشهرية المعتمدة والتارجت ومسير الرواتب</h2>
+                        <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 border border-emerald-500/30 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                          <span>حفظ تلقائي فوري ومزامنة سحابية</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#86868B] mt-1">
+                        تعديل فوري لأي بند في الميزانية مع حسابات تلقائية في الوقت الفعلي وحفظ فوري في الذاكرة وقاعدة البيانات.
+                      </p>
                     </div>
-                    <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
-                      <Target size={20} />
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddBudgetItemModal(true)}
+                        className="px-3.5 py-2 rounded-xl text-xs font-bold bg-[#0071E3] text-white hover:bg-[#0077ED] transition-all flex items-center gap-1.5 shadow-apple-xs cursor-pointer"
+                      >
+                        <Plus size={14} />
+                        <span>إضافة بند موازنة جديد</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleResetBudgetDefaults}
+                        title="استعادة موازنة الـ 15,000 ج المعتمدة رسمياً"
+                        className="px-3 py-2 rounded-xl text-xs font-bold bg-black/[0.04] text-[#1D1D1F] hover:bg-black/[0.08] transition-all flex items-center gap-1.5 border border-black/[0.06] cursor-pointer"
+                      >
+                        <RotateCcw size={13} />
+                        <span>استعادة المعتمد (15,000 ج)</span>
+                      </button>
                     </div>
                   </div>
 
+                  {/* Real-time Summary Stats Cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
-                      <span className="text-[#86868B] text-[11px] block font-bold">الموازنة الشهرية الثابتة:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          value={localSettings.monthlyFixedBudget}
-                          onChange={(e) => setLocalSettings({ ...localSettings, monthlyFixedBudget: Number(e.target.value) || 0 })}
-                          className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
-                        />
-                        <span className="font-bold text-[#1D1D1F]">ج</span>
+                    {/* Card 1: Total Budget */}
+                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[#86868B] text-[11px] font-bold">إجمالي الموازنة الشهرية المخططة:</span>
+                        <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                          محسوب تلقائياً
+                        </span>
                       </div>
-                      <span className="text-[10px] text-amber-800 font-bold block">15,000 ج.م المعتمدة رسمياً</span>
+                      <SmoothNumberInput
+                        value={computedTotalBudget}
+                        onChange={(val) => {
+                          setLocalSettings((prev) => ({
+                            ...prev,
+                            monthlyFixedBudget: val,
+                          }));
+                        }}
+                        quickDeltas={[500, 1000, 2000]}
+                        suffix="ج.م/شهر"
+                        size="md"
+                        showQuickButtons={false}
+                      />
+                      <span className="text-[10px] text-gray-500 font-bold block">
+                        مجموع الـ {currentBudgetItems.length} بنود تشغيلية وإدارية
+                      </span>
                     </div>
 
-                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
-                      <span className="text-[#86868B] text-[11px] block font-bold">أيام العمل التخطيطية للشهر:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          value={localSettings.monthlyWorkDays}
-                          onChange={(e) => setLocalSettings({ ...localSettings, monthlyWorkDays: Number(e.target.value) || 0 })}
-                          className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
-                        />
-                        <span className="font-bold text-[#1D1D1F]">يوم</span>
+                    {/* Card 2: Work Days */}
+                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[#86868B] text-[11px] font-bold">أيام العمل التخطيطية بالشهر:</span>
+                        <span className="text-[10px] font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                          {computedDailyShare} ج/يوم
+                        </span>
                       </div>
-                      <span className="text-[10px] text-blue-800 font-bold block">معدل: 600 ج.م مساهمة يومية</span>
+                      <SmoothNumberInput
+                        value={localSettings.monthlyWorkDays || 25}
+                        onChange={(val) => {
+                          const cleanDays = Math.max(1, Math.min(31, val));
+                          setLocalSettings((prev) => ({
+                            ...prev,
+                            monthlyWorkDays: cleanDays,
+                          }));
+                        }}
+                        min={1}
+                        max={31}
+                        quickDeltas={[1, 5]}
+                        suffix="يوم عمل"
+                        size="md"
+                        showQuickButtons={false}
+                      />
+                      <span className="text-[10px] text-blue-800 font-bold block">
+                        نصيب اليوم لتغطية الموازنة: {computedDailyShare} ج.م
+                      </span>
                     </div>
 
-                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-1.5 text-right">
-                      <span className="text-[#86868B] text-[11px] block font-bold">التارجت اليومي المستهدف:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          value={localSettings.dailyTargetProfit}
-                          onChange={(e) => setLocalSettings({ ...localSettings, dailyTargetProfit: Number(e.target.value) || 0 })}
-                          className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold text-center outline-none"
-                        />
-                        <span className="font-bold text-[#1D1D1F]">ج</span>
+                    {/* Card 3: Target Profit */}
+                    <div className="p-4 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[#86868B] text-[11px] font-bold">التارجت اليومي المستهدف:</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                          نقطة التعادل
+                        </span>
                       </div>
-                      <span className="text-[10px] text-emerald-800 font-bold block">المرحلة الأولى: 600ج / الثانية: 1000ج</span>
+                      <SmoothNumberInput
+                        value={localSettings.dailyTargetProfit || 600}
+                        onChange={(val) => {
+                          setLocalSettings((prev) => ({
+                            ...prev,
+                            dailyTargetProfit: val,
+                          }));
+                        }}
+                        quickDeltas={[100, 200, 400]}
+                        suffix="ج.م/يوم"
+                        size="md"
+                        showQuickButtons={false}
+                      />
+                      <span className="text-[10px] text-emerald-800 font-bold block">
+                        المرحلة الأولى: 600ج / الثانية: 1000ج مساهمة يومية
+                      </span>
                     </div>
                   </div>
 
-                  {/* Payroll & Salaries */}
+                  {/* Payroll & Salaries - Real-time Smooth Editing */}
                   <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-3">
-                    <h3 className="text-xs font-black text-[#1D1D1F] flex items-center gap-1.5">
-                      <Users size={14} className="text-[#0071E3]" />
-                      <span>مسير الرواتب المعتمد ضمن الموازنة:</span>
-                    </h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black text-[#1D1D1F] flex items-center gap-1.5">
+                        <Users size={14} className="text-[#0071E3]" />
+                        <span>مسير الرواتب المعتمد ضمن الموازنة (11,500 ج.م إجمالي):</span>
+                      </h3>
+                      <span className="text-[10px] font-bold text-purple-800 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-200">
+                        المدير: {localSettings.ownerSalary || 10500} ج + طارق: {localSettings.employeeBaseSalary || 1000} ج
+                      </span>
+                    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
-                        <span className="text-[#86868B] text-[11px] block">راتب الإدارة (د. محمد):</span>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={localSettings.ownerSalary}
-                            onChange={(e) => setLocalSettings({ ...localSettings, ownerSalary: Number(e.target.value) || 0 })}
-                            className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
-                          />
-                          <span className="font-bold text-xs">ج.م/شهر</span>
+                      {/* Owner Salary */}
+                      <div className="p-3.5 bg-white rounded-xl border border-black/[0.06] shadow-apple-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[#86868B] text-[11px] font-bold">راتب الإدارة (د. محمد مهران):</span>
+                          <span className="text-[10px] font-mono font-bold text-emerald-700">
+                            {Math.round((localSettings.ownerSalary || 10500) / (localSettings.monthlyWorkDays || 25))} ج/يوم
+                          </span>
                         </div>
-                        <span className="text-[10px] text-gray-500 block">400 ج.م مخصص يومي في ذمة المتجر</span>
+                        <SmoothNumberInput
+                          value={localSettings.ownerSalary || 10500}
+                          onChange={(val) => {
+                            handleUpdateBudgetItemAmount('salary_owner', val);
+                          }}
+                          quickDeltas={[500, 1000]}
+                          suffix="ج.م/شهر"
+                          size="md"
+                        />
+                        <span className="text-[10px] text-gray-500 block">
+                          مخصص الإدارة والإشراف العام (10,500 ج معتمد رسمياً)
+                        </span>
                       </div>
 
-                      <div className="p-3 bg-white rounded-xl border border-black/[0.06] space-y-1">
-                        <span className="text-[#86868B] text-[11px] block">المخصص الشهري الخلفي للتشغيل (سري بالنظام):</span>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={localSettings.employeeBaseSalary}
-                            onChange={(e) => setLocalSettings({ ...localSettings, employeeBaseSalary: Number(e.target.value) || 0 })}
-                            className="w-full h-9 px-2 rounded-lg bg-black/[0.02] border border-black/[0.08] font-mono text-sm font-bold outline-none text-center"
-                          />
-                          <span className="font-bold text-xs">ج.م/شهر</span>
+                      {/* Employee Salary */}
+                      <div className="p-3.5 bg-white rounded-xl border border-black/[0.06] shadow-apple-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[#86868B] text-[11px] font-bold">الراتب الأساسي لطارق (المبيعات):</span>
+                          <span className="text-[10px] font-mono font-bold text-amber-700">
+                            {Math.round((localSettings.employeeBaseSalary || 1000) / (localSettings.monthlyWorkDays || 25))} ج/يوم
+                          </span>
                         </div>
+                        <SmoothNumberInput
+                          value={localSettings.employeeBaseSalary || 1000}
+                          onChange={(val) => {
+                            handleUpdateBudgetItemAmount('salary_tarek', val);
+                          }}
+                          quickDeltas={[100, 200, 500]}
+                          suffix="ج.م/شهر"
+                          size="md"
+                        />
                         <span className="text-[10px] text-purple-800 font-bold block">
-                          🔒 بيانات خلفية سرية — يظهر للموظف في الواجهة العمولة (5% - 7%) فقط
+                          🔒 الراتب الأساسي لطارق 1,000 ج.م + العمولات المتدرجة الفورية (5% - 7%)
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* 11 Approved Fixed Budget Items Table */}
-                  <div className="p-4 rounded-2xl bg-white border border-black/[0.08] space-y-3">
-                    <div className="flex items-center justify-between pb-2 border-b border-black/[0.06]">
-                      <span className="font-black text-xs text-[#1D1D1F]">
-                        تفصيل بنود الموازنة الشهرية المعتمدة (15,000 ج.م / شهر):
-                      </span>
-                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                        معدل يومي: 600 ج.م على 25 يوم عمل
-                      </span>
+                  {/* Interactive Full Budget Table with Real-time Inline Inputs */}
+                  <div className="p-4 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-black/[0.06]">
+                      <div>
+                        <span className="font-black text-xs text-[#1D1D1F]">
+                          تفصيل وتعديل بنود الموازنة الشهرية ({computedTotalBudget.toLocaleString('ar-EG')} ج.م / شهر):
+                        </span>
+                        <p className="text-[11px] text-gray-500 mt-0.5">
+                          يمكنك تعديل أي رقم مباشرة وسيتولى النظام إعادة الحساب والحفظ التلقائي فوراً.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                          نصيب اليوم: {computedDailyShare} ج على {localSettings.monthlyWorkDays || 25} يوم
+                        </span>
+                      </div>
                     </div>
+
                     <div className="overflow-x-auto">
                       <table className="w-full text-right text-xs">
                         <thead>
                           <tr className="border-b border-black/[0.06] text-[#86868B] text-[11px]">
-                            <th className="py-2 font-bold">البند التشغيلي</th>
-                            <th className="py-2 font-bold text-center">المخصص الشهري</th>
-                            <th className="py-2 font-bold text-center">المعدل اليومي (25 يوم)</th>
-                            <th className="py-2 font-bold text-center">التصنيف</th>
+                            <th className="py-2.5 font-bold">البند التشغيلي</th>
+                            <th className="py-2.5 font-bold text-center">التصنيف</th>
+                            <th className="py-2.5 font-bold text-center min-w-[200px]">المخصص الشهري (تعديل مباشر)</th>
+                            <th className="py-2.5 font-bold text-center">المعدل اليومي</th>
+                            <th className="py-2.5 font-bold text-center">النسبة من الموازنة</th>
+                            <th className="py-2.5 font-bold text-center">إجراءات</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-black/[0.04]">
-                          {APPROVED_FIXED_BUDGET_ITEMS.map(item => (
-                            <tr key={item.id} className="hover:bg-black/[0.02]">
-                              <td className="py-2 font-bold text-[#1D1D1F]">{item.name}</td>
-                              <td className="py-2 font-mono font-bold text-center text-[#0071E3]">{item.monthlyAmount.toLocaleString('ar-EG')} ج</td>
-                              <td className="py-2 font-mono font-bold text-center text-emerald-700">{item.dailyRate.toLocaleString('ar-EG')} ج</td>
-                              <td className="py-2 text-center text-[10px] text-gray-500 font-bold">
-                                {item.category === 'rent' ? 'إيجار ثابت' : item.category === 'salaries' ? 'رواتب كادر' : item.category === 'contingency' ? 'طوارئ وهالك' : 'مرافق وتشغيل'}
-                              </td>
-                            </tr>
-                          ))}
+                          {currentBudgetItems.map((item) => {
+                            const pct = computedTotalBudget > 0 ? Math.round((item.monthlyAmount / computedTotalBudget) * 100) : 0;
+                            const isCoreSalary = item.id === 'salary_owner' || item.id === 'salary_tarek';
+
+                            return (
+                              <tr key={item.id} className="hover:bg-black/[0.02] transition-colors">
+                                <td className="py-2 font-bold text-[#1D1D1F]">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>{item.name}</span>
+                                    {isCoreSalary && (
+                                      <span className="text-[9.5px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
+                                        أساسي
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-2 text-center text-[10px] text-gray-500 font-bold">
+                                  {item.category === 'rent'
+                                    ? 'إيجار ثابت'
+                                    : item.category === 'salaries'
+                                    ? 'رواتب كادر'
+                                    : item.category === 'contingency'
+                                    ? 'طوارئ وهالك'
+                                    : 'مرافق وتشغيل'}
+                                </td>
+                                <td className="py-2 text-center">
+                                  <div className="max-w-[220px] mx-auto">
+                                    <SmoothNumberInput
+                                      value={item.monthlyAmount}
+                                      onChange={(val) => handleUpdateBudgetItemAmount(item.id, val)}
+                                      quickDeltas={[100, 500]}
+                                      suffix="ج"
+                                      size="sm"
+                                    />
+                                  </div>
+                                </td>
+                                <td className="py-2 font-mono font-bold text-center text-emerald-700">
+                                  {Math.round(item.monthlyAmount / (localSettings.monthlyWorkDays || 25)).toLocaleString('ar-EG')} ج/يوم
+                                </td>
+                                <td className="py-2 font-mono font-bold text-center text-slate-600">
+                                  <span className="px-2 py-0.5 rounded-full bg-slate-100 text-[10px]">
+                                    {pct}%
+                                  </span>
+                                </td>
+                                <td className="py-2 text-center">
+                                  {!isCoreSalary ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveBudgetItem(item.id)}
+                                      className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                                      title="حذف هذا البند"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-400">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-black/[0.1] bg-black/[0.02] font-black">
+                            <td className="py-3 px-2 text-[#1D1D1F]">الإجمالي الكلي للموازنة:</td>
+                            <td className="py-3 text-center text-gray-500">{currentBudgetItems.length} بنود</td>
+                            <td className="py-3 font-mono text-center text-base text-[#0071E3]">
+                              {computedTotalBudget.toLocaleString('ar-EG')} ج.م
+                            </td>
+                            <td className="py-3 font-mono text-center text-emerald-700">
+                              {computedDailyShare.toLocaleString('ar-EG')} ج.م/يوم
+                            </td>
+                            <td className="py-3 text-center text-slate-900">100%</td>
+                            <td className="py-3 text-center">
+                              <span className="text-[10px] text-emerald-700 font-bold">✓ متطابق</span>
+                            </td>
+                          </tr>
+                        </tfoot>
                       </table>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end pt-2 border-t border-black/[0.06]">
+                  {/* Auto-Save & Manual Confirm Banner */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-black/[0.06]">
+                    <div className="flex items-center gap-2 text-xs text-emerald-700 font-bold">
+                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                      <span>جميع الأرقام تُحفظ تلقائياً في الذاكرة المحلية وتُزامن فوراً مع قاعدة البيانات السحابية.</span>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => handleSaveSettings()}
                       className="apple-btn flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-bold shadow-apple-xs transition-all cursor-pointer"
                     >
                       <Save size={14} />
-                      <span>حفظ وتوثيق أرقام الموازنة</span>
+                      <span>تأكيد الحفظ والمزامنة السحابية فوراً</span>
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Add Custom Budget Item Modal */}
+              {showAddBudgetItemModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                  <div className="relative w-full max-w-md rounded-3xl bg-white border border-black/[0.1] p-5 shadow-2xl space-y-4">
+                    <div className="flex items-center justify-between border-b border-black/[0.06] pb-3">
+                      <h3 className="text-sm font-black text-[#1D1D1F] flex items-center gap-2">
+                        <Plus size={16} className="text-[#0071E3]" />
+                        <span>إضافة بند موازنة تشغيلي جديد</span>
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddBudgetItemModal(false)}
+                        className="p-1 text-gray-400 hover:text-black"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleAddBudgetItem} className="space-y-3.5 text-xs">
+                      <div>
+                        <label className="font-bold block mb-1">اسم البند التشغيلي:</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="مثال: دعاية وتسويق، صيانة دورية، مستلزمات تغليف"
+                          value={newBudgetItemName}
+                          onChange={(e) => setNewBudgetItemName(e.target.value)}
+                          className="w-full h-10 px-3 rounded-xl border border-black/[0.1] text-xs font-bold outline-none focus:border-[#0071E3]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="font-bold block mb-1">تصنيف البند:</label>
+                        <select
+                          value={newBudgetItemCategory}
+                          onChange={(e) => setNewBudgetItemCategory(e.target.value)}
+                          className="w-full h-10 px-3 rounded-xl border border-black/[0.1] text-xs font-bold outline-none focus:border-[#0071E3] bg-white"
+                        >
+                          <option value="utilities">مرافق وتشغيل</option>
+                          <option value="rent">إيجارات ومقرات</option>
+                          <option value="salaries">رواتب وأجور</option>
+                          <option value="contingency">طوارئ وهالك واحتياطي</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="font-bold block mb-1">المبلغ المخصص شهرياً (ج.م):</label>
+                        <SmoothNumberInput
+                          value={newBudgetItemAmount}
+                          onChange={setNewBudgetItemAmount}
+                          quickDeltas={[100, 200, 500, 1000]}
+                          suffix="ج.م/شهر"
+                          size="md"
+                        />
+                      </div>
+
+                      <div className="pt-2 flex justify-end gap-2 border-t border-black/[0.06]">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddBudgetItemModal(false)}
+                          className="px-4 py-2 rounded-xl bg-gray-100 font-bold"
+                        >
+                          إلغاء
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2 rounded-xl bg-[#0071E3] text-white font-bold shadow-apple-xs cursor-pointer"
+                        >
+                          إضافة البند للموازنة ✓
+                        </button>
+                      </div>
+                    </form>
                   </div>
                 </div>
               )}

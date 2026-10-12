@@ -252,6 +252,18 @@ export interface Sale {
   dataClassification?: DataClassification;
   isTestData?: boolean;
   testClassificationNote?: string;
+  // Historical & Backdated Sales Tracking (تسجيل مبيعات الدفتر الورقي بأثر رجعي)
+  recordedAt?: string; // توقيت التسجيل الفعلي في النظام
+  recordedBy?: string; // اسم المستخدم الذي أدخل الفاتورة
+  isBackdated?: boolean; // هل الفاتورة مسجلة بتاريخ بيع سابق
+  saleDateNote?: string; // ملاحظة تاريخ البيع الفعلي
+  duplicateCheckHash?: string; // بصمة كشف التكرار غير المقصود
+  auditTrail?: Array<{
+    action: string;
+    performedBy: string;
+    timestamp: string;
+    details?: string;
+  }>;
 }
 
 export type ExpenseCategory = 
@@ -1390,6 +1402,18 @@ export function resolveDashboardLayoutConfig(settings?: Partial<StoreSettings>):
   };
 }
 
+export type TickerItemFrequency = 'instant' | 'every_3m' | 'every_5m' | 'every_10m' | 'every_15m' | 'every_30m' | 'hourly' | 'disabled';
+
+export interface NewsTickerFrequencies {
+  prayers?: TickerItemFrequency; // الأدعية والذكر والصلاة على النبي (افتراضي كل 10 دقائق)
+  inventory?: TickerItemFrequency; // تنبيهات المخزون والعبوات (افتراضي فورية)
+  salesTips?: TickerItemFrequency; // أفكار وتنشيط المبيعات (افتراضي كل 5 دقائق)
+  profitSummary?: TickerItemFrequency; // ملخص المبيعات والأرباح اليومية (افتراضي كل 15 دقيقة)
+  salesEvents?: TickerItemFrequency; // أحداث المبيعات والتارجت (افتراضي كل 5 دقائق)
+  commission?: TickerItemFrequency; // العمولة ومستحقات اليوم (افتراضي كل 10 دقائق)
+  storeCleanliness?: TickerItemFrequency; // نظافة وتنظيم المتجر (افتراضي كل 30 دقيقة)
+}
+
 export interface StoreSettings {
   storeName: string;
   currency: string;
@@ -1408,11 +1432,12 @@ export interface StoreSettings {
   monthlyTargetRevenue: number; // Target monthly sales
   monthlyFixedBudget: number; // 15,000 EGP safe fixed budget
   monthlyWorkDays: number; // 25 days
-  employeeBaseSalary: number; // 1,500 EGP for Tarek
-  ownerSalary: number; // 10,000 EGP for Dr. Mohamed
+  employeeBaseSalary: number; // 1,000 EGP for Tarek
+  ownerSalary: number; // 10,500 EGP for Dr. Mohamed
   commissionRate: number; // 5%
   tieredCommissionRate: number; // 7% above threshold
   tieredThresholdBottles: number; // 10 spray bottles per day
+  customBudgetItems?: FixedBudgetItem[]; // بنود الموازنة الشهرية المخصصة والقابلة للتعديل اللحظي والمزامنة
   // Receipt & Branding Customization
   storeSlogan?: string;
   storePhone?: string;
@@ -1425,6 +1450,17 @@ export interface StoreSettings {
   receiptFooterMessage?: string;
   logoUrl?: string;
   showLogoOnReceipt?: boolean;
+  showNewsTickerBar?: boolean; // إظهار أو إخفاء شريط الأخبار والأنباء المباشرة المتقدم (يُدار من لوحة التحكم)
+  newsTickerSpeed?: 'slow' | 'medium' | 'fast'; // سرعة حركة شريط الأخبار (بطيء / متوسط / سريع)
+  newsTickerTopics?: {
+    sales?: boolean; // المبيعات والإنجازات
+    inventory?: boolean; // تنبيهات المخزون والعبوات
+    prayers?: boolean; // الأدعية والذكر والصلاة على النبي
+    salesTips?: boolean; // أفكار وتنشيط المبيعات
+    storeCleanliness?: boolean; // نظافة وتنظيم المتجر
+    commission?: boolean; // العمولة والأرباح اليومية
+  };
+  newsTickerFrequencies?: NewsTickerFrequencies; // تواتر ظهور كل نوع من أنواع الأخبار والتنبيهات
   receiptDesign?: ReceiptDesignConfig;
   // Dynamic Apple Theme & Atmosphere Engine Settings
   activeThemeId?: AppThemeId;
@@ -1647,8 +1683,181 @@ export enum View {
   MARKETING = 'MARKETING',
   USERS_MANAGEMENT = 'USERS_MANAGEMENT',
   AUDIT_LOGS = 'AUDIT_LOGS',
-  STAFF_ENTITLEMENTS = 'STAFF_ENTITLEMENTS',
   DAY_OPERATIONS = 'DAY_OPERATIONS',
+  STAFF_ENTITLEMENTS = 'STAFF_ENTITLEMENTS',
+  TAREK_WORKSPACE = 'TAREK_WORKSPACE',
+}
+
+export interface CommissionPolicy {
+  id: string;
+  policyName: string;
+  baseRate: number;
+  tieredRate: number;
+  tierThresholdBottles: number;
+  eligibleTypes: PerfumeType[] | string[];
+  isRollOnEligible: boolean;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  approvedBy: string;
+  approvedAt: string;
+  reason?: string;
+  isActive: boolean;
+}
+
+export interface StaffBaseSalaryConfig {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  monthlySalaryEgp: number;
+  effectiveStartDate: string;
+  effectiveEndDate?: string;
+  payPeriodFrequency?: 'monthly' | 'weekly' | 'custom' | 'biweekly';
+  approvedBy: string;
+  notes?: string;
+}
+
+export type IncentiveFundingSource = 
+  | 'owner_salary'     // من مخصص راتب د. محمد (المالك)
+  | 'owner_profits'    // من أرباح المتجر الصافية الفائضة
+  | 'contingency'      // من بند احتياطي الطوارئ والهالك
+  | 'operating_surplus'// من فائض مساهمة المبيعات التشغيلي فوق التارجت
+  | 'store_budget';    // مخصص حوافز إداري تشغيلي مناسب محاسبياً ولا يؤثر على المتجر
+
+export interface StaffIncentive {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  incentiveType?: 'حافز أداء' | 'مكافأة' | 'مبلغ تشجيعي' | 'بدل إضافي' | 'أخرى' | string;
+  fundingSource?: IncentiveFundingSource;
+  fundingSourceLabel?: string;
+  date: string;
+  relevantPeriodStr?: string;
+  reason: string;
+  notes?: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'مصروف' | 'ملغى';
+  createdAt?: string;
+  payoutTransactionId?: string;
+}
+
+export interface StaffDeduction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  deductionType?: 'خصم تأخير' | 'خصم غياب' | 'جزاء إداري' | 'تسوية عجز' | 'أخرى' | string;
+  date: string;
+  relevantPeriodStr?: string;
+  reason: string;
+  approvedBy: string;
+  status: 'مسودة' | 'معتمد' | 'منفذ' | 'ملغى';
+  createdAt?: string;
+  notes?: string;
+}
+
+export interface StaffAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountEgp: number;
+  date: string;
+  reason: string;
+  paymentMethod?: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي' | 'آخر' | string;
+  approvedBy: string;
+  repaymentPlan?: string;
+  settledAmountEgp?: number;
+  remainingAmountEgp: number;
+  status: 'نشطة' | 'مسواة بالكامل' | 'مسددة بالكامل' | 'ملغاة';
+  vaultTransactionId?: string;
+  createdAt?: string;
+  notes?: string;
+}
+
+export interface StaffSettlementTransaction {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  transactionType: 'سحب_من_المستحقات' | 'سلفة' | 'صرف_راتب' | 'صرف_عمولة' | 'صرف_حافز' | 'تسوية_شاملة' | any;
+  totalAmountEgp: number;
+  breakdown?: {
+    commissionEgp?: number;
+    salaryEgp?: number;
+    incentiveEgp?: number;
+    advanceEgp?: number;
+    deductionEgp?: number;
+  } | any;
+  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي' | string;
+  vaultId?: string;
+  executedBy: string;
+  approvedBy: string;
+  reason: string;
+  notes?: string;
+  status: 'مسودة' | 'بانتظار_الاعتماد' | 'معتمدة_للصرف' | 'تم_الصرف' | 'مرفوضة' | 'ملغاة_بقيد_عكسي' | 'معلقة' | 'ملغاة';
+  receiptReference?: string;
+  reversalReason?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+}
+
+export interface DailyCommissionAuditRecord {
+  id: string;
+  date: string;
+  employeeId: string;
+  employeeName: string;
+  eligibleSalesCount: number;
+  sprayBottlesCount: number;
+  rollOnBottlesCount: number;
+  bottlesAt5Percent: number;
+  bottlesAt7Percent: number;
+  eligibleNetRevenueEgp: number;
+  calculatedCommissionEgp: number;
+  tier1CommissionEgp: number;
+  tier2CommissionEgp: number;
+  adjustmentsAndReturnsEgp: number;
+  policyIdUsed: string;
+  recordedInEntitlementsEgp: number;
+  alreadyPaidEgp: number;
+  remainingDueEgp: number;
+  auditState: 'معتمدة' | 'تحتاج_مراجعة' | 'فرق_غير_معتمد' | 'لم_تُحتسب_بعد';
+  discrepancyDeltaEgp: number;
+  lastCalculatedAt: string;
+  lastApprovedBy?: string;
+  notes?: string;
+}
+
+export interface CommissionAuditLog {
+  id: string;
+  date: string;
+  employeeName: string;
+  previousCommissionEgp: number;
+  newCorrectCommissionEgp: number;
+  differenceDeltaEgp: number;
+  reason: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface StaffMemberEntitlementSummary {
+  employeeId: string;
+  employeeName: string;
+  monthlyBaseSalaryEgp: number;
+  dailySalaryRateEgp: number;
+  elapsedWorkDaysPeriod: number;
+  isCurrentOngoingPeriod: boolean;
+  earnedSalaryPeriodEgp: number;
+  earnedCommissionsPeriodEgp: number;
+  approvedIncentivesPeriodEgp: number;
+  approvedAdditionsEgp: number;
+  outstandingAdvancesEgp: number;
+  approvedDeductionsEgp: number;
+  totalPreviouslyPaidEgp: number;
+  totalExpensesPaidEgp?: number; // إجمالي المصروف: المسحوبات المنصرفة + الخصومات + السلف
+  totalEntitlementsGrossEgp: number;
+  netRemainingBalanceDueEgp: number;
+  pendingApprovalsCount: number;
+  discrepanciesAlertCount: number;
 }
 
 export interface CustomerLoyaltyLog {
@@ -1756,7 +1965,7 @@ export type VaultType =
   | 'restock'      // ① قسم تكلفة المخزون وإعادة الشراء 🧴 (قيمة البضاعة المباعة - سحب فوري في أي وقت لشراء زيوت وزجاجات)
   | 'commissions'  // ② قسم مخصص العمولات 💸 (تكلفة متغيرة 5% على المبيعات لصرف مستحقات البيع)
   | 'rent'         // ③.1 مخصص الإيجار 🏪 (1,200 ج.م شهرياً / 48 ج.م يومياً)
-  | 'salaries'     // ③.2 مخصص الرواتب 👤 (11,500 ج.م: د. محمد 10,000 + طارق 1,500)
+  | 'salaries'     // ③.2 مخصص الرواتب 👤 (11,500 ج.م: د. محمد 10,500 + طارق 1,000)
   | 'utilities'    // ③.3 فواتير وتشغيل ⚡ (2,000 ج.م: كهرباء 800 + نت 300 + نقل 300 + تشغيل 300 + مياه 100 + خط 100 + نظافة 100)
   | 'contingency'  // ③.4 احتياطي الهالك والتالف 🛡️ (300 ج.م شهرياً / 12 ج.م يومياً)
   | 'owner_profit' // ④ قسم الأرباح الصافية الحرة للمالك 📈 (لا يوضع فيه إلا بعد توفير المخزون والعمولات والموازنة الـ 15,000)
@@ -1798,10 +2007,11 @@ export interface WithdrawalTransaction {
 export interface FixedBudgetItem {
   id: string;
   name: string;
-  category: 'rent' | 'salaries' | 'utilities' | 'contingency';
+  category: 'rent' | 'salaries' | 'utilities' | 'contingency' | 'custom' | string;
   monthlyAmount: number;
   dailyRate: number; // monthlyAmount / 25
   icon: string;
+  notes?: string;
 }
 
 export const APPROVED_FIXED_BUDGET_ITEMS: FixedBudgetItem[] = [
@@ -1813,8 +2023,8 @@ export const APPROVED_FIXED_BUDGET_ITEMS: FixedBudgetItem[] = [
   { id: 'cleaning', name: '🧹 النظافة', category: 'utilities', monthlyAmount: 100, dailyRate: 4, icon: 'Sparkles' },
   { id: 'transport', name: '🚚 النقل', category: 'utilities', monthlyAmount: 300, dailyRate: 12, icon: 'Truck' },
   { id: 'operations', name: '📦 مصاريف تشغيل أخرى', category: 'utilities', monthlyAmount: 300, dailyRate: 12, icon: 'Box' },
-  { id: 'salary_owner', name: '👤 مخصص الإدارة والإشراف العام', category: 'salaries', monthlyAmount: 10000, dailyRate: 400, icon: 'UserCheck' },
-  { id: 'salary_tarek', name: '👤 مخصص التشغيل والمبيعات الأساسي', category: 'salaries', monthlyAmount: 1500, dailyRate: 60, icon: 'User' },
+  { id: 'salary_owner', name: '👤 مخصص الإدارة والإشراف العام', category: 'salaries', monthlyAmount: 10500, dailyRate: 420, icon: 'UserCheck' },
+  { id: 'salary_tarek', name: '👤 مخصص التشغيل والمبيعات الأساسي', category: 'salaries', monthlyAmount: 1000, dailyRate: 40, icon: 'User' },
   { id: 'reserve_spoilage', name: '🛡️ احتياطي (هالك/تالف/فاقد)', category: 'contingency', monthlyAmount: 300, dailyRate: 12, icon: 'ShieldAlert' },
 ];
 
@@ -1935,8 +2145,8 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   monthlyTargetRevenue: 28000,
   monthlyFixedBudget: 15000, // 15,000 EGP Approved Safe Monthly Budget
   monthlyWorkDays: 25, // 25 Days Planning Basis
-  employeeBaseSalary: 1500, // Tarek Base Salary
-  ownerSalary: 10000, // Dr. Mohamed
+  employeeBaseSalary: 1000, // Tarek Base Salary
+  ownerSalary: 10500, // Dr. Mohamed
   commissionRate: 0.05, // 5%
   tieredCommissionRate: 0.07, // 7%
   tieredThresholdBottles: 10,
@@ -1951,6 +2161,16 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   receiptFooterMessage: 'شكراً لثقتكم بنا! عطورنا مصممة بثبات وفوحان يدوم طويلاً. واتساب المتجر: 01123376728 / 01062018755',
   logoUrl: 'https://l.top4top.io/p_31142jfec0.png',
   showLogoOnReceipt: true,
+  showNewsTickerBar: true,
+  newsTickerSpeed: 'medium',
+  newsTickerTopics: {
+    sales: true,
+    inventory: true,
+    prayers: true,
+    salesTips: true,
+    storeCleanliness: true,
+    commission: true,
+  },
   receiptDesign: DEFAULT_RECEIPT_DESIGN,
   activeThemeId: 'neo_precision_2027',
   themeAmbientGlow: true,
@@ -3993,6 +4213,14 @@ export interface UserPermissions {
   canViewAuditLogs?: boolean; // Alias for canViewAuditLog
   canEditSettingsAndBudgets?: boolean; // Alias
   canDeleteInvoices?: boolean; // Alias
+  // Advanced Historical Sales & Operational Capabilities (المبيعات التاريخية والتنشيط)
+  canRecordBackdatedSales?: boolean; // تسجيل مبيعات وفواتير بتاريخ سابق بأثر رجعي
+  canEditBackdatedSales?: boolean; // تعديل فواتير سابقة
+  canDeleteSales?: boolean; // حذف أو إلغاء فواتير
+  canViewDeviceAlerts?: boolean; // رؤية رادار الأجهزة المتصلة وتنبيهاتها
+  canAccessSalesActivation?: boolean; // الوصول لنظام تنشيط المبيعات ولوحة طارق
+  canViewStagnantPerfumes?: boolean; // رؤية تحليل وتنشيط العطور الراكدة
+  canAccessMarketingCampaigns?: boolean; // الوصول لأفكار التسويق وحملات واتساب وفيسبوك
 }
 
 export interface AppUser {
@@ -4047,6 +4275,13 @@ export const OWNER_FULL_PERMISSIONS: UserPermissions = {
   canViewReports: true,
   canManageSettings: true,
   canAccessOperationsSystem: true,
+  canRecordBackdatedSales: true,
+  canEditBackdatedSales: true,
+  canDeleteSales: true,
+  canViewDeviceAlerts: true,
+  canAccessSalesActivation: true,
+  canViewStagnantPerfumes: true,
+  canAccessMarketingCampaigns: true,
 };
 
 // Default Operational Permissions for Tarek (Store & Sales Manager)
@@ -4057,8 +4292,8 @@ export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canEditSaleBeforeClose: true,
   canCancelSale: true, // With audit log reason
   canReturnSale: true,
-  canApplyDiscount: true,
-  canOverridePrice: true, // Empowered to customize blend prices (selling below cost still requires Owner 5188)
+  canApplyDiscount: false, // غير مسموح بالبيع بأقل من السعر المقترح
+  canOverridePrice: false, // غير مسموح بالبيع بأقل من السعر المقترح المعتمد
   canManageCustomers: true, // Full CRM, loyalty & WhatsApp follow-up
   canViewStock: true,
   canRecordShortage: true,
@@ -4089,6 +4324,13 @@ export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canViewReports: true, // Empowered to access Sales & Invoices Ledger (with Cost/Profit columns hidden)
   canManageSettings: false, // STRICTLY FORBIDDEN (إعدادات النظام الحساسة)
   canAccessOperationsSystem: true, // Empowered to follow daily sales target & commission tiers
+  canRecordBackdatedSales: true, // إتاحة تسجيل فواتير الدفتر الورقي بتاريخ البيع الفعلي
+  canEditBackdatedSales: false, // تعديل الفواتير السابقة خاضع للإدارة
+  canDeleteSales: false, // حذف الفواتير خاضع للإدارة
+  canViewDeviceAlerts: false, // إخفاء صفحة ورادار الأجهزة المتصلة تماماً
+  canAccessSalesActivation: true, // لوحة الأداء والتنشيط البيعي اليومي المخصصة
+  canViewStagnantPerfumes: true, // تنشيط العطور الراكدة والمخزون
+  canAccessMarketingCampaigns: true, // أفكار التسويق وحملات واتساب وفيسبوك
 };
 
 // Standard Cashier Preset (فقط البيع والكاشير والزبائن)
@@ -4856,8 +5098,8 @@ export interface FixedMonthlyBudgetItem {
  * §1 & §2: جدول المصروفات والالتزامات الثابتة الشهرية المعتمدة (14,700 معلومة + 300 احتياطي = 15,000 ج.م | 600 ج/يوم على 25 يوم عمل)
  */
 export const DEFAULT_FIXED_MONTHLY_BUDGET_ITEMS: FixedMonthlyBudgetItem[] = [
-  { id: 'budget-owner', title: 'مرتب الدكتور (المالك)', monthlyAmount: 10000, dailyShare25Days: 400, category: 'رواتب' },
-  { id: 'budget-tarek', title: 'مرتب طارق الأساسي', monthlyAmount: 1500, dailyShare25Days: 60, category: 'رواتب' },
+  { id: 'budget-owner', title: 'مرتب الدكتور (المالك)', monthlyAmount: 10500, dailyShare25Days: 420, category: 'رواتب' },
+  { id: 'budget-tarek', title: 'مرتب طارق الأساسي', monthlyAmount: 1000, dailyShare25Days: 40, category: 'رواتب' },
   { id: 'budget-rent', title: 'إيجار المحل', monthlyAmount: 1200, dailyShare25Days: 48, category: 'إيجار' },
   { id: 'budget-electricity', title: 'الكهرباء', monthlyAmount: 800, dailyShare25Days: 32, category: 'فواتير ومرافق' },
   { id: 'budget-internet', title: 'الإنترنت', monthlyAmount: 300, dailyShare25Days: 12, category: 'فواتير ومرافق' },
@@ -5363,174 +5605,61 @@ export function run20MandatoryAcceptanceTests(): AcceptanceTestResult[] {
 }
 
 
-// Staff entitlements, commissions, salaries and financial settlements.
-export interface CommissionPolicy {
+
+// ========================================================
+// TAREK DEDICATED SALES ACTIVATION & MARKETING INTERFACES
+// ========================================================
+
+export interface CustomerFollowUpTask {
   id: string;
-  policyName: string;
-  baseRate: number;
-  tieredRate: number;
-  tierThresholdBottles: number;
-  eligibleTypes: PerfumeType[];
-  isRollOnEligible: boolean;
-  effectiveStartDate: string;
-  effectiveEndDate?: string;
-  approvedBy: string;
-  approvedAt: string;
-  reason?: string;
-  isActive: boolean;
+  customerName: string;
+  customerPhone: string;
+  lastPurchaseDate: string;
+  lastPurchasedFragrances: string[];
+  suggestedAction: string;
+  suggestedFragrance: string;
+  priority: 'high' | 'medium' | 'low';
+  category: 'replenishment' | 'inactive_reactivation' | 'request_followup' | 'cross_sell';
+  dueDate: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'converted_to_sale' | 'declined';
+  resultNote?: string;
+  resultSaleId?: string;
+  updatedAt?: string;
 }
 
-export interface StaffBaseSalaryConfig {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  monthlySalaryEgp: number;
-  effectiveStartDate: string;
-  effectiveEndDate?: string;
-  payPeriodFrequency?: 'monthly' | 'weekly' | 'biweekly' | 'custom';
-  approvedBy: string;
-  notes?: string;
+export interface StagnantPerfumeItem {
+  productId: string;
+  productName: string;
+  productType: string;
+  currentStockGrams: number;
+  approxBottles: number;
+  lastSaleDate: string | null;
+  daysWithoutSale: number;
+  standardPriceEgp: number;
+  contributionMarginEgp: number;
+  targetAudienceAr: string;
+  pairingSuggestionsAr: string[];
+  inStoreDisplayTipAr: string;
+  postCopyAr: string;
+  microTestIdeaAr: string;
 }
 
-export interface StaffIncentive {
+export interface MarketingPostIdea {
   id: string;
-  employeeId: string;
-  employeeName: string;
-  amountEgp: number;
-  incentiveType?: string;
-  date: string;
-  relevantPeriodStr?: string;
-  reason: string;
-  notes?: string;
-  approvedBy: string;
-  status: 'مسودة' | 'معتمد' | 'مصروف' | 'ملغى';
-  createdAt?: string;
-  payoutTransactionId?: string;
-}
-
-export interface StaffDeduction {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  amountEgp: number;
-  deductionType?: string;
-  date: string;
-  relevantPeriodStr?: string;
-  reason: string;
-  approvedBy: string;
-  status: 'مسودة' | 'معتمد' | 'منفذ' | 'ملغى';
-  createdAt?: string;
-}
-
-export interface StaffAdvance {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  amountEgp: number;
-  date: string;
-  reason: string;
-  paymentMethod?: string;
-  approvedBy: string;
-  repaymentPlan: string;
-  settledAmountEgp: number;
-  remainingAmountEgp: number;
-  status: 'نشطة' | 'مسددة بالكامل' | 'مسواة بالكامل' | 'ملغاة';
-  vaultTransactionId?: string;
-  createdAt: string;
-  notes?: string;
-}
-
-export interface StaffSettlementTransaction {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  date: string;
-  transactionType: 'سحب_من_المستحقات' | 'سلفة' | 'صرف_راتب' | 'صرف_عمولة' | 'صرف_حافز' | 'تسوية_شاملة';
-  totalAmountEgp: number;
-  breakdown?: {
-    commissionEgp?: number;
-    salaryEgp?: number;
-    incentiveEgp?: number;
-    advanceEgp?: number;
-    deductionEgp?: number;
+  channel: 'facebook' | 'whatsapp';
+  title: string;
+  goal: string;
+  targetAudience: string;
+  featuredPerfume: string;
+  postText: string;
+  callToAction: string;
+  suggestedTiming: string;
+  resultsSummary?: {
+    interactionsCount: number;
+    inquiriesCount: number;
+    convertedSalesCount: number;
+    revenueGeneratedEgp: number;
   };
-  paymentMethod: 'نقدي' | 'محفظة إلكترونية' | 'تحويل بنكي';
-  vaultId?: string;
-  executedBy: string;
-  approvedBy: string;
-  reason: string;
-  notes?: string;
-  status:
-    | 'مسودة'
-    | 'بانتظار_الاعتماد'
-    | 'معتمدة_للصرف'
-    | 'تم_الصرف'
-    | 'مرفوضة'
-    | 'معلقة'
-    | 'ملغاة'
-    | 'ملغاة_بقيد_عكسي';
-  receiptReference?: string;
-  reversalReason?: string;
-  reversedAt?: string;
-  reversedBy?: string;
 }
 
-export interface DailyCommissionAuditRecord {
-  id: string;
-  date: string;
-  employeeId: string;
-  employeeName: string;
-  eligibleSalesCount: number;
-  sprayBottlesCount: number;
-  rollOnBottlesCount: number;
-  bottlesAt5Percent: number;
-  bottlesAt7Percent: number;
-  eligibleNetRevenueEgp: number;
-  calculatedCommissionEgp: number;
-  tier1CommissionEgp: number;
-  tier2CommissionEgp: number;
-  adjustmentsAndReturnsEgp: number;
-  policyIdUsed: string;
-  recordedInEntitlementsEgp: number;
-  alreadyPaidEgp: number;
-  remainingDueEgp: number;
-  auditState: 'معتمدة' | 'تحتاج_مراجعة' | 'فرق_غير_معتمد' | 'لم_تُحتسب_بعد';
-  discrepancyDeltaEgp: number;
-  lastCalculatedAt: string;
-  lastApprovedBy?: string;
-  notes?: string;
-}
-
-export interface CommissionAuditLog {
-  id: string;
-  date: string;
-  employeeName: string;
-  previousCommissionEgp: number;
-  newCorrectCommissionEgp: number;
-  differenceDeltaEgp: number;
-  reason: string;
-  triggeringSaleId?: string;
-  approvedBy: string;
-  approvedAt: string;
-}
-
-export interface StaffMemberEntitlementSummary {
-  employeeId: string;
-  employeeName: string;
-  monthlyBaseSalaryEgp: number;
-  dailySalaryRateEgp: number;
-  elapsedWorkDaysPeriod: number;
-  isCurrentOngoingPeriod: boolean;
-  earnedSalaryPeriodEgp: number;
-  earnedCommissionsPeriodEgp: number;
-  approvedIncentivesPeriodEgp: number;
-  approvedAdditionsEgp: number;
-  outstandingAdvancesEgp: number;
-  approvedDeductionsEgp: number;
-  totalPreviouslyPaidEgp: number;
-  totalExpensesPaidEgp?: number;
-  totalEntitlementsGrossEgp: number;
-  netRemainingBalanceDueEgp: number;
-  pendingApprovalsCount: number;
-  discrepanciesAlertCount: number;
-}
+// End of types

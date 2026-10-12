@@ -66,9 +66,12 @@ const PERMISSION_GROUPS = [
     description: 'تسجيل البيع، المسودات، الخصومات، وإلغاء المبيعات',
     keys: [
       { key: 'canRecordSale', label: 'تسجيل بيع جديد وتلقي النقدية' },
+      { key: 'canRecordBackdatedSales', label: 'تسجيل مبيعات وفواتير بتاريخ سابق بأثر رجعي (الدفتر الورقي)' },
       { key: 'canEditSaleBeforeClose', label: 'تعديل مسودة الفاتورة قبل الاعتماد' },
+      { key: 'canEditBackdatedSales', label: 'تعديل أو تصحيح فواتير سابقة' },
       { key: 'canApplyDiscount', label: 'تطبيق خصم مسموح به' },
       { key: 'canCancelSale', label: 'رفع طلب إلغاء عملية بيع' },
+      { key: 'canDeleteSales', label: 'حذف أو إلغاء فواتير البيع' },
       { key: 'canReturnSale', label: 'تسجيل مرتجع مؤهل' },
       { key: 'canOverridePrice', label: 'تغيير سعر البيع يدوياً (محظور افتراضياً)' },
     ] as Array<{ key: keyof UserPermissions; label: string }>
@@ -82,6 +85,7 @@ const PERMISSION_GROUPS = [
       { key: 'canViewProfits', label: 'رؤية هوامش وصافي أرباح المتجر الكلية' },
       { key: 'canViewExpenses', label: 'رؤية المصروفات والرواتب والإيجارات' },
       { key: 'canViewExecutiveDashboard', label: 'الاطلاع على مؤشرات أرباح المالك بصفحة الرئيسية' },
+      { key: 'canViewDeviceAlerts', label: 'رؤية رادار الأجهزة المتصلة وتنبيهات الاتصال اللحظية' },
       { key: 'canExportData', label: 'تنزيل وتصدير قاعدة بيانات العملاء أكسيل' },
       { key: 'canViewVaults', label: 'رؤية موازنات المحافظ والخزائن المغلقة' },
     ] as Array<{ key: keyof UserPermissions; label: string }>
@@ -123,6 +127,16 @@ const PERMISSION_GROUPS = [
       { key: 'canOpenDay', label: 'فتح يوم العمل والدرج' },
       { key: 'canCloseDay', label: 'إغلاق اليوم وتجميد الجرد' },
       { key: 'canReopenClosedDay', label: 'إعادة فتح يوم مغلق (خاص بالمالك)' },
+    ] as Array<{ key: keyof UserPermissions; label: string }>
+  },
+  {
+    id: 'activation_marketing',
+    title: '6. تنشيط المبيعات ولوحة طارق والتسويق',
+    description: 'اللوحة التنفيذية لطارق، مهام العملاء، العطور الراكدة، وحملات واتساب وفيسبوك',
+    keys: [
+      { key: 'canAccessSalesActivation', label: 'الوصول للوحة طارق ومهام تنشيط المبيعات اليومية' },
+      { key: 'canViewStagnantPerfumes', label: 'الاطلاع على تحليل العطور الراكدة وتنشيط المخزون' },
+      { key: 'canAccessMarketingCampaigns', label: 'الوصول لأفكار التسويق وحملات واتساب وفيسبوك' },
     ] as Array<{ key: keyof UserPermissions; label: string }>
   }
 ];
