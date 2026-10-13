@@ -292,6 +292,7 @@ export interface Expense {
   category: ExpenseCategory;
   date: string; // YYYY-MM-DD or ISO
   isRecurringMonthly: boolean;
+  recordedBy?: string; // اسم المستخدم الذي أدخل المصروف، عند توفره
   notes?: string;
   dataClassification?: DataClassification;
   isTestData?: boolean;

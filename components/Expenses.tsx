@@ -8,6 +8,7 @@ import {
   isActualPaidOperationalExpense,
   isLiveProductionSale,
 } from '../types';
+import { dispatchExpenseTelegramAlert } from '../services/telegramNotificationService';
 import { 
   DollarSign, 
   Plus, 
