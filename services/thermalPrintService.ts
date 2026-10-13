@@ -238,13 +238,23 @@ export const printThermalReceiptViaIframe = (
     `);
     doc.close();
 
+    // Trigger printing from parent context as well to guarantee execution
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (err) {
+        console.warn('Iframe print direct trigger fallback:', err);
+      }
+    }, 350);
+
     // Cleanup iframe after printing
     setTimeout(() => {
       try {
         iframe.remove();
       } catch {}
       resolve(true);
-    }, 2500);
+    }, 3000);
   });
 };
 

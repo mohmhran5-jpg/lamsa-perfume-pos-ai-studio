@@ -2788,6 +2788,168 @@ p, span, h1, h2, h3, h4, h5, h6, label, button, td, th {
   z-index: 20 !important;
 }
 
+/* Gemini Slow Animated Gradient Border Engine */
+@keyframes geminiBorderSlowFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.gemini-animated-border-wrapper {
+  position: relative;
+  padding: 2.5px;
+  border-radius: 1.75rem;
+  background: linear-gradient(
+    115deg,
+    #4285F4,
+    #9B72CB,
+    #D9657B,
+    #24C1E0,
+    #9B72CB,
+    #4285F4
+  );
+  background-size: 300% 300%;
+  animation: geminiBorderSlowFlow 9s ease infinite;
+  box-shadow: 0 12px 35px -10px rgba(66, 133, 244, 0.28);
+}
+
+.gemini-animated-border-wrapper::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 1.85rem;
+  background: linear-gradient(
+    115deg,
+    #4285F4,
+    #9B72CB,
+    #D9657B,
+    #24C1E0,
+    #9B72CB,
+    #4285F4
+  );
+  background-size: 300% 300%;
+  animation: geminiBorderSlowFlow 9s ease infinite;
+  filter: blur(14px);
+  opacity: 0.35;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* ======================================================== */
+/* LUXURY DARK GLASSMORPHISM TOKENS & ACCENTS FOR POS       */
+/* ======================================================== */
+.pos-dark-card {
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+.pos-glass-panel {
+  background: rgba(30, 41, 59, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.pos-neon-gold {
+  box-shadow: 0 0 20px -3px rgba(217, 119, 6, 0.35);
+}
+
+.pos-neon-emerald {
+  box-shadow: 0 0 20px -3px rgba(16, 185, 129, 0.35);
+}
+
+.pos-neon-blue {
+  box-shadow: 0 0 20px -3px rgba(0, 113, 227, 0.4);
+}
+
+/* ======================================================== */
+/* STRICT PRINT ISOLATION ENGINE (FLEXIBLE THERMAL RECEIPT)  */
+/* ======================================================== */
+@media print {
+  @page {
+    size: auto;
+    margin: 0mm !important;
+  }
+
+  /* 1. Strictly hide every page component, header, sidebar, footer, background */
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #root,
+  .app-container,
+  header,
+  nav,
+  aside,
+  footer,
+  main,
+  .smart-modal-overlay > *:not(#thermal-receipt-printable):not(.printable-receipt) {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* 2. Unhide exclusively the receipt element and its children */
+  #thermal-receipt,
+  #thermal-receipt *,
+  #thermal-receipt-printable,
+  #thermal-receipt-printable *,
+  .printable-receipt,
+  .printable-receipt *,
+  .printable-invoice,
+  .printable-invoice * {
+    visibility: visible !important;
+    display: block !important;
+  }
+
+  /* 3. Position the receipt isolated at top-center of the printed page */
+  #thermal-receipt,
+  #thermal-receipt-printable,
+  .printable-receipt,
+  .printable-invoice {
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 3mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    z-index: 99999999 !important;
+  }
+
+  /* Inline thermal table borders */
+  #thermal-receipt table,
+  #thermal-receipt-printable table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+}
+
+
 
 
 

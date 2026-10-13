@@ -1152,7 +1152,107 @@ export function saveUserThemePreference(themeId: AppThemeId, userId?: string): v
   }
 }
 
+export type DashboardCardStyle = 'liquid_glass' | 'apple_sleek' | 'classic_clean';
+
+export function resolveUserDashboardCardStyle(userId?: string): DashboardCardStyle {
+  if (typeof window !== 'undefined') {
+    try {
+      const targetUserId = userId || (() => {
+        try {
+          const sessionUser = sessionStorage.getItem('lamsa_current_user_v1') || localStorage.getItem('lamsa_session_user_v1');
+          if (sessionUser) return JSON.parse(sessionUser)?.id;
+        } catch { return null; }
+        return null;
+      })();
+
+      if (targetUserId) {
+        const savedStyle = localStorage.getItem(`lamsa_user_card_style_${targetUserId}`);
+        if (savedStyle && ['liquid_glass', 'apple_sleek', 'classic_clean'].includes(savedStyle)) {
+          return savedStyle as DashboardCardStyle;
+        }
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return 'liquid_glass'; // Default: زجاج سائل أنيق
+}
+
+export function saveUserDashboardCardStyle(style: DashboardCardStyle, userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const targetUserId = userId || (() => {
+      try {
+        const sessionUser = sessionStorage.getItem('lamsa_current_user_v1') || localStorage.getItem('lamsa_session_user_v1');
+        if (sessionUser) return JSON.parse(sessionUser)?.id;
+      } catch { return null; }
+      return null;
+    })();
+
+    if (targetUserId) {
+      localStorage.setItem(`lamsa_user_card_style_${targetUserId}`, style);
+    }
+    localStorage.setItem('lamsa_active_card_style_v1', style);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+export function resolveUserDashboardCardsOrder(userId?: string, defaultOrder?: string[]): string[] {
+  const fallback = defaultOrder || [
+    'contribution_center',
+    'raw_material_cost',
+    'unwithdrawn_commission',
+    'sales_revenue',
+    'bottles_sold',
+    'live_commission',
+    'performance_analysis'
+  ];
+  if (typeof window !== 'undefined') {
+    try {
+      const targetUserId = userId || (() => {
+        try {
+          const sessionUser = sessionStorage.getItem('lamsa_current_user_v1') || localStorage.getItem('lamsa_session_user_v1');
+          if (sessionUser) return JSON.parse(sessionUser)?.id;
+        } catch { return null; }
+        return null;
+      })();
+
+      if (targetUserId) {
+        const savedOrder = localStorage.getItem(`lamsa_user_cards_order_${targetUserId}`);
+        if (savedOrder) {
+          const parsed = JSON.parse(savedOrder);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return fallback;
+}
+
+export function saveUserDashboardCardsOrder(order: string[], userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const targetUserId = userId || (() => {
+      try {
+        const sessionUser = sessionStorage.getItem('lamsa_current_user_v1') || localStorage.getItem('lamsa_session_user_v1');
+        if (sessionUser) return JSON.parse(sessionUser)?.id;
+      } catch { return null; }
+      return null;
+    })();
+
+    if (targetUserId) {
+      localStorage.setItem(`lamsa_user_cards_order_${targetUserId}`, JSON.stringify(order));
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 export type TypingInteractionStyle = 'pulse' | 'glow' | 'bounce' | 'shake' | 'wave';
+
 
 // ========================================================
 // OWNER DASHBOARD CARDS & REPORTS CUSTOMIZATION ENGINE

@@ -57,6 +57,7 @@ import POSQuickPerformanceBar from './POSQuickPerformanceBar';
 import SmartFragranceSearchModal from './SmartFragranceSearchModal';
 import StrategicReplenishmentModal from './StrategicReplenishmentModal';
 import ShortagesAlertModal from './ShortagesAlertModal';
+import PromotionalBundlesCalculatorModal from './PromotionalBundlesCalculatorModal';
 import { generateStrategicReplenishmentOrder, DEFAULT_STRATEGIC_THRESHOLD_GRAMS } from '../services/strategicOrderService';
 import { 
   Search, 
@@ -105,7 +106,8 @@ import {
   WifiOff,
   ArrowLeftRight,
   CheckCheck,
-  ChevronDown
+  ChevronDown,
+  Eye
 } from 'lucide-react';
 import { enqueueOfflineAction } from '../services/offlineSyncService';
 import ReceiptModal from './ReceiptModal';
@@ -199,11 +201,21 @@ const POS: React.FC<POSProps> = ({
   const [showAllCatalogueExplicitly, setShowAllCatalogueExplicitly] = useState<boolean>(false);
   const [activeRecommendationFilter, setActiveRecommendationFilter] = useState<'auto' | 'summer' | 'winter' | 'morning' | 'night' | 'all'>('auto');
   const [catalogueViewMode, setCatalogueViewMode] = useState<'grid' | 'table'>('grid');
+  // Expandable Product Card State (تفاصيل المنتج المدمجة دون مغادرة الواجهة)
+  const [expandedCardProductId, setExpandedCardProductId] = useState<string | null>(null);
 
-  // Modals for Smart Search, Strategic Replenishment & Shortages Alert
+  // Modals for Smart Search, Strategic Replenishment, Shortages Alert & Promotional Calculator
   const [showSmartSearchModal, setShowSmartSearchModal] = useState(false);
   const [showReplenishmentModal, setShowReplenishmentModal] = useState(false);
   const [showShortagesModal, setShowShortagesModal] = useState(false);
+  const [showPromotionalCalculatorModal, setShowPromotionalCalculatorModal] = useState(false);
+  const [activePromotionalSavings, setActivePromotionalSavings] = useState<{
+    offerName: string;
+    originalTotal: number;
+    finalTotal: number;
+    savedAmount: number;
+    savingsPercent: number;
+  } | null>(null);
   const [isInitialShiftOpenAlert, setIsInitialShiftOpenAlert] = useState(false);
   const [activeStrategicOrder, setActiveStrategicOrder] = useState<StrategicReplenishmentOrder | null>(null);
 
@@ -214,6 +226,24 @@ const POS: React.FC<POSProps> = ({
   const [quickExpenseAmount, setQuickExpenseAmount] = useState<number | ''>('');
   const [quickExpenseCategory, setQuickExpenseCategory] = useState<ExpenseCategory>('مصاريف تشغيل');
   const [quickExpenseNotes, setQuickExpenseNotes] = useState('');
+
+  // Floating Action Button & Mobile Instant Invoice Drawer State
+  const [isMobileInvoiceDrawerOpen, setIsMobileInvoiceDrawerOpen] = useState(false);
+
+  const handleOpenInstantInvoice = () => {
+    if (window.innerWidth < 1024) {
+      setIsMobileInvoiceDrawerOpen(true);
+    } else {
+      const el = document.getElementById('pos-cart-panel');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.add('ring-4', 'ring-amber-500/60');
+        setTimeout(() => {
+          el.classList.remove('ring-4', 'ring-amber-500/60');
+        }, 1500);
+      }
+    }
+  };
 
   // Strategic reorder shortages count
   const strategicShortageProducts = useMemo(() => {
@@ -322,9 +352,111 @@ const POS: React.FC<POSProps> = ({
     );
   }, [currentUser]);
 
-  // Success Modal
+  // Success & Smart Adaptive Invoice Terminal State
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+  const [draftInvoicePreviewSale, setDraftInvoicePreviewSale] = useState<Sale | null>(null);
   const [addedItemFlash, setAddedItemFlash] = useState<string | null>(null);
+
+  // Open live adaptive smart invoice terminal for current cart
+  const handleOpenQuickInvoicePreview = () => {
+    if (cart.length === 0) {
+      setAddedItemFlash('ℹ️ يرجى إضافة عطور إلى السلة أولاً لمعاينة الفاتورة الحرارية');
+      setTimeout(() => setAddedItemFlash(null), 3000);
+      return;
+    }
+    const actorName = currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || currentUser?.displayName || 'طارق';
+    const draftSale: Sale = {
+      id: `PREV-${Date.now().toString().slice(-6)}`,
+      date: new Date().toISOString(),
+      items: cart.map(item => ({
+        id: item.id,
+        productId: item.productId,
+        productName: item.productName,
+        productType: item.productType,
+        bottleSize: item.bottleSize,
+        essenceGrams: item.essenceGrams * (item.quantity || 1),
+        cost: item.cost * (item.quantity || 1),
+        sellingPrice: item.sellingPrice * (item.quantity || 1),
+        profit: item.profit * (item.quantity || 1),
+        quantity: item.quantity || 1,
+        isColoredBottle: item.isColoredBottle,
+        isRollOn: item.isRollOn,
+        isMix: Boolean(item.isMix),
+        compositionType: item.compositionType || (item.isMix ? 'ميكس' : 'عطر فردي'),
+        mixComponents: item.mixComponents,
+        customFormulaName: item.customFormulaName,
+      })),
+      totalPrice: cartFinalTotal,
+      totalCost: cartTotalCost,
+      totalProfit: cartTotalNetProfit,
+      ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+      ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
+      paymentMethod,
+      ...(totalAppliedDiscount > 0 ? { discount: totalAppliedDiscount } : {}),
+      packagingOptionId: packagingId,
+      ...(packagingAccounting.independentPackagingRevenueEgp > 0
+        ? { packagingRevenue: packagingAccounting.independentPackagingRevenueEgp }
+        : {}),
+      employeeName: actorName,
+      source: 'المتجر',
+      ...(activePromotionalSavings ? { promotionalSavings: activePromotionalSavings } : {}),
+    };
+    setDraftInvoicePreviewSale(draftSale);
+  };
+
+  // Apply Promotional Bundle Offer to Cart & Attach Savings to Receipt
+  const handleApplyBundleOfferToCart = (bundleData: {
+    offerName: string;
+    items: Array<{ product: Product; bottle: BottleSize; quantity: number }>;
+    originalTotal: number;
+    finalTotal: number;
+    savedAmount: number;
+    savingsPercent: number;
+  }) => {
+    const newCartItems: CartItem[] = [];
+
+    bundleData.items.forEach(({ product, bottle, quantity }) => {
+      const isSpecial = ['عود', 'مسك'].includes(product.type);
+      const unitPrice = isSpecial ? bottle.specialPrice : bottle.normalPrice;
+      const unitCost = calculateDerivedProductCost({
+        bottle,
+        perfumeType: product.type,
+        isColoredBottle: false,
+      });
+
+      newCartItems.push({
+        cartItemId: `${product.id}-${bottle.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: (Date.now() + Math.floor(Math.random() * 1000)).toString(),
+        productId: product.id,
+        productName: product.name,
+        productType: product.type,
+        bottleSize: bottle.sizeMl,
+        essenceGrams: bottle.essenceGrams,
+        cost: unitCost,
+        sellingPrice: unitPrice,
+        profit: unitPrice - unitCost,
+        brand: product.brand,
+        originalStock: product.stock_grams,
+        quantity: quantity || 1,
+        isRollOn: bottle.isRollOn,
+        isColoredBottle: false,
+      });
+    });
+
+    setCart(prev => [...newCartItems, ...prev]);
+    setOrderDiscount(bundleData.savedAmount);
+    setActivePromotionalSavings({
+      offerName: bundleData.offerName,
+      originalTotal: bundleData.originalTotal,
+      finalTotal: bundleData.finalTotal,
+      savedAmount: bundleData.savedAmount,
+      savingsPercent: bundleData.savingsPercent,
+    });
+
+    soundAlertService.playSaleChime();
+    setAddedItemFlash(`تم تطبيق ${bundleData.offerName} (خصم ${bundleData.savedAmount} ج.م)`);
+    setTimeout(() => setAddedItemFlash(null), 4000);
+  };
 
   // Guided Cashier Mode & Streamlined Cart Option Drawer
   const [showCashierGuide, setShowCashierGuide] = useState<boolean>(true);
@@ -2101,6 +2233,7 @@ const POS: React.FC<POSProps> = ({
         : {}),
       commissionAmount: cartTotalCommission,
       totalCommission: cartTotalCommission,
+      ...(activePromotionalSavings ? { promotionalSavings: activePromotionalSavings } : {}),
       transactionType: ownerOverrideGranted
         ? ownerExceptionReason === 'هدية'
           ? 'هدية'
@@ -2213,15 +2346,19 @@ const POS: React.FC<POSProps> = ({
   }, [selectedBottle, configuringProduct, configItemNetProfit, bottleSizes]);
 
   return (
-    <div className="p-3 sm:p-4 lg:p-5 max-w-[1440px] mx-auto space-y-3.5 pb-16 md:pb-10 animate-in fade-in duration-150">
+    <div className="p-3 sm:p-4 lg:p-6 max-w-[1540px] mx-auto space-y-4 pb-20 md:pb-12 text-[#1E293B] min-h-screen bg-[#FAF7F2] rounded-3xl border border-[#EAE4D9] shadow-[0_10px_40px_rgba(30,41,59,0.04)] relative overflow-hidden font-sans selection:bg-amber-100 selection:text-amber-900 animate-in fade-in duration-150">
       
+      {/* Ambient Warm Golden Accents */}
+      <div className="absolute top-0 right-1/4 w-96 h-96 bg-amber-200/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-24 left-10 w-80 h-80 bg-stone-300/15 rounded-full blur-3xl pointer-events-none" />
+
       {/* ======================================================== */}
-      {/* EXECUTIVE POS COMMAND BAR (Pure Apple Glass & Halos)     */}
+      {/* EXECUTIVE POS FLIGHT DECK (Ivory & Cream Luxury Theme)   */}
       {/* ======================================================== */}
-      <header className="rounded-3xl p-3 sm:p-4 apple-glass-card border border-black/[0.07] flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-apple-xs">
+      <header className="rounded-3xl p-3.5 sm:p-4.5 bg-white border border-[#EAE4D9] flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 shadow-sm relative z-10">
         {/* Zone 1: Brand Identity & Active Cashier Context */}
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-2xl bg-white border border-black/[0.08] shadow-apple-xs p-1 flex items-center justify-center shrink-0">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-12 h-12 rounded-2xl bg-[#FAF7F2] border border-[#EAE4D9] shadow-xs p-1.5 flex items-center justify-center shrink-0">
             <img 
               src={settings.logoUrl || "https://l.top4top.io/p_31142jfec0.png"} 
               alt={settings.storeName} 
@@ -2231,38 +2368,38 @@ const POS: React.FC<POSProps> = ({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-sm sm:text-base font-black text-[#1D1D1F] tracking-tight truncate">
+              <h1 className="text-base sm:text-lg font-black text-[#0F172A] tracking-tight truncate drop-shadow-xs">
                 {settings.storeName}
               </h1>
-              <span aria-hidden="true" className="text-black/20 hidden sm:inline">·</span>
-              <span className="text-xs font-semibold text-[#9A6E23] hidden sm:inline truncate">
+              <span aria-hidden="true" className="text-stone-300 hidden sm:inline">·</span>
+              <span className="text-xs font-bold text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 hidden sm:inline truncate">
                 محطة الكاشير والتركيب الفوري
               </span>
             </div>
-            <div className="flex items-center gap-2 text-[11px] text-[#86868B] mt-0.5 flex-wrap">
+            <div className="flex items-center gap-2 text-[11px] text-stone-500 mt-1 flex-wrap">
               <span>
                 الكاشير المناوب:{' '}
-                <strong className="text-[#1D1D1F] font-bold">{currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}</strong>
+                <strong className="text-[#0F172A] font-bold">{currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || 'طارق'}</strong>
               </span>
               <span aria-hidden="true">·</span>
-              <span className="font-mono">{currentTimeInfo.timeLabel}</span>
+              <span className="font-mono text-stone-600">{currentTimeInfo.timeLabel}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-[#34C759] font-bold flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] animate-pulse" />
+              <span className="text-emerald-700 font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 مزامنة فورية
               </span>
             </div>
           </div>
         </div>
 
-        {/* Zone 2: Apple Glass Action Capsules with Subtle Halos & Consolidated Menu */}
+        {/* Zone 2: Executive Fast Action Dock with Navy & Gold Buttons */}
         <div className="flex flex-wrap items-center gap-2 relative">
           {/* Shift State Pill */}
           {!isShiftReady ? (
             <button
               type="button"
               onClick={handleStartWork}
-              className="apple-pill-btn halo-blue px-3.5 py-2 bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer whitespace-nowrap"
+              className="px-3.5 py-2 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer whitespace-nowrap transition-all active:scale-98"
             >
               <Play size={13} className="fill-white" />
               <span>بدء الوردية</span>
@@ -2274,11 +2411,24 @@ const POS: React.FC<POSProps> = ({
                 setIsInitialShiftOpenAlert(false);
                 setShowShortagesModal(true);
               }}
-              className="apple-pill-btn halo-emerald px-3 py-1.5 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-all"
               title="الوردية مفتوحة ومسجلة"
             >
-              <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span className="tabular-nums">الوردية مفتوحة ({todayEmployeeAttendance?.checkInTime || 'الآن'})</span>
+            </button>
+          )}
+
+          {/* Day Operations Trigger */}
+          {onOpenDayOperations && (
+            <button
+              type="button"
+              onClick={onOpenDayOperations}
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-50 text-stone-700 border border-[#EAE4D9] text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-all"
+              title="إدارة الوردية ومحضر اليوم وإغلاق الدفاتر"
+            >
+              <Clock size={13} className="text-[#0F172A]" />
+              <span>محضر اليوم</span>
             </button>
           )}
 
@@ -2286,10 +2436,10 @@ const POS: React.FC<POSProps> = ({
           <button
             type="button"
             onClick={() => setIsQuickExpenseModalOpen(true)}
-            className="apple-pill-btn halo-gold px-3 py-1.5 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-all"
             title="تسجيل مصروف تشغيلي سريع من شاشة الكاشير"
           >
-            <DollarSign size={13} className="text-[#C49746]" />
+            <DollarSign size={13} className="text-amber-700" />
             <span>+ مصروف</span>
           </button>
 
@@ -2297,40 +2447,40 @@ const POS: React.FC<POSProps> = ({
           <button
             type="button"
             onClick={handleQuickNewSale}
-            className="apple-pill-btn halo-blue px-3 py-1.5 bg-[#1D1D1F] text-white hover:bg-black text-xs font-black flex items-center gap-1.5 shadow-apple-xs cursor-pointer whitespace-nowrap"
+            className="px-3 py-1.5 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] text-white hover:text-amber-300 text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer whitespace-nowrap transition-all"
             title="بدء وتصفير فاتورة بيع جديدة فوراً"
           >
-            <RotateCcw size={12} className="text-amber-300" />
+            <RotateCcw size={12} className="text-amber-400" />
             <span>فاتورة جديدة</span>
           </button>
 
-          {/* Consolidated Operations Dropdown Menu (دمج العملاء والفواتير لمنع التشتيت) */}
+          {/* Consolidated Operations Dropdown Menu */}
           <div className="relative">
             <button
               type="button"
               onClick={() => setIsPosToolsOpen(!isPosToolsOpen)}
-              className="apple-pill-btn halo-purple px-3 py-1.5 text-xs font-bold text-[#1D1D1F] flex items-center gap-1.5 cursor-pointer group whitespace-nowrap"
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-50 text-stone-700 border border-[#EAE4D9] text-xs font-bold flex items-center gap-1.5 cursor-pointer group whitespace-nowrap transition-all"
               title="إجراءات وسجلات إضافية"
             >
-              <Sparkles size={13} className="text-purple-600" />
+              <Sparkles size={13} className="text-amber-600" />
               <span>السجلات</span>
-              <ChevronDown size={12} className={`text-[#86868B] transition-transform ${isPosToolsOpen ? 'rotate-180 text-purple-600' : ''}`} />
+              <ChevronDown size={12} className={`text-stone-400 transition-transform ${isPosToolsOpen ? 'rotate-180 text-amber-600' : ''}`} />
             </button>
 
             {/* Dropdown Sheets */}
             {isPosToolsOpen && (
               <>
                 <div 
-                  className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px] transition-opacity" 
+                  className="fixed inset-0 z-40 bg-black/20 backdrop-blur-2xs transition-opacity" 
                   onClick={() => setIsPosToolsOpen(false)} 
                 />
                 <div 
-                  className="absolute top-full mt-2.5 left-0 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-3xl bg-white/98 backdrop-blur-2xl border border-black/[0.1] shadow-2xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150"
+                  className="absolute top-full mt-2.5 left-0 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-white border border-[#EAE4D9] shadow-xl p-2.5 space-y-1.5 animate-in fade-in zoom-in-95 duration-150 text-stone-800"
                   dir="rtl"
                 >
-                  <div className="flex items-center justify-between px-2.5 py-1 border-b border-black/[0.05] mb-1">
-                    <span className="text-[11px] font-black text-[#1D1D1F]">الأقسام السريعة المرتبطة:</span>
-                    <span className="text-[9.5px] font-bold text-[#86868B]">انتقال فوري</span>
+                  <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[#EAE4D9] mb-1">
+                    <span className="text-[11px] font-black text-stone-900">الأقسام السريعة المرتبطة:</span>
+                    <span className="text-[9.5px] font-bold text-stone-400">انتقال فوري</span>
                   </div>
 
                   {onNavigateToCustomers && (
@@ -2340,14 +2490,14 @@ const POS: React.FC<POSProps> = ({
                         setIsPosToolsOpen(false);
                         onNavigateToCustomers();
                       }}
-                      className="w-full px-3 py-2 rounded-2xl hover:bg-amber-50 text-[#1D1D1F] hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                      className="w-full px-3 py-2 rounded-xl hover:bg-amber-50 text-stone-700 hover:text-amber-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer text-right"
                     >
-                      <div className="w-7 h-7 rounded-xl bg-amber-100 text-[#9A6E23] flex items-center justify-center shrink-0">
+                      <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 border border-amber-200">
                         <Users size={14} />
                       </div>
                       <div className="text-right">
                         <span className="block">سجل العملاء والولاء ({previousCustomers.length})</span>
-                        <span className="text-[9.5px] text-[#86868B]">الملفات الشخصية والنقاط</span>
+                        <span className="text-[9.5px] text-stone-400">الملفات الشخصية والنقاط</span>
                       </div>
                     </button>
                   )}
@@ -2359,14 +2509,14 @@ const POS: React.FC<POSProps> = ({
                         setIsPosToolsOpen(false);
                         onNavigateToInvoices();
                       }}
-                      className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                      className="w-full px-3 py-2 rounded-xl hover:bg-stone-50 text-stone-700 hover:text-[#0F172A] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer text-right"
                     >
-                      <div className="w-7 h-7 rounded-xl bg-blue-100 text-[#0071E3] flex items-center justify-center shrink-0">
+                      <div className="w-7 h-7 rounded-lg bg-stone-100 text-[#0F172A] flex items-center justify-center shrink-0 border border-[#EAE4D9]">
                         <Receipt size={14} />
                       </div>
                       <div className="text-right">
                         <span className="block">سجل الفواتير والمبيعات ({salesHistory.length})</span>
-                        <span className="text-[9.5px] text-[#86868B]">مراجعة وطباعة العمليات</span>
+                        <span className="text-[9.5px] text-stone-400">مراجعة وطباعة العمليات</span>
                       </div>
                     </button>
                   )}
@@ -2379,14 +2529,14 @@ const POS: React.FC<POSProps> = ({
 
       {/* Offline Mode Reassurance Banner */}
       {!isNetworkOnline && (
-        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-bold apple-glass shadow-xs animate-in fade-in duration-200">
+        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-bold backdrop-blur-xl shadow-xs animate-in fade-in duration-200">
           <div className="flex items-center gap-2.5">
-            <WifiOff size={18} className="text-amber-700 shrink-0" />
+            <WifiOff size={18} className="text-amber-400 shrink-0" />
             <span>
               ⚡ وضع العمل دون إنترنت (Offline Mode) مفعّل: جميع عمليات البيع والتركيب تُحفظ محلياً بأمان 100% وتتم المزامنة التلقائية فور عودة الاتصال.
             </span>
           </div>
-          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-600/20 text-amber-950 font-black shrink-0 self-start sm:self-auto">
+          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-black shrink-0 self-start sm:self-auto">
             محمي ومحفوظ محلياً ✓
           </span>
         </div>
@@ -2394,23 +2544,23 @@ const POS: React.FC<POSProps> = ({
 
       {/* Restored Session Draft Banner */}
       {restoredSessionNotice && (
-        <div className="p-3.5 rounded-2xl bg-[#0071E3]/10 border border-[#0071E3]/30 text-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold apple-glass shadow-xs animate-in fade-in duration-200">
+        <div className="p-3.5 rounded-2xl bg-blue-500/15 border border-blue-500/30 text-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold backdrop-blur-xl shadow-xs animate-in fade-in duration-200">
           <div className="flex items-center gap-2.5">
-            <RotateCcw size={17} className="text-[#0071E3] shrink-0" />
+            <RotateCcw size={17} className="text-blue-400 shrink-0" />
             <span>{restoredSessionNotice}</span>
           </div>
           <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
             <button
               type="button"
               onClick={() => setRestoredSessionNotice(null)}
-              className="px-3 py-1.5 rounded-xl bg-[#0071E3] text-white hover:bg-[#0077ED] text-[11px] font-black transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-black transition-colors cursor-pointer"
             >
               متابعة العمليات
             </button>
             <button
               type="button"
               onClick={handleQuickNewSale}
-              className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-rose-100 hover:text-rose-700 text-slate-800 text-[11px] font-bold transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-900/40 hover:text-rose-300 text-slate-300 border border-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
             >
               مسح والبدء من جديد
             </button>
@@ -2420,9 +2570,9 @@ const POS: React.FC<POSProps> = ({
 
       {/* Closed Day Warning Banner */}
       {currentClosure?.status === 'مغلق' && (
-        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2.5 text-rose-900 font-medium">
-            <Lock size={18} className="text-rose-600 shrink-0" />
+        <div className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs backdrop-blur-xl">
+          <div className="flex items-center gap-2.5 font-medium">
+            <Lock size={18} className="text-rose-400 shrink-0" />
             <span>
               <strong>وردية اليوم مغلقة ومقفلة:</strong> تم إغلاق حسابات اليوم رسمياً من قبل ({currentClosure.closedBy || 'الإدارة'}). تم تجميد التعديلات لحماية الدفاتر المحاسبية.
             </span>
@@ -2430,7 +2580,7 @@ const POS: React.FC<POSProps> = ({
           {onOpenDayOperations && (
             <button
               onClick={onOpenDayOperations}
-              className="px-3 py-1.5 rounded-xl bg-rose-600 text-white font-bold text-xs shrink-0 hover:bg-rose-700 transition-colors cursor-pointer whitespace-nowrap"
+              className="px-3 py-1.5 rounded-xl bg-rose-600 text-white font-bold text-xs shrink-0 hover:bg-rose-500 transition-colors cursor-pointer whitespace-nowrap"
             >
               عرض محضر الإغلاق / إعادة فتح
             </button>
@@ -2459,6 +2609,7 @@ const POS: React.FC<POSProps> = ({
           setShowShortagesModal(true);
         }}
         onOpenSmartSearch={() => setShowSmartSearchModal(true)}
+        onOpenPromotionalCalculator={() => setShowPromotionalCalculatorModal(true)}
         onOpenStaffEntitlements={() => onNavigate?.(View.STAFF_ENTITLEMENTS)}
       />
 
@@ -2509,30 +2660,30 @@ const POS: React.FC<POSProps> = ({
           {/* ======================================================== */}
           {/* UNIFIED COMPOSITION MODE & LIBRARY DOCK                  */}
           {/* ======================================================== */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-white border border-slate-200/90 shadow-2xs">
-            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200/60">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-white border border-[#EAE4D9] shadow-xs">
+            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#FAF7F2] border border-[#EAE4D9]">
               <button
                 type="button"
                 onClick={() => setCompositionMode('single')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                   compositionMode === 'single'
-                    ? 'bg-slate-900 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#0F172A] text-white shadow-xs'
+                    : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
-                <Sparkles size={13} className={compositionMode === 'single' ? 'text-amber-300' : 'text-slate-400'} />
+                <Sparkles size={13} className={compositionMode === 'single' ? 'text-amber-400' : 'text-stone-400'} />
                 <span>كتالوج العطور الفردية</span>
               </button>
               <button
                 type="button"
                 onClick={() => setCompositionMode('mix')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                   compositionMode === 'mix'
-                    ? 'bg-[#0071E3] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-[#0071E3]'
+                    ? 'bg-[#0F172A] text-white shadow-xs'
+                    : 'text-stone-600 hover:text-amber-800'
                 }`}
               >
-                <Beaker size={13} />
+                <Beaker size={13} className={compositionMode === 'mix' ? 'text-amber-400' : 'text-stone-400'} />
                 <span>استوديو الميكس الذكي (زجاجة مركبة)</span>
               </button>
             </div>
@@ -2545,10 +2696,10 @@ const POS: React.FC<POSProps> = ({
                     setCompositionMode('mix');
                     setShowSavedMixesDrawer(prev => !prev);
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     showSavedMixesDrawer
-                      ? 'bg-[#C49746] text-white border-[#C49746]'
-                      : 'bg-amber-50/70 hover:bg-amber-100/80 text-amber-900 border-amber-200/80'
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-xs'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
                   }`}
                   title="مكتبة تركيبات لمسة عطر المعتمدة"
                 >
@@ -2558,14 +2709,14 @@ const POS: React.FC<POSProps> = ({
               )}
 
               {compositionMode === 'single' && (
-                <div className="flex items-center p-0.5 rounded-xl bg-slate-100 border border-slate-200/60">
+                <div className="flex items-center p-0.5 rounded-xl bg-[#FAF7F2] border border-[#EAE4D9]">
                   <button
                     type="button"
                     onClick={() => setCatalogueViewMode('grid')}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
                       catalogueViewMode === 'grid'
-                        ? 'bg-white text-slate-900 shadow-2xs'
-                        : 'text-slate-500 hover:text-slate-900'
+                        ? 'bg-white text-[#0F172A] shadow-xs'
+                        : 'text-stone-500 hover:text-stone-900'
                     }`}
                   >
                     شبكة بطاقات
@@ -2573,10 +2724,10 @@ const POS: React.FC<POSProps> = ({
                   <button
                     type="button"
                     onClick={() => setCatalogueViewMode('table')}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
                       catalogueViewMode === 'table'
-                        ? 'bg-white text-slate-900 shadow-2xs'
-                        : 'text-slate-500 hover:text-slate-900'
+                        ? 'bg-white text-[#0F172A] shadow-xs'
+                        : 'text-stone-500 hover:text-stone-900'
                     }`}
                   >
                     جدول سريع
@@ -3771,12 +3922,27 @@ const POS: React.FC<POSProps> = ({
           {/* ======================================================== */}
           {/* UNIFIED CATALOGUE CONTROL DOCK (Fast Search + Brand + Filters + Size) */}
           {/* ======================================================== */}
-          <div className="rounded-2xl p-4 border border-slate-200/90 bg-white space-y-3.5 shadow-[0_6px_24px_rgba(15,23,42,0.04)]">
+          {/* SECTION 1: SEARCH DIVIDER */}
+          <div className="relative flex items-center justify-center my-1">
+            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+              <div className="w-full border-t border-[#EAE4D9]" />
+            </div>
+            <div className="relative flex items-center gap-1.5 px-3 py-1 bg-white rounded-full border border-[#EAE4D9] shadow-xs">
+              <span className="w-5 h-5 rounded-full bg-[#0F172A] text-white font-mono font-black text-[10px] flex items-center justify-center shrink-0">
+                1
+              </span>
+              <span className="text-xs font-black text-[#0F172A]">
+                البحث عن العطر
+              </span>
+            </div>
+          </div>
+
+          <div className="rounded-3xl p-4 sm:p-5 border border-[#EAE4D9] bg-white space-y-4 shadow-sm text-stone-800">
             {/* Row 1: Prominent Fast Search Bar (By Perfume Name or Brand Directly) */}
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-2">
-                <label className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                  <Search size={14} className="text-[#0071E3]" />
+                <label htmlFor="pos-barcode-search-input" className="text-xs font-black text-[#0F172A] flex items-center gap-1.5">
+                  <Search size={15} className="text-amber-600" />
                   <span>البحث السريع المباشر باسم العطر أو الماركة العالمية:</span>
                 </label>
                 <div className="flex items-center gap-2">
@@ -3784,20 +3950,20 @@ const POS: React.FC<POSProps> = ({
                     <button
                       type="button"
                       onClick={handleResetAndHideCatalogue}
-                      className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer"
                     >
-                      <X size={12} />
+                      <X size={13} />
                       <span>إخفاء قائمة العطور ({filteredProducts.length})</span>
                     </button>
                   ) : (
-                    <span className="text-[11px] font-bold text-slate-400">
+                    <span className="text-[11px] font-bold text-stone-400">
                       القائمة الافتراضية مخفية · ابحث أو اختر قسماً للإظهار
                     </span>
                   )}
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
                 <div className="relative flex-1">
                   <input
                     id="pos-barcode-search-input"
@@ -3815,26 +3981,26 @@ const POS: React.FC<POSProps> = ({
                         setSearchTerm('');
                       }
                     }}
-                    className="w-full h-11 pr-11 pl-24 rounded-xl bg-slate-50 focus:bg-white border-2 border-slate-200/90 focus:border-[#0071E3] text-xs sm:text-sm font-bold text-slate-900 outline-none transition-all placeholder:text-slate-400 placeholder:font-medium shadow-2xs"
+                    className="w-full h-12 pr-12 pl-24 rounded-2xl bg-[#FAF7F2] focus:bg-white border border-[#EAE4D9] focus:border-amber-500 text-xs sm:text-sm font-bold text-[#0F172A] outline-none transition-all placeholder:text-stone-400 placeholder:font-medium shadow-inner focus:ring-2 focus:ring-amber-500/20"
                   />
-                  <Search size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#0071E3]" />
-                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                  <Search size={18} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-amber-600 pointer-events-none" />
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                     {searchTerm ? (
                       <>
-                        <span className="px-2 py-0.5 rounded-md bg-[#0071E3]/10 text-[#0071E3] font-mono tabular-nums text-[10px] font-black">
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-200 font-mono tabular-nums text-[10px] font-black">
                           {filteredProducts.length} نتيجة
                         </span>
                         <button
                           type="button"
                           onClick={() => setSearchTerm('')}
-                          className="w-6 h-6 rounded-lg bg-slate-200/70 hover:bg-slate-300 text-slate-700 flex items-center justify-center cursor-pointer"
+                          className="w-7 h-7 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 hover:text-[#0F172A] flex items-center justify-center cursor-pointer transition-colors"
                           title="مسح البحث"
                         >
-                          <X size={13} />
+                          <X size={14} />
                         </button>
                       </>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-md bg-slate-200/70 text-slate-500 font-mono text-[10px] font-bold">
+                      <span className="px-2 py-0.5 rounded-lg bg-stone-100 border border-[#EAE4D9] text-stone-500 font-mono text-[10px] font-bold">
                         F2 للبحث
                       </span>
                     )}
@@ -3844,22 +4010,22 @@ const POS: React.FC<POSProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowSmartSearchModal(true)}
-                  className="h-11 px-4 rounded-xl bg-slate-900 hover:bg-[#0071E3] text-white text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 cursor-pointer transition-colors whitespace-nowrap shadow-2xs"
+                  className="h-12 px-4.5 rounded-2xl bg-[#0F172A] hover:bg-[#1E293B] text-white hover:text-amber-300 font-black text-xs flex items-center justify-center gap-2 shrink-0 cursor-pointer transition-all whitespace-nowrap shadow-sm active:scale-95 border border-slate-800"
                   title="مستشار العطور بالمناسبة والمود"
                 >
-                  <Sparkles size={14} className="text-amber-300" />
+                  <Sparkles size={15} className="text-amber-400" />
                   <span>ترشيح بالمناسبة</span>
                 </button>
               </div>
 
               {/* Instant Top Search Matches Bar (When Cashier Types in Search Input) */}
               {searchTerm.trim().length > 0 && filteredProducts.length > 0 && (
-                <div className="p-2.5 rounded-xl bg-blue-50/60 border border-[#0071E3]/25 space-y-1.5 animate-in fade-in duration-150">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 px-1">
+                <div className="p-3 rounded-2xl bg-[#FAF7F2] border border-amber-200/90 space-y-2 animate-in fade-in duration-150 shadow-xs">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-stone-700 px-1">
                     <span>⚡ وصول وإضافة فورية لأقرب النتائج المطابقة (اضغط Enter لإضافة الأول بعبوة {activeSellerBottle.sizeMl}مل):</span>
-                    <span className="font-mono text-[#0071E3] font-black">{filteredProducts.length} عطر مطابق</span>
+                    <span className="font-mono text-amber-800 font-black">{filteredProducts.length} عطر مطابق</span>
                   </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto modal-scroll-area pb-0.5">
+                  <div className="flex items-center gap-2 overflow-x-auto modal-scroll-area pb-1">
                     {filteredProducts.slice(0, 6).map((qp, idx) => {
                       const qPrice = getApprovedSellingPrice({
                         bottle: activeSellerBottle,
@@ -3869,35 +4035,35 @@ const POS: React.FC<POSProps> = ({
                       return (
                         <div
                           key={qp.id}
-                          className={`px-2.5 py-1.5 rounded-xl border flex items-center gap-2 shrink-0 transition-all ${
+                          className={`px-3 py-2 rounded-xl border flex items-center gap-2.5 shrink-0 transition-all ${
                             idx === 0
-                              ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
-                              : 'bg-white text-slate-900 border-slate-200/90 hover:border-[#0071E3]'
+                              ? 'bg-[#0F172A] text-white border-slate-800 shadow-sm font-black'
+                              : 'bg-white text-stone-800 border-[#EAE4D9] hover:border-amber-300'
                           }`}
                         >
                           <button
                             type="button"
                             onClick={(e) => handleQuickAddWithBottle(qp, activeSellerBottle, e)}
-                            className="flex items-center gap-1.5 text-right cursor-pointer"
+                            className="flex items-center gap-2 text-right cursor-pointer min-h-[38px] active:scale-95 transition-transform"
                             title={`إضافة فورية إلى الفاتورة (${activeSellerBottle.sizeMl} مل)`}
                           >
-                            <Plus size={12} className={idx === 0 ? 'text-amber-300' : 'text-[#0071E3]'} />
+                            <Plus size={14} className={idx === 0 ? 'text-amber-300' : 'text-amber-600'} />
                             <div>
-                              <div className="text-[11px] font-black leading-tight">{qp.name}</div>
-                              <div className={`text-[9.5px] ${idx === 0 ? 'text-slate-300' : 'text-slate-500'}`}>
-                                {qp.brand} · <span className="font-mono font-bold">{qPrice} ج</span> ({activeSellerBottle.sizeMl}مل)
+                              <div className="text-xs font-black leading-tight">{qp.name}</div>
+                              <div className={`text-[10px] ${idx === 0 ? 'text-stone-300 font-bold' : 'text-stone-500'}`}>
+                                {qp.brand} · <span className="font-mono font-bold">{qPrice} {settings.currency}</span> ({activeSellerBottle.sizeMl}مل)
                               </div>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleOpenConfig(qp)}
-                            className={`p-1 rounded-lg cursor-pointer ${
-                              idx === 0 ? 'bg-white/15 hover:bg-white/25 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                            className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                              idx === 0 ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
                             }`}
                             title="تخصيص الحجم والتركيز"
                           >
-                            <SlidersHorizontal size={11} />
+                            <SlidersHorizontal size={13} />
                           </button>
                         </div>
                       );
@@ -3907,9 +4073,24 @@ const POS: React.FC<POSProps> = ({
               )}
             </div>
 
+            {/* SECTION 2: FILTER & SIZE DIVIDER */}
+            <div className="relative flex items-center justify-center pt-1">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-[#EAE4D9]" />
+              </div>
+              <div className="relative flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-[#EAE4D9] shadow-xs">
+                <span className="w-5 h-5 rounded-full bg-[#0F172A] text-white font-mono font-black text-[10px] flex items-center justify-center shrink-0">
+                  2
+                </span>
+                <span className="text-xs font-black text-[#0F172A]">
+                  التصفية السريعة والحجم المعتمد
+                </span>
+              </div>
+            </div>
+
             {/* Row 2: Horizontal Category Filter Tabs + Gender Segmented Filter */}
-            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2 pt-2.5 border-t border-slate-100">
-              <div className="flex items-center gap-1 overflow-x-auto scrollbar-none pb-0.5">
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 pt-1">
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
                 {([
                   { id: 'صيفي', label: '☀️ صيفي منعش', count: sideFilterCounts.صيفي },
                   { id: 'شتوي', label: '❄️ شتوي دافئ', count: sideFilterCounts.شتوي },
@@ -3931,16 +4112,16 @@ const POS: React.FC<POSProps> = ({
                           setSelectedType('all');
                         }
                       }}
-                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                      className={`px-3.5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 min-h-[42px] active:scale-95 border ${
                         isActive
-                          ? 'bg-slate-900 text-white shadow-2xs'
-                          : 'bg-slate-100/80 hover:bg-slate-200/70 text-slate-700'
+                          ? 'bg-[#0F172A] text-white border-[#0F172A] shadow-sm'
+                          : 'bg-[#FAF7F2] hover:bg-stone-100 text-stone-700 border-[#EAE4D9]'
                       }`}
                     >
                       <span>{cat.label}</span>
                       <span
-                        className={`font-mono tabular-nums text-[10px] font-black ${
-                          isActive ? 'text-amber-300' : 'text-slate-400'
+                        className={`font-mono tabular-nums text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                          isActive ? 'bg-white/20 text-white' : 'bg-stone-200/70 text-stone-600'
                         }`}
                       >
                         {cat.count}
@@ -3960,10 +4141,10 @@ const POS: React.FC<POSProps> = ({
                       setShowAllCatalogueExplicitly(true);
                     }
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 border ${
+                  className={`px-3.5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 min-h-[42px] active:scale-95 border ${
                     showAllCatalogueExplicitly && quickSideFilter === 'all'
-                      ? 'bg-[#0071E3] text-white border-[#0071E3] shadow-2xs'
-                      : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/90'
+                      ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
+                      : 'bg-[#FAF7F2] hover:bg-stone-100 text-stone-700 border-[#EAE4D9]'
                   }`}
                 >
                   <span>عرض الكل</span>
@@ -3974,7 +4155,7 @@ const POS: React.FC<POSProps> = ({
               </div>
 
               {/* Gender Segmented Control */}
-              <div className="flex items-center gap-1 p-0.5 rounded-xl bg-slate-100 border border-slate-200/60 self-start xl:self-auto shrink-0">
+              <div className="flex items-center gap-1 p-1 rounded-2xl bg-[#FAF7F2] border border-[#EAE4D9] self-start xl:self-auto shrink-0 min-h-[42px]">
                 {([
                   { id: 'all', label: 'الكل' },
                   { id: 'رجالي', label: 'رجالي' },
@@ -3985,10 +4166,10 @@ const POS: React.FC<POSProps> = ({
                     key={g.id}
                     type="button"
                     onClick={() => setSelectedGender(selectedGender === g.id && g.id !== 'all' ? 'all' : g.id)}
-                    className={`py-1 px-2.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                    className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
                       selectedGender === g.id
-                        ? 'bg-white text-slate-900 shadow-2xs'
-                        : 'text-slate-500 hover:text-slate-900'
+                        ? 'bg-[#0F172A] text-white font-black shadow-xs'
+                        : 'text-stone-600 hover:text-[#0F172A]'
                     }`}
                   >
                     {g.label}
@@ -3999,13 +4180,13 @@ const POS: React.FC<POSProps> = ({
 
             {/* Row 2.5: Direct Brand Filter Bar (الوصول السريع بالماركة مباشرة) */}
             {topBrands.length > 0 && (
-              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pt-1">
-                <span className="text-[10px] font-black text-slate-400 shrink-0 ml-1">الماركة:</span>
+              <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pt-1">
+                <span className="text-[11px] font-black text-stone-500 shrink-0 ml-1">الماركة:</span>
                 {selectedBrand !== 'all' && (
                   <button
                     type="button"
                     onClick={() => setSelectedBrand('all')}
-                    className="px-2 py-0.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold shrink-0 cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-black shrink-0 cursor-pointer min-h-[38px] flex items-center gap-1"
                   >
                     إلغاء ({selectedBrand}) ×
                   </button>
@@ -4017,15 +4198,15 @@ const POS: React.FC<POSProps> = ({
                       key={bItem.brand}
                       type="button"
                       onClick={() => setSelectedBrand(isBrandActive ? 'all' : bItem.brand)}
-                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors shrink-0 flex items-center gap-1 cursor-pointer border ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer min-h-[38px] active:scale-95 border ${
                         isBrandActive
-                          ? 'bg-[#0071E3] text-white border-[#0071E3] shadow-2xs'
-                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
+                          ? 'bg-[#0F172A] text-white border-[#0F172A] shadow-sm font-black'
+                          : 'bg-white hover:bg-stone-50 text-stone-700 border-[#EAE4D9]'
                       }`}
                     >
                       <span>{bItem.brand}</span>
-                      <span className={`font-mono text-[9px] ${isBrandActive ? 'text-white/90' : 'text-slate-400'}`}>
-                        {bItem.count}
+                      <span className={`font-mono text-[10px] ${isBrandActive ? 'text-amber-300' : 'text-stone-400'}`}>
+                        ({bItem.count})
                       </span>
                     </button>
                   );
@@ -4034,22 +4215,22 @@ const POS: React.FC<POSProps> = ({
             )}
 
             {/* Row 3: Active Bottle Size Controller (تحديد الحجم المعتمد للإضافة الفورية) */}
-            <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-lg bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center shrink-0">
-                  <SlidersHorizontal size={13} />
+            <div className="p-3 sm:px-4 rounded-2xl bg-[#FAF7F2] border border-[#EAE4D9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 border border-amber-200 flex items-center justify-center shrink-0">
+                  <SlidersHorizontal size={15} />
                 </div>
-                <div className="flex items-center gap-1.5 flex-wrap text-xs">
-                  <span className="font-black text-slate-900">
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  <span className="font-black text-[#0F172A]">
                     الحجم النشط للإضافة بضغطة واحدة:
                   </span>
-                  <span className="font-mono tabular-nums font-bold text-[#0071E3]">
-                    {activeSellerBottle.sizeMl} مل · {activeSellerBottle.essenceGrams} جم زيت قياسي
+                  <span className="font-mono tabular-nums font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                    {activeSellerBottle.sizeMl} مل · {activeSellerBottle.essenceGrams} جم زيت
                   </span>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {bottleSizes.map((b) => {
                   const isCurrent = !isSellerCustomSizeMode && activeSellerBottle.id === b.id;
                   return (
@@ -4061,14 +4242,14 @@ const POS: React.FC<POSProps> = ({
                         setIsSellerCustomSizeMode(false);
                         setSellerActiveBottleId(b.id);
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-0.5 whitespace-nowrap ${
+                      className={`min-h-[40px] px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap active:scale-95 border ${
                         isCurrent
-                          ? 'bg-[#0071E3] text-white shadow-2xs'
-                          : 'bg-white text-slate-800 border border-slate-200/80 hover:border-[#0071E3]'
+                          ? 'bg-[#0F172A] text-white border-[#0F172A] shadow-sm'
+                          : 'bg-white text-stone-700 border-[#EAE4D9] hover:border-amber-300'
                       }`}
                     >
-                      <span className="font-mono tabular-nums font-black">{b.sizeMl}مل</span>
-                      {b.isRollOn && <span className="text-[9px] opacity-80">(رول)</span>}
+                      <span className="font-mono tabular-nums">{b.sizeMl}مل</span>
+                      {b.isRollOn && <span className="text-[10px] opacity-80">(رول)</span>}
                     </button>
                   );
                 })}
@@ -4076,10 +4257,10 @@ const POS: React.FC<POSProps> = ({
                 {/* Custom Seller ML Input */}
                 <div
                   onClick={() => setIsSellerCustomSizeMode(true)}
-                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer border ${
+                  className={`min-h-[40px] px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
                     isSellerCustomSizeMode
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-800 border-slate-200/80 hover:border-[#0071E3]'
+                      ? 'bg-[#0F172A] text-white border-[#0F172A] font-black'
+                      : 'bg-white text-stone-700 border-[#EAE4D9] hover:border-amber-300'
                   }`}
                 >
                   <span>حر:</span>
@@ -4096,16 +4277,31 @@ const POS: React.FC<POSProps> = ({
                       setIsSellerCustomSizeMode(true);
                       setSellerCustomSizeMl(Math.max(3, Number(e.target.value) || 30));
                     }}
-                    className={`w-10 h-5 rounded text-center font-mono tabular-nums text-[11px] font-black outline-none ${
+                    className={`w-12 h-6 rounded-lg text-center font-mono tabular-nums text-xs font-black outline-none ${
                       isSellerCustomSizeMode
-                        ? 'bg-white/15 text-amber-300'
-                        : 'bg-slate-100 text-[#0071E3]'
+                        ? 'bg-white/20 text-white'
+                        : 'bg-stone-100 text-[#0F172A] border border-[#EAE4D9]'
                     }`}
                     title="اكتب أي حجم عبوة بالملي يطلبه العميل"
                   />
-                  <span className="text-[9px] opacity-80">مل</span>
+                  <span className="text-[10px] opacity-80">مل</span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* SECTION 3: RESULTS DIVIDER */}
+          <div className="relative flex items-center justify-center my-1">
+            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+              <div className="w-full border-t border-[#EAE4D9]" />
+            </div>
+            <div className="relative flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-[#EAE4D9] shadow-xs">
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-mono font-black text-[10px] flex items-center justify-center shrink-0">
+                3
+              </span>
+              <span className="text-xs font-black text-[#0F172A]">
+                نتائج العطور
+              </span>
             </div>
           </div>
 
@@ -4113,17 +4309,17 @@ const POS: React.FC<POSProps> = ({
           {/* CONDITIONAL PERFUME CATALOGUE (HIDDEN BY DEFAULT UNTIL SEARCH OR FILTER) */}
           {/* ======================================================== */}
           {!isCatalogueRevealed ? (
-            <div className="rounded-2xl bg-white border border-slate-200/90 p-5 shadow-[0_6px_24px_rgba(15,23,42,0.04)] space-y-5 animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-slate-100">
+            <div className="rounded-3xl bg-white border border-[#EAE4D9] p-5 shadow-sm space-y-4 text-stone-800 animate-in fade-in duration-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-[#EAE4D9]">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-2xl bg-slate-900 text-amber-300 flex items-center justify-center shrink-0 shadow-xs">
-                    <Sparkles size={20} />
+                  <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0 shadow-xs">
+                    <Sparkles size={22} />
                   </div>
                   <div>
-                    <h3 className="text-sm sm:text-base font-black text-slate-900">
+                    <h3 className="text-sm sm:text-base font-black text-[#0F172A]">
                       بوابة الوصول السريع للأقسام والماركات العالمية
                     </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <p className="text-xs text-stone-500 mt-0.5">
                       قوائم العطور مخفية افتراضياً لراحة العين وسرعة الكاشير — ابحث بالاسم أو الماركة أعلاه أو اختر قسماً لإظهار العطور فوراً
                     </p>
                   </div>
@@ -4131,7 +4327,7 @@ const POS: React.FC<POSProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowAllCatalogueExplicitly(true)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-900 text-slate-800 hover:text-white text-xs font-bold transition-colors cursor-pointer shrink-0 self-start sm:self-auto"
+                  className="px-3.5 py-2 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] text-white hover:text-amber-300 border border-slate-800 text-xs font-black transition-all cursor-pointer shrink-0 self-start sm:self-auto shadow-sm"
                 >
                   إظهار جميع العطور ({products.length})
                 </button>
@@ -4145,48 +4341,48 @@ const POS: React.FC<POSProps> = ({
                     title: 'عطور صيفية منعشة',
                     subtitle: 'حمضيات · بحري · فواكه يومية',
                     count: sideFilterCounts.صيفي,
-                    accent: 'border-t-[#0071E3] hover:border-[#0071E3]',
-                    badgeBg: 'bg-blue-50 text-[#0071E3]',
+                    accent: 'border-t-blue-500 hover:border-blue-400',
+                    badgeBg: 'bg-blue-50 text-blue-700 border border-blue-200',
                   },
                   {
                     id: 'شتوي' as const,
                     title: 'عطور شتوية دافئة',
                     subtitle: 'عنبر · فانيليا · توابل وسهرات',
                     count: sideFilterCounts.شتوي,
-                    accent: 'border-t-indigo-600 hover:border-indigo-600',
-                    badgeBg: 'bg-indigo-50 text-indigo-700',
+                    accent: 'border-t-indigo-500 hover:border-indigo-400',
+                    badgeBg: 'bg-indigo-50 text-indigo-700 border border-indigo-200',
                   },
                   {
                     id: 'نيش' as const,
                     title: 'عطور النيش العالمية',
                     subtitle: 'كريد · باكارا · توم فورد · زيرجوف',
                     count: sideFilterCounts.نيش,
-                    accent: 'border-t-teal-600 hover:border-teal-600',
-                    badgeBg: 'bg-teal-50 text-teal-700',
+                    accent: 'border-t-teal-500 hover:border-teal-400',
+                    badgeBg: 'bg-teal-50 text-teal-700 border border-teal-200',
                   },
                   {
                     id: 'عود' as const,
                     title: 'العود والشرقي الفاخر',
                     subtitle: 'عود ملكي · كمبودي · زعفران وبخور',
                     count: sideFilterCounts.عود,
-                    accent: 'border-t-[#9A6E23] hover:border-[#9A6E23]',
-                    badgeBg: 'bg-amber-50 text-amber-900',
+                    accent: 'border-t-amber-600 hover:border-amber-500',
+                    badgeBg: 'bg-amber-50 text-amber-800 border border-amber-200',
                   },
                   {
                     id: 'مسك' as const,
                     title: 'المسك الفاخر والبيور',
                     subtitle: 'مسك الطهارة · رمان · فانيليا وبودر',
                     count: sideFilterCounts.مسك,
-                    accent: 'border-t-emerald-600 hover:border-emerald-600',
-                    badgeBg: 'bg-emerald-50 text-emerald-800',
+                    accent: 'border-t-emerald-600 hover:border-emerald-500',
+                    badgeBg: 'bg-emerald-50 text-emerald-800 border border-emerald-200',
                   },
                   {
                     id: 'فرنسي' as const,
                     title: 'الفرنسي الكلاسيكي',
                     subtitle: 'ديور · شانيل · إيف سان لوران · جوتشي',
                     count: sideFilterCounts.فرنسي,
-                    accent: 'border-t-slate-800 hover:border-slate-800',
-                    badgeBg: 'bg-slate-100 text-slate-800',
+                    accent: 'border-t-purple-600 hover:border-purple-500',
+                    badgeBg: 'bg-purple-50 text-purple-800 border border-purple-200',
                   },
                 ]).map((card) => (
                   <button
@@ -4196,25 +4392,25 @@ const POS: React.FC<POSProps> = ({
                       setQuickSideFilter(card.id);
                       setSelectedType('all');
                     }}
-                    className={`p-3.5 rounded-2xl bg-slate-50/70 hover:bg-white border border-slate-200/90 border-t-4 ${card.accent} text-right transition-all cursor-pointer flex flex-col justify-between gap-2 shadow-2xs hover:shadow-md`}
+                    className={`p-3.5 rounded-2xl bg-[#FAF7F2] hover:bg-white border border-[#EAE4D9] border-t-4 ${card.accent} text-right transition-all cursor-pointer flex flex-col justify-between gap-2 shadow-xs hover:shadow-md`}
                   >
                     <div className="flex items-start justify-between gap-2 w-full">
-                      <span className="font-black text-xs sm:text-sm text-slate-900">{card.title}</span>
+                      <span className="font-black text-xs sm:text-sm text-[#0F172A]">{card.title}</span>
                       <span className={`px-2 py-0.5 rounded-lg font-mono tabular-nums text-[11px] font-black shrink-0 ${card.badgeBg}`}>
                         {card.count} عطر
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-500">{card.subtitle}</span>
+                    <span className="text-[11px] text-stone-500">{card.subtitle}</span>
                   </button>
                 ))}
               </div>
 
               {/* Fast Brand Selector Directory */}
               {topBrands.length > 0 && (
-                <div className="pt-2 border-t border-slate-100 space-y-2">
+                <div className="pt-3 border-t border-[#EAE4D9] space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-black text-slate-800">تصفية فورية حسب الماركة العالمية:</span>
-                    <span className="text-[11px] text-slate-400">اضغط على أي ماركة لعرض عطورها</span>
+                    <span className="font-black text-[#0F172A]">تصفية فورية حسب الماركة العالمية:</span>
+                    <span className="text-[11px] text-stone-400">اضغط على أي ماركة لعرض عطورها</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {topBrands.map((bItem) => (
@@ -4222,10 +4418,10 @@ const POS: React.FC<POSProps> = ({
                         key={bItem.brand}
                         type="button"
                         onClick={() => setSelectedBrand(bItem.brand)}
-                        className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-900 text-slate-800 hover:text-white border border-slate-200/90 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-3 py-1.5 rounded-xl bg-[#FAF7F2] hover:bg-stone-100 text-stone-700 hover:text-[#0F172A] border border-[#EAE4D9] text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                       >
                         <span>{bItem.brand}</span>
-                        <span className="font-mono text-[10px] opacity-70">({bItem.count})</span>
+                        <span className="font-mono text-[10px] text-stone-400">({bItem.count})</span>
                       </button>
                     ))}
                   </div>
@@ -4235,7 +4431,7 @@ const POS: React.FC<POSProps> = ({
           ) : (
             <div className="w-full space-y-2.5 animate-in fade-in duration-150">
               {/* Active Filter Status Bar + Hide List Button */}
-              <div className="px-3.5 py-2 rounded-xl bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
+              <div className="px-3.5 py-2.5 rounded-2xl bg-[#0F172A] text-white flex flex-wrap items-center justify-between gap-2 shadow-xs">
                 <div className="flex items-center gap-2 flex-wrap text-xs">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
                   <span className="font-black">
@@ -4266,7 +4462,7 @@ const POS: React.FC<POSProps> = ({
                 <button
                   type="button"
                   onClick={handleResetAndHideCatalogue}
-                  className="px-3 py-1 rounded-lg bg-white/10 hover:bg-rose-600 text-white text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0"
+                  className="px-3 py-1 rounded-xl bg-white/10 hover:bg-rose-600 text-white text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0"
                 >
                   <X size={13} />
                   <span>إخفاء القائمة والعودة للأقسام</span>
@@ -4307,47 +4503,65 @@ const POS: React.FC<POSProps> = ({
                       ? 'border-t-indigo-600'
                       : 'border-t-[#0071E3]';
 
+                  const isExpanded = expandedCardProductId === p.id;
+
                   return (
                     <div
                       key={p.id}
-                      onClick={() => handleOpenConfig(p)}
-                      className={`group rounded-2xl bg-white border border-slate-200/90 border-t-4 ${accentBorderClass} hover:border-slate-300 p-3 flex flex-col justify-between gap-2.5 shadow-2xs transition-colors duration-150 cursor-pointer`}
+                      onClick={() => setExpandedCardProductId(prev => prev === p.id ? null : p.id)}
+                      className={`group rounded-2xl bg-white hover:bg-[#FAF7F2] border transition-all duration-200 cursor-pointer text-stone-800 flex flex-col justify-between gap-2.5 shadow-xs hover:shadow-md ${
+                        isExpanded
+                          ? 'border-amber-400 ring-2 ring-amber-400/30 shadow-md'
+                          : `border-[#EAE4D9] hover:border-amber-300 border-t-4 ${accentBorderClass}`
+                      } p-3.5`}
                     >
-                      {/* Top Section: Title, Unboxed Metadata & Active Price */}
+                      {/* Top Section: Title, Chevron Indicator, Unboxed Metadata & Active Price */}
                       <div className="space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
-                          <h3 className="font-black text-[13px] text-slate-900 group-hover:text-[#0071E3] transition-colors leading-snug line-clamp-1">
-                            {p.name}
-                          </h3>
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <ChevronDown
+                              size={15}
+                              className={`shrink-0 transition-transform duration-200 ${
+                                isExpanded ? 'rotate-180 text-amber-600' : 'text-stone-400 group-hover:text-[#0F172A]'
+                              }`}
+                            />
+                            <h3 className="font-black text-[13.5px] text-[#0F172A] group-hover:text-amber-800 transition-colors leading-snug truncate">
+                              {p.name}
+                            </h3>
+                          </div>
                           <div className="text-left shrink-0">
-                            <span className="font-mono tabular-nums text-sm font-black text-slate-900">
+                            <span className="font-mono tabular-nums text-sm sm:text-base font-black text-[#0F172A]">
                               {activeBottlePrice}{' '}
-                              <span className="text-[10px] font-semibold text-slate-500">{settings.currency}</span>
+                              <span className="text-[10px] font-semibold text-stone-500">{settings.currency}</span>
                             </span>
-                            <span className="block text-[9px] font-mono tabular-nums text-slate-400 text-left">
+                            <span className="block text-[9.5px] font-mono tabular-nums text-stone-500 text-left">
                               عبوة {activeSellerBottle.sizeMl}مل
                             </span>
                           </div>
                         </div>
 
-                        {/* Unboxed Metadata Row (Zero-Pill Discipline) */}
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 truncate">
-                          <span className="truncate font-medium text-slate-700">{p.brand}</span>
+                        {/* Unboxed Metadata Row */}
+                        <div className="flex items-center gap-1.5 text-[11px] text-stone-500 truncate">
+                          <span className="truncate font-bold text-stone-700">{p.brand}</span>
                           <span aria-hidden="true">·</span>
                           <span>{familyLabel}</span>
                           <span aria-hidden="true">·</span>
                           <span>{p.gender}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-[10px] text-amber-800 font-bold">
+                            {isExpanded ? 'اضغط للطي' : 'اضغط للتفاصيل والأسعار'}
+                          </span>
                         </div>
 
-                        {/* Stock Status Indicator (Explicit Text + Semantic Color) */}
+                        {/* Stock Status Indicator */}
                         <div className="flex items-center justify-between pt-1 text-[11px]">
-                          <span className="text-slate-400">الرصيد بالمخزون:</span>
+                          <span className="text-stone-500">الرصيد بالمخزون:</span>
                           <span
                             className={`font-mono tabular-nums font-bold ${
                               isShortage
                                 ? 'text-rose-600'
                                 : isLowStock
-                                ? 'text-amber-600'
+                                ? 'text-amber-700'
                                 : 'text-emerald-700'
                             }`}
                           >
@@ -4360,8 +4574,102 @@ const POS: React.FC<POSProps> = ({
                         </div>
                       </div>
 
+                      {/* INLINE EXPANDED DETAILS (توسيع التفاصيل والأسعار دون مغادرة الواجهة) */}
+                      {isExpanded && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="pt-2.5 pb-1 border-t border-[#EAE4D9] space-y-2.5 animate-in fade-in zoom-in-95 duration-150 text-xs text-stone-800"
+                        >
+                          {/* Stock Breakdown & Estimated Yield */}
+                          <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#EAE4D9] space-y-1.5">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="font-bold text-stone-700">الكمية والمخزون المتاح:</span>
+                              <span className="font-mono tabular-nums font-black text-amber-800">
+                                {p.stock_grams} جم زيت خام
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5 text-[10px] text-stone-600 font-mono">
+                              <div className="bg-white p-1.5 rounded-lg border border-[#EAE4D9]">
+                                الحد الحرج: <strong className="text-[#0F172A]">{p.min_threshold_grams ?? 30} جم</strong>
+                              </div>
+                              <div className="bg-white p-1.5 rounded-lg border border-[#EAE4D9]">
+                                إنتاج تقريبي: <strong className="text-emerald-700">~{Math.max(0, Math.floor(p.stock_grams / (activeSellerBottle.essenceGrams || 15)))} عبوة ({activeSellerBottle.sizeMl}مل)</strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Instant Price List Across All Bottle Sizes With 1-Click Add */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-black text-stone-700 block px-1">
+                              قائمة أسعار الأحجام مع إضافة فورية:
+                            </span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {bottleSizes.slice(0, 4).map((b) => {
+                                const bPrice = getApprovedSellingPrice({
+                                  bottle: b,
+                                  perfumeType: p.type,
+                                  isColoredBottle: false,
+                                }).price;
+                                return (
+                                  <button
+                                    key={b.id}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleQuickAddWithBottle(p, b, e);
+                                    }}
+                                    className="p-1.5 rounded-xl bg-white hover:bg-amber-50 border border-[#EAE4D9] hover:border-amber-300 flex items-center justify-between gap-1 transition-all cursor-pointer group/b active:scale-95 shadow-xs"
+                                    title={`إضافة فورية حجم ${b.sizeMl}مل`}
+                                  >
+                                    <div className="text-right">
+                                      <span className="font-bold text-[10px] text-[#0F172A] block">
+                                        {b.sizeMl}مل {b.isRollOn ? '(رول)' : ''}
+                                      </span>
+                                      <span className="text-[9px] text-stone-400">
+                                        {b.essenceGrams} جم زيت
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="font-mono text-[11px] font-black text-amber-800">
+                                        {bPrice} {settings.currency}
+                                      </span>
+                                      <Plus size={11} className="text-[#0F172A]" />
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Fast Action Buttons in Expanded Panel */}
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenConfig(p);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] text-white text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+                            >
+                              <SlidersHorizontal size={11} />
+                              <span>تخصيص كامل وتركيب</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedCardProductId(null);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl text-stone-500 hover:text-[#0F172A] text-[10px] font-bold cursor-pointer"
+                            >
+                              طي التفاصيل ×
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Bottom Section: Instant 1-Click POS Action Bar */}
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
+                      <div className="pt-2.5 border-t border-[#EAE4D9] flex items-center justify-between gap-1.5 flex-wrap sm:flex-nowrap">
                         {/* Quick 20/30/50ml 1-Click Buttons */}
                         <div className="flex items-center gap-1">
                           {quickSprayBottles.map((b) => (
@@ -4369,7 +4677,7 @@ const POS: React.FC<POSProps> = ({
                               key={b.id}
                               type="button"
                               onClick={(e) => handleQuickAddWithBottle(p, b, e)}
-                              className="px-1.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-900 text-slate-700 hover:text-white font-mono tabular-nums text-[10px] font-bold transition-colors cursor-pointer shrink-0"
+                              className="min-h-[36px] min-w-[34px] px-2 py-1 rounded-xl bg-[#FAF7F2] hover:bg-white text-stone-800 hover:text-[#0F172A] border border-[#EAE4D9] hover:border-amber-300 font-mono tabular-nums text-[11px] font-black transition-all cursor-pointer shrink-0 active:scale-95 shadow-xs"
                               title={`إضافة فورية عبوة ${b.sizeMl} مل`}
                             >
                               +{b.sizeMl}
@@ -4377,15 +4685,15 @@ const POS: React.FC<POSProps> = ({
                           ))}
                         </div>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
                           {/* Primary Active Size 1-Click Add Button */}
                           <button
                             type="button"
                             onClick={(e) => handleQuickAddWithBottle(p, activeSellerBottle, e)}
                             title={`إضافة فورية بحجم ${activeSellerBottle.sizeMl} مل`}
-                            className="px-2.5 py-1 rounded-lg bg-[#0071E3] hover:bg-[#0077ED] text-white text-[11px] font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
+                            className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] text-white hover:text-amber-300 text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap shadow-sm active:scale-95 border border-slate-800"
                           >
-                            <Plus size={12} />
+                            <Plus size={14} className="text-amber-400" />
                             <span className="font-mono tabular-nums">{activeSellerBottle.sizeMl}مل</span>
                           </button>
 
@@ -4397,10 +4705,10 @@ const POS: React.FC<POSProps> = ({
                               setCompositionMode('mix');
                               handleSelectAndAddMixPerfume(p.id);
                             }}
-                            className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-500 text-amber-800 hover:text-white transition-colors cursor-pointer shrink-0"
+                            className="min-h-[36px] min-w-[36px] p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-all cursor-pointer shrink-0 flex items-center justify-center active:scale-95"
                             title="بدء ميكس ذكي (70/30) بهذا العطر كقاعدة أساسية"
                           >
-                            <Beaker size={13} />
+                            <Beaker size={14} className="text-amber-700" />
                           </button>
 
                           {/* Full Configurator Modal Button */}
@@ -4410,10 +4718,10 @@ const POS: React.FC<POSProps> = ({
                               e.stopPropagation();
                               handleOpenConfig(p);
                             }}
-                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-900 text-slate-700 hover:text-white transition-colors cursor-pointer shrink-0"
+                            className="min-h-[36px] min-w-[36px] p-2 rounded-xl bg-white hover:bg-stone-50 text-stone-700 hover:text-[#0F172A] border border-[#EAE4D9] transition-all cursor-pointer shrink-0 flex items-center justify-center active:scale-95 shadow-xs"
                             title="تخصيص الحجم والتركيز والسعر"
                           >
-                            <SlidersHorizontal size={13} />
+                            <SlidersHorizontal size={14} />
                           </button>
                         </div>
                       </div>
@@ -4424,7 +4732,7 @@ const POS: React.FC<POSProps> = ({
             ) : (
               /* MODE B: HIGH-SPEED COMPACT POS TABLE VIEW */
               <div className="space-y-1.5">
-                <div className="hidden sm:grid sm:grid-cols-12 items-center px-3.5 py-2 rounded-xl bg-slate-100 border border-slate-200/70 text-[11px] font-black text-slate-500">
+                <div className="hidden sm:grid sm:grid-cols-12 items-center px-3.5 py-2 rounded-xl bg-white border border-[#EAE4D9] text-[11px] font-black text-stone-600 shadow-xs">
                   <div className="col-span-5">العطر · الماركة والعائلة العطرية</div>
                   <div className="col-span-3 text-center">المخزون · سعر {activeSellerBottle.sizeMl}مل</div>
                   <div className="col-span-4 text-left">إضافة فورية / ميكس / تخصيص</div>
@@ -4454,54 +4762,54 @@ const POS: React.FC<POSProps> = ({
 
                     const accentBarClass =
                       p.type === 'عود'
-                        ? 'bg-[#9A6E23]'
+                        ? 'bg-amber-600'
                         : p.type === 'مسك'
                         ? 'bg-emerald-600'
                         : p.type === 'نيش'
                         ? 'bg-teal-600'
                         : p.season === 'شتاء' || p.season === 'خريف'
                         ? 'bg-indigo-600'
-                        : 'bg-[#0071E3]';
+                        : 'bg-blue-600';
 
                     return (
                       <div
                         key={p.id}
                         onClick={() => handleOpenConfig(p)}
-                        className="group relative flex flex-col sm:grid sm:grid-cols-12 sm:items-center gap-2 sm:gap-2.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200/80 hover:border-[#0071E3]/45 transition-colors duration-150 cursor-pointer"
+                        className="group relative flex flex-col sm:grid sm:grid-cols-12 sm:items-center gap-2 sm:gap-2.5 px-3 py-2.5 rounded-2xl bg-white hover:bg-[#FAF7F2] border border-[#EAE4D9] hover:border-amber-300 transition-all duration-150 cursor-pointer text-stone-800 shadow-xs"
                       >
                         <div className="sm:col-span-5 flex items-center gap-2.5 min-w-0">
-                          <div className={`w-1 h-8 rounded-full shrink-0 ${accentBarClass}`} />
-                          <span className="font-mono tabular-nums text-[10px] text-slate-400 w-5 shrink-0 hidden xl:inline-block">
+                          <div className={`w-1.5 h-8 rounded-full shrink-0 ${accentBarClass}`} />
+                          <span className="font-mono tabular-nums text-[10px] text-stone-400 w-5 shrink-0 hidden xl:inline-block">
                             {String(idx + 1).padStart(2, '0')}
                           </span>
                           <div className="min-w-0 flex-1">
-                            <h3 className="font-bold text-xs sm:text-[13px] text-slate-900 group-hover:text-[#0071E3] transition-colors truncate leading-snug">
+                            <h3 className="font-bold text-xs sm:text-[13px] text-[#0F172A] group-hover:text-amber-800 transition-colors truncate leading-snug">
                               {p.name}
                             </h3>
-                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 truncate mt-0.5">
+                            <div className="flex items-center gap-1.5 text-[10px] text-stone-500 truncate mt-0.5">
                               <span className="truncate">{p.brand}</span>
                               <span aria-hidden="true">·</span>
-                              <span className="text-slate-700 font-medium">{familyLabel}</span>
+                              <span className="text-stone-700 font-medium">{familyLabel}</span>
                               <span aria-hidden="true">·</span>
                               <span>{p.gender}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="sm:col-span-3 flex items-center justify-between sm:justify-center gap-3 pt-1.5 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                        <div className="sm:col-span-3 flex items-center justify-between sm:justify-center gap-3 pt-1.5 sm:pt-0 border-t sm:border-t-0 border-[#EAE4D9]">
                           <span
                             className={`font-mono tabular-nums text-[11px] font-bold ${
-                              isShortage ? 'text-rose-600' : isLowStock ? 'text-amber-600' : 'text-slate-600'
+                              isShortage ? 'text-rose-600' : isLowStock ? 'text-amber-700' : 'text-emerald-700'
                             }`}
                           >
                             {p.stock_grams === 0 ? 'نفد' : `${p.stock_grams} جم`}
                           </span>
 
-                          <span aria-hidden="true" className="text-slate-300 hidden sm:inline">|</span>
+                          <span aria-hidden="true" className="text-stone-300 hidden sm:inline">|</span>
 
                           <div className="text-left sm:text-center">
-                            <span className="font-mono tabular-nums text-xs font-black text-slate-900">
-                              {activeBottlePrice} <span className="text-[10px] font-normal text-slate-500">ج</span>
+                            <span className="font-mono tabular-nums text-xs font-black text-[#0F172A]">
+                              {activeBottlePrice} <span className="text-[10px] font-normal text-stone-500">ج</span>
                             </span>
                           </div>
                         </div>
@@ -4513,7 +4821,7 @@ const POS: React.FC<POSProps> = ({
                                 key={b.id}
                                 type="button"
                                 onClick={(e) => handleQuickAddWithBottle(p, b, e)}
-                                className="px-1.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-900 text-slate-700 hover:text-white font-mono tabular-nums text-[10px] font-bold transition-colors cursor-pointer shrink-0"
+                                className="px-1.5 py-1 rounded-lg bg-[#FAF7F2] hover:bg-white text-stone-700 hover:text-[#0F172A] border border-[#EAE4D9] font-mono tabular-nums text-[10px] font-bold transition-colors cursor-pointer shrink-0"
                                 title={`إضافة سريعة عبوة ${b.sizeMl} مل`}
                               >
                                 +{b.sizeMl}
@@ -4525,9 +4833,9 @@ const POS: React.FC<POSProps> = ({
                             type="button"
                             onClick={(e) => handleQuickAddWithBottle(p, activeSellerBottle, e)}
                             title={`إضافة فورية بحجم ${activeSellerBottle.sizeMl} مل`}
-                            className="px-2.5 py-1.5 rounded-lg bg-[#0071E3] hover:bg-[#0077ED] text-white text-[11px] font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0"
+                            className="px-2.5 py-1.5 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] text-white hover:text-amber-300 text-[11px] font-black transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-xs border border-slate-800"
                           >
-                            <Plus size={12} />
+                            <Plus size={12} className="text-amber-400" />
                             <span className="font-mono tabular-nums">{activeSellerBottle.sizeMl}مل</span>
                           </button>
 
@@ -4538,10 +4846,10 @@ const POS: React.FC<POSProps> = ({
                               setCompositionMode('mix');
                               handleSelectAndAddMixPerfume(p.id);
                             }}
-                            className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-500 text-amber-800 hover:text-white transition-colors cursor-pointer shrink-0"
+                            className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-colors cursor-pointer shrink-0"
                             title="بدء ميكس ذكي بهذا العطر"
                           >
-                            <Beaker size={13} />
+                            <Beaker size={13} className="text-amber-700" />
                           </button>
 
                           <button
@@ -4550,7 +4858,7 @@ const POS: React.FC<POSProps> = ({
                               e.stopPropagation();
                               handleOpenConfig(p);
                             }}
-                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-900 text-slate-700 hover:text-white transition-colors cursor-pointer shrink-0"
+                            className="p-1.5 rounded-lg bg-white hover:bg-stone-50 text-stone-700 hover:text-[#0F172A] border border-[#EAE4D9] transition-colors cursor-pointer shrink-0 shadow-xs"
                             title="تخصيص الحجم والتركيز والسعر"
                           >
                             <SlidersHorizontal size={13} />
@@ -4564,9 +4872,9 @@ const POS: React.FC<POSProps> = ({
             )}
 
             {filteredProducts.length === 0 && (
-              <div className="py-12 text-center text-slate-500 space-y-2 rounded-2xl bg-white border border-slate-200/80">
-                <Search size={28} className="mx-auto text-slate-300" />
-                <p className="text-xs font-bold text-slate-900">لا توجد عطور مطابقة لهذا التصنيف أو البحث</p>
+              <div className="py-12 text-center text-stone-500 space-y-2 rounded-3xl bg-white border border-[#EAE4D9] shadow-xs">
+                <Search size={28} className="mx-auto text-stone-400" />
+                <p className="text-xs font-bold text-[#0F172A]">لا توجد عطور مطابقة لهذا التصنيف أو البحث</p>
                 <div className="flex items-center justify-center gap-2 pt-1">
                   <button
                     type="button"
@@ -4577,14 +4885,14 @@ const POS: React.FC<POSProps> = ({
                       setSearchTerm('');
                       setShowAllCatalogueExplicitly(true);
                     }}
-                    className="px-3.5 py-1.5 rounded-xl bg-[#0071E3] text-white text-xs font-bold cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-xl bg-[#0F172A] text-white text-xs font-bold cursor-pointer"
                   >
                     إظهار جميع العطور ({products.length})
                   </button>
                   <button
                     type="button"
                     onClick={handleResetAndHideCatalogue}
-                    className="px-3.5 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-xl bg-stone-100 text-stone-700 text-xs font-bold cursor-pointer hover:bg-stone-200"
                   >
                     العودة لبوابة الأقسام
                   </button>
@@ -4600,24 +4908,38 @@ const POS: React.FC<POSProps> = ({
         {/* ======================================================== */}
         {/* RIGHT COLUMN: EXECUTIVE POS BILLING & CRM TERMINAL (5 cols) */}
         {/* ======================================================== */}
-        <div className="lg:col-span-5 space-y-3.5">
+        <div className="lg:col-span-5 space-y-2">
+          {/* SECTION 4: INVOICE & CHECKOUT TERMINAL DIVIDER */}
+          <div className="relative flex items-center justify-center my-1">
+            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+              <div className="w-full border-t border-[#EAE4D9]" />
+            </div>
+            <div className="relative flex items-center gap-1.5 px-3 py-1 bg-white rounded-full border border-[#EAE4D9] shadow-xs">
+              <span className="w-5 h-5 rounded-full bg-[#0F172A] text-white font-mono font-black text-[10px] flex items-center justify-center shrink-0">
+                4
+              </span>
+              <span className="text-xs font-black text-[#0F172A]">
+                الفاتورة والدفع
+              </span>
+            </div>
+          </div>
           <div
             id="pos-cart-panel"
-            className="rounded-2xl border border-slate-200/90 bg-white shadow-[0_8px_30px_rgb(0,0,0,0.06)] overflow-hidden sticky top-3 flex flex-col"
+            className="rounded-3xl border border-white/10 bg-slate-900/90 backdrop-blur-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] overflow-hidden sticky top-4 flex flex-col text-slate-100 ring-1 ring-white/5"
           >
-            {/* 1. Executive Terminal Header (Dark Slate Command Strip) */}
-            <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between gap-2 border-b border-slate-800">
+            {/* 1. Executive Terminal Header (Obsidian Sapphire Command Strip) */}
+            <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 text-white px-4 py-3.5 flex items-center justify-between gap-2 border-b border-white/10 relative">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-[#0071E3] text-white flex items-center justify-center shrink-0 shadow-xs">
-                  <Receipt size={16} />
+                <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(37,99,235,0.5)] border border-blue-400/40">
+                  <Receipt size={17} />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-xs sm:text-sm font-black tracking-tight text-white truncate">
+                    <h2 className="text-xs sm:text-sm font-black tracking-tight text-white truncate drop-shadow-xs">
                       محطة الفاتورة والدفع الفوري
                     </h2>
                     {cart.length > 0 && (
-                      <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-mono tabular-nums text-[10px] font-bold">
+                      <span className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-mono tabular-nums text-[10px] font-black">
                         {cartTotalBottles} عبوة · {cartTotalGrams} جم
                       </span>
                     )}
@@ -4630,36 +4952,60 @@ const POS: React.FC<POSProps> = ({
                 </div>
               </div>
 
-              {cart.length > 0 && (
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setCart([])}
-                  className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0"
-                  title="تفريغ الفاتورة بالكامل"
+                  onClick={() => setShowPromotionalCalculatorModal(true)}
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-black transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                  title="حاسبة العروض والخصومات الذكية"
                 >
-                  <Trash2 size={11} />
-                  <span>تفريغ</span>
+                  <Sparkles size={11} className="text-amber-400" />
+                  <span className="hidden sm:inline">حاسبة العروض</span>
                 </button>
-              )}
+
+                {cart.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleOpenQuickInvoicePreview}
+                      className="px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-400/40 text-[10px] font-black transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                      title="معاينة الفاتورة الحرارية في نافذة مستقلة ذكية"
+                    >
+                      <Eye size={11} className="text-blue-300" />
+                      <span className="hidden sm:inline">معاينة</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCart([])}
+                      className="px-2 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                      title="تفريغ الفاتورة بالكامل"
+                    >
+                      <Trash2 size={11} />
+                      <span className="hidden md:inline">تفريغ</span>
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* 2. Integrated Customer CRM & VIP Loyalty Points Dock */}
             <div
               ref={customerSectionRef}
-              className={`px-3.5 py-2.5 bg-slate-50/90 border-b border-slate-200/80 space-y-2 transition-colors ${
-                isCustomerFieldsPulsing ? 'ring-2 ring-inset ring-[#0071E3] bg-blue-50/40' : ''
+              className={`px-3.5 py-2.5 bg-slate-950/60 border-b border-white/5 space-y-2 transition-colors ${
+                isCustomerFieldsPulsing ? 'ring-2 ring-inset ring-blue-500 bg-blue-950/30' : ''
               }`}
             >
               <div className="flex items-center justify-between gap-2 text-[10px]">
-                <span className="font-black text-slate-800 flex items-center gap-1.5">
-                  <User size={12} className="text-[#0071E3]" />
+                <span className="font-black text-slate-300 flex items-center gap-1.5">
+                  <User size={12} className="text-blue-400" />
                   <span>بيانات العميل وولاء النقاط (CRM):</span>
                 </span>
 
                 <div className="flex items-center gap-2">
                   {currentCustomerLoyaltyInfo && !currentCustomerLoyaltyInfo.isNewCustomer && (
-                    <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200/80 font-bold text-[10px] flex items-center gap-1">
-                      <Crown size={10} className="text-amber-600" />
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-[10px] flex items-center gap-1">
+                      <Crown size={10} className="text-amber-400" />
                       <span>
                         {currentCustomerLoyaltyInfo.tier} · {currentCustomerLoyaltyInfo.netAvailablePoints} نقطة
                       </span>
@@ -4674,7 +5020,7 @@ const POS: React.FC<POSProps> = ({
                         setCustomerPhone('');
                         setRedeemedLoyaltyPoints(0);
                       }}
-                      className="text-[10px] text-slate-400 hover:text-rose-600 font-bold cursor-pointer"
+                      className="text-[10px] text-slate-400 hover:text-rose-400 font-bold cursor-pointer"
                     >
                       مسح
                     </button>
@@ -4696,7 +5042,7 @@ const POS: React.FC<POSProps> = ({
                       customerPhoneInputRef.current?.focus();
                     }
                   }}
-                  className="w-full h-8 px-2.5 rounded-lg bg-white border border-slate-200/90 focus:border-[#0071E3] text-xs font-bold text-slate-900 outline-none transition-colors"
+                  className="w-full h-8 px-2.5 rounded-xl bg-slate-900/90 border border-white/10 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-xs font-bold text-white placeholder:text-slate-500 outline-none transition-all"
                 />
 
                 <div className="relative">
@@ -4712,11 +5058,11 @@ const POS: React.FC<POSProps> = ({
                         setIsCustomerFieldsPulsing(false);
                       }
                     }}
-                    className="w-full h-8 px-2.5 rounded-lg bg-white border border-slate-200/90 focus:border-[#0071E3] text-xs font-mono tabular-nums font-bold text-slate-900 outline-none transition-colors"
+                    className="w-full h-8 px-2.5 rounded-xl bg-slate-900/90 border border-white/10 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-xs font-mono tabular-nums font-bold text-white placeholder:text-slate-500 outline-none transition-all"
                     dir="ltr"
                   />
                   {showSuggestions && phoneSuggestions.length > 0 && (
-                    <div className="absolute top-9 right-0 left-0 z-30 bg-white rounded-xl shadow-lg border border-slate-200 p-1 space-y-0.5">
+                    <div className="absolute top-9 right-0 left-0 z-30 bg-slate-900/95 backdrop-blur-xl rounded-xl shadow-2xl border border-white/15 p-1 space-y-0.5 text-slate-100">
                       {phoneSuggestions.map((s, idx) => (
                         <button
                           key={idx}
@@ -4725,10 +5071,10 @@ const POS: React.FC<POSProps> = ({
                             handleSelectCustomer(s);
                             setIsCustomerFieldsPulsing(false);
                           }}
-                          className="w-full p-1.5 rounded-lg text-right hover:bg-slate-100 text-[11px] flex items-center justify-between gap-1 cursor-pointer"
+                          className="w-full p-1.5 rounded-lg text-right hover:bg-slate-800 text-[11px] flex items-center justify-between gap-1 cursor-pointer"
                         >
-                          <span className="font-bold text-slate-900 truncate">{s.name}</span>
-                          <span className="font-mono tabular-nums text-slate-500 text-[10px]">{s.phone}</span>
+                          <span className="font-bold text-white truncate">{s.name}</span>
+                          <span className="font-mono tabular-nums text-slate-400 text-[10px]">{s.phone}</span>
                         </button>
                       ))}
                     </div>
@@ -4751,10 +5097,10 @@ const POS: React.FC<POSProps> = ({
                           handleSelectCustomer(c);
                           setIsCustomerFieldsPulsing(false);
                         }}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 border transition-colors flex items-center gap-1 cursor-pointer ${
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold shrink-0 border transition-all flex items-center gap-1 cursor-pointer ${
                           isSelected
-                            ? 'bg-slate-900 text-amber-300 border-slate-900'
-                            : 'bg-white text-slate-700 border-slate-200/80 hover:border-[#0071E3]'
+                            ? 'bg-blue-600 text-white border-blue-400 shadow-xs'
+                            : 'bg-slate-900 text-slate-300 border-white/10 hover:border-blue-400'
                         }`}
                       >
                         <span>{c.name}</span>
@@ -4764,12 +5110,12 @@ const POS: React.FC<POSProps> = ({
                 </div>
               )}
 
-              {/* Instant 1-Click VIP Loyalty Points Redemption Strip (If eligible) */}
+              {/* Instant 1-Click VIP Loyalty Points Redemption Strip */}
               {currentCustomerLoyaltyInfo && currentCustomerLoyaltyInfo.netAvailablePoints > 0 && cart.length > 0 && (
-                <div className="pt-1 flex items-center justify-between gap-2 border-t border-slate-200/60 text-[10px]">
-                  <span className="text-slate-600 font-medium">
+                <div className="pt-1 flex items-center justify-between gap-2 border-t border-white/10 text-[10px]">
+                  <span className="text-slate-300 font-medium">
                     رصيد مكافآت العميل:{' '}
-                    <strong className="font-mono tabular-nums text-amber-800">
+                    <strong className="font-mono tabular-nums text-amber-300">
                       {currentCustomerLoyaltyInfo.netAvailablePoints} نقطة ({currentCustomerLoyaltyInfo.cashValueAvailable} ج)
                     </strong>
                   </span>
@@ -4777,7 +5123,7 @@ const POS: React.FC<POSProps> = ({
                     <button
                       type="button"
                       onClick={() => setRedeemedLoyaltyPoints(0)}
-                      className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 font-bold hover:bg-rose-200 transition-colors cursor-pointer"
+                      className="px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 font-bold hover:bg-rose-500/30 border border-rose-500/30 transition-colors cursor-pointer"
                     >
                       إلغاء استبدال النقاط (-{loyaltyDiscountAmount} ج)
                     </button>
@@ -4786,7 +5132,7 @@ const POS: React.FC<POSProps> = ({
                       <button
                         type="button"
                         onClick={() => handleOneClickLoyaltyRedeem()}
-                        className="px-2 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-white font-bold transition-colors cursor-pointer"
+                        className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-xs transition-colors cursor-pointer"
                       >
                         تطبيق خصم الولاء (-{optimalLoyaltyRedemption.cashDiscount} ج)
                       </button>
@@ -4799,17 +5145,17 @@ const POS: React.FC<POSProps> = ({
             {/* 3. Active Invoice Line Items List */}
             <div className="p-3.5 space-y-3">
               {cart.length === 0 ? (
-                <div className="py-7 px-4 text-center text-slate-500 space-y-3 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-                  <div className="w-11 h-11 rounded-2xl bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center mx-auto">
-                    <ShoppingBag size={22} />
+                <div className="py-8 px-4 text-center text-slate-400 space-y-3 border border-dashed border-white/10 rounded-2xl bg-slate-950/40">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center mx-auto shadow-xs">
+                    <ShoppingBag size={24} />
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs sm:text-sm font-black text-slate-900">
+                    <p className="text-xs sm:text-sm font-black text-white">
                       سلة الفاتورة جاهزة لاستقبال الأصناف
                     </p>
-                    <p className="text-[11px] text-slate-500 max-w-xs mx-auto leading-relaxed">
+                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto leading-relaxed">
                       اضغط على أي حجم عبوة مباشرة داخل بطاقة العطر للإضافة الفورية، أو استخدم زر{' '}
-                      <strong className="text-slate-800">«تخصيص»</strong> لتعديل التركيز والسعر.
+                      <strong className="text-amber-300">«تخصيص»</strong> لتعديل التركيز والسعر.
                     </p>
                   </div>
 
@@ -4817,44 +5163,44 @@ const POS: React.FC<POSProps> = ({
                     <button
                       type="button"
                       onClick={() => searchInputRef.current?.focus()}
-                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-200/90 hover:border-[#0071E3] text-slate-800 text-[11px] font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 text-[11px] font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                     >
-                      <Search size={12} className="text-[#0071E3]" />
+                      <Search size={12} className="text-blue-400" />
                       <span>بحث سريع (F2)</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowSmartSearchModal(true)}
-                      className="px-3 py-1.5 rounded-xl bg-[#0071E3]/10 hover:bg-[#0071E3] text-[#0071E3] hover:text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
-                      <Sparkles size={12} />
+                      <Sparkles size={12} className="text-amber-400" />
                       <span>ترشيح ذكي للعميل</span>
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-[290px] overflow-y-auto pr-0.5">
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-0.5">
                   {cart.map((item, idx) => {
                     const lineTotal = item.sellingPrice * (item.quantity || 1);
                     return (
                       <div
                         key={item.cartItemId}
-                        className="p-2.5 rounded-xl bg-slate-50/70 hover:bg-slate-50 border border-slate-200/80 transition-colors space-y-2"
+                        className="p-2.5 rounded-2xl bg-slate-950/60 hover:bg-slate-950/80 border border-white/10 transition-colors space-y-2 text-slate-100"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono tabular-nums text-[10px] font-bold text-slate-400">
+                              <span className="font-mono tabular-nums text-[10px] font-bold text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
                                 #{idx + 1}
                               </span>
-                              <h4 className="font-bold text-xs text-slate-900 truncate">{item.productName}</h4>
+                              <h4 className="font-bold text-xs text-white truncate">{item.productName}</h4>
                               {item.isMix && (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-black text-[9px] border border-amber-200">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-black text-[9px] border border-amber-500/30">
                                   🧪 ميكس
                                 </span>
                               )}
                               {item.isColoredBottle && (
-                                <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-900 font-bold text-[9px]">
+                                <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold text-[9px] border border-purple-500/30">
                                   ملونة
                                 </span>
                               )}
@@ -4865,14 +5211,14 @@ const POS: React.FC<POSProps> = ({
                                 {item.mixComponents.map((c, ci) => (
                                   <span
                                     key={ci}
-                                    className="bg-amber-50 text-amber-950 px-1.5 py-0.5 rounded text-[9px] font-mono tabular-nums border border-amber-200/80"
+                                    className="bg-amber-950/40 text-amber-300 px-1.5 py-0.5 rounded text-[9px] font-mono tabular-nums border border-amber-500/30"
                                   >
                                     {c.productName}: {c.grams}جم ({c.percentage}%)
                                   </span>
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-[10px] text-slate-500 block mt-0.5">
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
                                 {item.brand} · {item.productType}
                               </span>
                             )}
@@ -4880,15 +5226,15 @@ const POS: React.FC<POSProps> = ({
 
                           <div className="flex items-center gap-1.5 shrink-0">
                             <div className="text-left">
-                              <span className="font-mono tabular-nums font-black text-xs sm:text-sm text-slate-900 block">
+                              <span className="font-mono tabular-nums font-black text-xs sm:text-sm text-white block">
                                 {lineTotal.toLocaleString('ar-EG')}{' '}
-                                <span className="text-[10px] font-normal text-slate-500">{settings.currency}</span>
+                                <span className="text-[10px] font-normal text-slate-400">{settings.currency}</span>
                               </span>
                             </div>
                             <button
                               type="button"
                               onClick={() => handleRemoveFromCart(item.cartItemId)}
-                              className="w-6 h-6 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer"
+                              className="w-6 h-6 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/20 flex items-center justify-center transition-colors cursor-pointer"
                               title="حذف الصنف من الفاتورة"
                             >
                               <X size={14} />
@@ -4897,23 +5243,23 @@ const POS: React.FC<POSProps> = ({
                         </div>
 
                         {/* Quantity Stepper & Inline Bottle Size Switcher */}
-                        <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/60 text-[10px] gap-2">
-                          <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-lg p-0.5 shrink-0">
+                        <div className="flex items-center justify-between pt-1.5 border-t border-white/5 text-[10px] gap-2">
+                          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl p-0.5 shrink-0">
                             <button
                               type="button"
                               onClick={() => handleUpdateItemQuantity(item.cartItemId, (item.quantity || 1) - 1)}
-                              className="w-5 h-5 rounded flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                              className="w-5 h-5 rounded-lg flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
                               title="تقليل الكمية"
                             >
                               <Minus size={10} />
                             </button>
-                            <span className="font-mono tabular-nums font-black text-xs px-1.5 min-w-5 text-center text-slate-900">
+                            <span className="font-mono tabular-nums font-black text-xs px-1.5 min-w-5 text-center text-white">
                               {item.quantity || 1}
                             </span>
                             <button
                               type="button"
                               onClick={() => handleUpdateItemQuantity(item.cartItemId, (item.quantity || 1) + 1)}
-                              className="w-5 h-5 rounded flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                              className="w-5 h-5 rounded-lg flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
                               title="زيادة الكمية"
                             >
                               <Plus size={10} />
@@ -4921,7 +5267,7 @@ const POS: React.FC<POSProps> = ({
                           </div>
 
                           {item.isMix ? (
-                            <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-800 text-[10px] font-bold font-mono tabular-nums border border-amber-200/60">
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-300 text-[10px] font-bold font-mono tabular-nums border border-amber-500/30">
                               زجاجة {item.bottleSize}مل
                             </span>
                           ) : (
@@ -4931,10 +5277,10 @@ const POS: React.FC<POSProps> = ({
                                   key={b.id}
                                   type="button"
                                   onClick={() => handleChangeCartItemBottle(item.cartItemId, b)}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono tabular-nums transition-colors shrink-0 cursor-pointer ${
+                                  className={`px-1.5 py-0.5 rounded-lg text-[10px] font-mono tabular-nums transition-all shrink-0 cursor-pointer ${
                                     item.bottleSize === b.sizeMl
-                                      ? 'bg-slate-900 text-white font-bold'
-                                      : 'bg-white border border-slate-200/70 text-slate-600 hover:text-slate-900'
+                                      ? 'bg-blue-600 text-white font-black shadow-xs'
+                                      : 'bg-slate-900 border border-white/10 text-slate-400 hover:text-white'
                                   }`}
                                 >
                                   {b.sizeMl}مل
@@ -4943,7 +5289,7 @@ const POS: React.FC<POSProps> = ({
                             </div>
                           )}
 
-                          <span className="text-slate-500 font-mono tabular-nums font-bold text-[10px] shrink-0">
+                          <span className="text-slate-400 font-mono tabular-nums font-bold text-[10px] shrink-0">
                             {item.essenceGrams * (item.quantity || 1)} جم زيت
                           </span>
                         </div>
@@ -4954,18 +5300,18 @@ const POS: React.FC<POSProps> = ({
               )}
 
               {/* 4. Quick Add-Ons & Payment Controls */}
-              <div className="pt-2 border-t border-slate-200/80 space-y-2.5">
+              <div className="pt-2 border-t border-white/10 space-y-2.5">
                 {/* Packaging & Invoice Discount Quick Toggles */}
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
                     type="button"
                     onClick={() => setActiveCartDrawer(activeCartDrawer === 'packaging' ? 'none' : 'packaging')}
-                    className={`py-1.5 px-2.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                    className={`py-1.5 px-2.5 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                       activeCartDrawer === 'packaging'
-                        ? 'bg-slate-900 text-white border-slate-900'
+                        ? 'bg-blue-600 text-white border-blue-500 shadow-xs'
                         : packagingId !== DEFAULT_PACKAGING_OPTIONS[0].id
-                        ? 'bg-amber-50 text-amber-900 border-amber-300'
-                        : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-slate-950/70 text-slate-300 border-white/10 hover:bg-slate-900'
                     }`}
                   >
                     <span>🎁 التغليف ({selectedPackaging.type === 'basic' ? 'أساسي' : selectedPackaging.name})</span>
@@ -4974,29 +5320,32 @@ const POS: React.FC<POSProps> = ({
                   <button
                     type="button"
                     onClick={() => setActiveCartDrawer(activeCartDrawer === 'discount' ? 'none' : 'discount')}
-                    className={`py-1.5 px-2.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                    className={`py-2 px-3 rounded-2xl text-xs font-black border transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm ${
                       activeCartDrawer === 'discount'
-                        ? 'bg-slate-900 text-white border-slate-900'
+                        ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.35)]'
                         : totalAppliedDiscount > 0
-                        ? 'bg-rose-50 text-rose-700 border-rose-300'
-                        : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100'
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                        : 'bg-slate-950/70 text-slate-200 border-white/10 hover:bg-slate-900'
                     }`}
                   >
-                    <span>🏷️ خصم الفاتورة {totalAppliedDiscount > 0 ? `(-${totalAppliedDiscount} ج)` : ''}</span>
+                    <Percent size={13} className={activeCartDrawer === 'discount' ? 'text-slate-950' : 'text-amber-400'} />
+                    <span>
+                      حاسبة الخصومات الذكية {totalAppliedDiscount > 0 ? `(-${totalAppliedDiscount} ${settings.currency})` : ''}
+                    </span>
                   </button>
                 </div>
 
                 {/* Expandable Packaging Drawer */}
                 {activeCartDrawer === 'packaging' && (
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2 text-xs animate-in fade-in duration-150">
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-white/10 space-y-2 text-xs animate-in fade-in duration-150">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 text-[11px]">
+                      <span className="font-bold text-white text-[11px]">
                         خيارات التغليف والهدايا ({selectedPackaging.name}):
                       </span>
                       <button
                         type="button"
                         onClick={() => setActiveCartDrawer('none')}
-                        className="text-[10px] text-[#0071E3] font-bold cursor-pointer"
+                        className="text-[10px] text-blue-400 font-bold cursor-pointer"
                       >
                         إغلاق
                       </button>
@@ -5007,16 +5356,16 @@ const POS: React.FC<POSProps> = ({
                           key={pkg.id}
                           type="button"
                           onClick={() => setPackagingId(pkg.id)}
-                          className={`p-2 rounded-lg text-[10px] font-bold transition-colors text-right border cursor-pointer flex items-center justify-between gap-1 ${
+                          className={`p-2 rounded-xl text-[10px] font-bold transition-all text-right border cursor-pointer flex items-center justify-between gap-1 ${
                             packagingId === pkg.id
-                              ? 'bg-slate-900 text-white border-slate-900'
-                              : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900'
+                              ? 'bg-blue-600 text-white border-blue-500'
+                              : 'bg-slate-900 text-slate-300 border-white/10 hover:text-white'
                           }`}
                         >
                           <span className="truncate">{pkg.name}</span>
                           <span
                             className={`font-mono tabular-nums text-[9px] shrink-0 px-1.5 py-0.5 rounded ${
-                              packagingId === pkg.id ? 'bg-white/20 text-amber-300' : 'bg-slate-100 text-slate-800'
+                              packagingId === pkg.id ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-400'
                             }`}
                           >
                             {pkg.type === 'basic' ? 'مشمول' : `${pkg.price} ج`}
@@ -5025,13 +5374,13 @@ const POS: React.FC<POSProps> = ({
                       ))}
                     </div>
                     {selectedPackaging.type === 'luxury' && (
-                      <div className="flex items-center justify-between bg-white p-2 rounded-lg text-[10px] border border-slate-200/70">
-                        <span className="font-bold text-slate-800">حالة التغليف الفاخر:</span>
+                      <div className="flex items-center justify-between bg-slate-900 p-2 rounded-xl text-[10px] border border-white/10">
+                        <span className="font-bold text-slate-200">حالة التغليف الفاخر:</span>
                         <button
                           type="button"
                           onClick={() => setIsPackagingPaid(!isPackagingPaid)}
-                          className={`px-2.5 py-1 rounded-md font-bold transition-colors cursor-pointer ${
-                            isPackagingPaid ? 'bg-emerald-600 text-white' : 'bg-amber-100 text-amber-900'
+                          className={`px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer ${
+                            isPackagingPaid ? 'bg-emerald-600 text-white' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                           }`}
                         >
                           {isPackagingPaid ? `مباع للعميل (+${selectedPackaging.price} ج)` : 'هدية مجانية للعميل'}
@@ -5041,146 +5390,237 @@ const POS: React.FC<POSProps> = ({
                   </div>
                 )}
 
-                {/* Expandable Discount & Profit Safety Drawer */}
+                {/* ======================================================== */}
+                {/* SMART DISCOUNT CALCULATOR SUITE (حاسبة الخصومات الذكية) */}
+                {/* ======================================================== */}
                 {activeCartDrawer === 'discount' && (
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5 text-xs animate-in fade-in duration-150">
+                  <div className="p-3.5 rounded-2xl bg-slate-950/95 border-2 border-amber-500/40 space-y-3 text-xs animate-in fade-in zoom-in-95 duration-150 shadow-2xl">
+                    {/* Header with Mode Switcher & Close Button */}
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-slate-900 font-bold text-[11px]">آلية احتساب الخصم:</span>
-                      <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-200/70">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold">
+                          <Percent size={13} />
+                        </div>
+                        <span className="text-white font-black text-xs">حاسبة الخصومات الذكية:</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 p-0.5 rounded-xl bg-slate-900 border border-white/10">
+                          <button
+                            type="button"
+                            onClick={() => setDiscountInputMode('percent')}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                              discountInputMode === 'percent'
+                                ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                                : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            نسبة مئوية (%)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDiscountInputMode('amount')}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                              discountInputMode === 'amount'
+                                ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                                : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            مبلغ نقدي ({settings.currency})
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => setDiscountInputMode('amount')}
-                          className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
-                            discountInputMode === 'amount'
-                              ? 'bg-white text-slate-900 shadow-2xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
+                          onClick={() => setActiveCartDrawer('none')}
+                          className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center cursor-pointer text-xs"
+                          title="إغلاق الحاسبة"
                         >
-                          بالمبلغ ({settings.currency})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDiscountInputMode('percent')}
-                          className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
-                            discountInputMode === 'percent'
-                              ? 'bg-white text-slate-900 shadow-2xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          بالنسبة (%)
+                          ✕
                         </button>
                       </div>
                     </div>
 
-                    {discountInputMode === 'amount' ? (
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-600 font-medium text-[11px]">
-                          قيمة الخصم بالمبلغ ({settings.currency}):
-                        </span>
-                        <input
-                          type="number"
-                          min="0"
-                          placeholder="0"
-                          value={orderDiscount || ''}
-                          onChange={(e) => {
-                            const val = Math.max(0, Number(e.target.value) || 0);
-                            setOrderDiscount(val);
-                            setDiscountPercentInput(
-                              cartSubtotal > 0 ? Math.round((val / cartSubtotal) * 1000) / 10 : ''
-                            );
-                          }}
-                          className="w-28 h-8 px-2 rounded-lg bg-white border border-slate-300 font-mono tabular-nums text-xs text-center font-bold outline-none focus:border-[#0071E3]"
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-600 font-medium text-[11px]">نسبة الخصم المئوية (%):</span>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            placeholder="0%"
-                            value={discountPercentInput}
-                            onChange={(e) => {
-                              const pct = Math.min(100, Math.max(0, Number(e.target.value) || 0));
-                              setDiscountPercentInput(e.target.value === '' ? '' : pct);
-                              const computedAmt = Math.round((cartSubtotal * pct) / 100);
-                              setOrderDiscount(computedAmt);
+                    {/* Quick Preset 1-Tap Discount Chips */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold px-0.5">
+                        <span>اختيارات الخصم السريعة بلمسة واحدة:</span>
+                        {orderDiscount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOrderDiscount(0);
+                              setDiscountPercentInput('');
                             }}
-                            className="w-24 h-8 px-2 rounded-lg bg-white border border-slate-300 font-mono tabular-nums text-xs text-center font-bold outline-none focus:border-[#0071E3]"
-                          />
-                          <span className="font-mono tabular-nums text-[10px] font-bold text-rose-600">
-                            = {orderDiscount} {settings.currency}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {cart.length > 0 && (
-                      <div className="p-2 rounded-lg bg-white border border-slate-200/80 grid grid-cols-2 gap-1.5 text-[10px] font-mono tabular-nums">
-                        <div className="flex justify-between">
-                          <span className="font-sans text-slate-500">الإجمالي:</span>
-                          <span className="font-bold text-slate-900">{cartSubtotal} ج</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="font-sans text-slate-500">الخصم:</span>
-                          <span className="font-bold text-rose-600">-{totalAppliedDiscount} ج</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="font-sans text-slate-500">صافي البيع:</span>
-                          <span className="font-bold text-[#0071E3]">{cartFinalTotal} ج</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="font-sans text-slate-500">العمولة:</span>
-                          <span className="font-bold text-amber-700">{cartTotalCommission} ج</span>
-                        </div>
-                        {canViewCosts(currentUser) && (
-                          <div className="flex justify-between">
-                            <span className="font-sans text-slate-500">التكلفة:</span>
-                            <span className="font-bold text-slate-900">{cartTotalCost} ج</span>
-                          </div>
+                            className="text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
+                          >
+                            إلغاء الخصم (0)
+                          </button>
                         )}
-                        {canViewProfits(currentUser) && (
-                          <div className="flex justify-between">
-                            <span className="font-sans text-slate-500">المساهمة:</span>
-                            <span
-                              className={`font-black ${
-                                cartTotalNetProfit >= 10 ? 'text-emerald-700' : 'text-rose-600'
-                              }`}
-                            >
-                              {cartTotalNetProfit} ج
+                      </div>
+
+                      {discountInputMode === 'percent' ? (
+                        <div className="grid grid-cols-6 gap-1">
+                          {[5, 10, 15, 20, 25, 30].map((pct) => {
+                            const isSelected = discountPercentInput === pct;
+                            return (
+                              <button
+                                key={pct}
+                                type="button"
+                                onClick={() => {
+                                  setDiscountPercentInput(pct);
+                                  const computedAmt = Math.round((cartSubtotal * pct) / 100);
+                                  setOrderDiscount(computedAmt);
+                                }}
+                                className={`py-1.5 rounded-xl font-mono text-[11px] font-black transition-all cursor-pointer active:scale-95 border ${
+                                  isSelected
+                                    ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                                    : 'bg-slate-900 text-slate-200 border-white/10 hover:border-amber-400/50'
+                                }`}
+                              >
+                                {pct}%
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-6 gap-1">
+                          {[10, 20, 30, 50, 75, 100].map((amt) => {
+                            const isSelected = orderDiscount === amt;
+                            return (
+                              <button
+                                key={amt}
+                                type="button"
+                                onClick={() => {
+                                  setOrderDiscount(amt);
+                                  setDiscountPercentInput(
+                                    cartSubtotal > 0 ? Math.round((amt / cartSubtotal) * 1000) / 10 : ''
+                                  );
+                                }}
+                                className={`py-1.5 rounded-xl font-mono text-[11px] font-black transition-all cursor-pointer active:scale-95 border ${
+                                  isSelected
+                                    ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                                    : 'bg-slate-900 text-slate-200 border-white/10 hover:border-amber-400/50'
+                                }`}
+                              >
+                                {amt}ج
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Custom Input Field with Live Math */}
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <label className="text-[11px] font-bold text-slate-300 block">
+                          {discountInputMode === 'percent' ? 'أو أدخل نسبة الخصم المئوية:' : 'أو أدخل قيمة الخصم المباشرة:'}
+                        </label>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          {discountInputMode === 'percent'
+                            ? `يساوي خصم: ${orderDiscount} ${settings.currency} من ${cartSubtotal} ${settings.currency}`
+                            : `يعادل نسبة: ${cartSubtotal > 0 ? ((orderDiscount / cartSubtotal) * 100).toFixed(1) : 0}%`}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {discountInputMode === 'percent' ? (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              placeholder="0"
+                              value={discountPercentInput}
+                              onChange={(e) => {
+                                const pct = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                                setDiscountPercentInput(e.target.value === '' ? '' : pct);
+                                const computedAmt = Math.round((cartSubtotal * pct) / 100);
+                                setOrderDiscount(computedAmt);
+                              }}
+                              className="w-24 h-9 pr-2 pl-6 rounded-xl bg-slate-950 border-2 border-amber-500/40 font-mono tabular-nums text-sm text-center font-black text-white outline-none focus:border-amber-400 shadow-inner"
+                            />
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-amber-400 font-bold text-xs pointer-events-none">
+                              %
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={orderDiscount || ''}
+                              onChange={(e) => {
+                                const val = Math.max(0, Number(e.target.value) || 0);
+                                setOrderDiscount(val);
+                                setDiscountPercentInput(
+                                  cartSubtotal > 0 ? Math.round((val / cartSubtotal) * 1000) / 10 : ''
+                                );
+                              }}
+                              className="w-28 h-9 pr-2 pl-7 rounded-xl bg-slate-950 border-2 border-amber-500/40 font-mono tabular-nums text-sm text-center font-black text-white outline-none focus:border-amber-400 shadow-inner"
+                            />
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-amber-400 font-bold text-[10px] pointer-events-none">
+                              {settings.currency}
                             </span>
                           </div>
                         )}
-                        <div className="col-span-2 pt-1 border-t border-slate-100 flex justify-between items-center">
-                          <span className="font-sans text-slate-500">أدنى صافي بيع مسموح:</span>
-                          <span className="font-black text-slate-900">
-                            {cartMinSafeNetPrice} ج (أقصى خصم: {cartMaxSafeDiscount} ج)
+                      </div>
+                    </div>
+
+                    {/* Live Financial Breakdown & Instant Safety Ledger */}
+                    {cart.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="p-2.5 rounded-xl bg-slate-900/90 border border-white/10 grid grid-cols-3 gap-2 text-center font-mono tabular-nums">
+                          <div>
+                            <span className="text-[9px] text-slate-400 block font-sans">قبل الخصم</span>
+                            <span className="text-xs font-bold text-white">{cartSubtotal} ج</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] text-rose-400 block font-sans">الخصم الإجمالي</span>
+                            <span className="text-xs font-black text-rose-400">-{totalAppliedDiscount} ج</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] text-emerald-400 block font-sans">الإجمالي المطلوب</span>
+                            <span className="text-sm font-black text-emerald-400">{cartFinalTotal} ج</span>
+                          </div>
+                        </div>
+
+                        {/* Safety Guard Indicator */}
+                        <div className={`p-2 rounded-xl text-[10px] font-bold flex items-center justify-between border ${
+                          strictSaleSafety.isAllowed
+                            ? 'bg-emerald-950/60 border-emerald-500/30 text-emerald-300'
+                            : 'bg-rose-950/70 border-rose-500/40 text-rose-300'
+                        }`}>
+                          <span>
+                            {strictSaleSafety.isAllowed
+                              ? `✅ الخصم آمن ومتوافق (هامش الربح الصافي: ${cartTotalNetProfit} ج)`
+                              : `⚠️ تجاوز الحد الآمن (أقصى خصم مصرح: ${cartMaxSafeDiscount} ج)`}
                           </span>
+                          <span className="font-mono">{cartTotalCommission} ج عمولة</span>
                         </div>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Segmented Payment Method Selector */}
+                {/* Segmented Payment Method Selector (Glowing High-Contrast Matrix) */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-[10px]">
-                    <span className="font-black text-slate-700">طريقة السداد المعتمدة:</span>
-                    <span className="text-slate-400 font-medium">{paymentMethod}</span>
+                    <span className="font-black text-slate-300">طريقة السداد المعتمدة:</span>
+                    <span className="text-amber-400 font-bold">{paymentMethod}</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/70">
+                  <div className="grid grid-cols-4 gap-1.5 bg-slate-950/80 p-1.5 rounded-2xl border border-white/10">
                     {(['نقدي', 'بطاقة', 'محفظة إلكترونية', 'تحويل بنكي'] as const).map((m) => (
                       <button
                         key={m}
                         type="button"
                         data-active-button={paymentMethod === m ? 'true' : undefined}
                         onClick={() => setPaymentMethod(m)}
-                        className={`py-1.5 rounded-lg text-[10px] font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                        className={`py-2 rounded-xl text-[10px] font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                           paymentMethod === m
-                            ? 'bg-slate-900 text-white shadow-2xs'
-                            : 'text-slate-600 hover:text-slate-900'
+                            ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] border border-blue-400/40'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-900'
                         }`}
                       >
                         {m === 'نقدي' && <Wallet size={12} />}
@@ -5195,11 +5635,11 @@ const POS: React.FC<POSProps> = ({
 
                 {/* Cash Tendered & Change Calculator */}
                 {paymentMethod === 'نقدي' && cart.length > 0 && (
-                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5">
+                  <div className="p-2.5 rounded-2xl bg-slate-950/70 border border-white/10 space-y-1.5">
                     <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-slate-600 font-bold">حاسبة النقدية والباقي للعميل:</span>
+                      <span className="text-slate-300 font-bold">حاسبة النقدية والباقي للعميل:</span>
                       {cashChange > 0 && (
-                        <span className="text-emerald-700 font-black font-mono tabular-nums">
+                        <span className="text-emerald-400 font-black font-mono tabular-nums bg-emerald-500/15 px-2 py-0.5 rounded-md border border-emerald-500/30">
                           الباقي للعميل: {cashChange.toLocaleString('ar-EG')} {settings.currency}
                         </span>
                       )}
@@ -5211,26 +5651,26 @@ const POS: React.FC<POSProps> = ({
                         placeholder={`المبلغ المستلم (${cartFinalTotal})`}
                         value={cashTendered}
                         onChange={(e) => setCashTendered(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-full h-8 px-2.5 rounded-lg bg-white border border-slate-200 font-mono tabular-nums text-xs font-bold outline-none focus:border-[#0071E3]"
+                        className="w-full h-8 px-2.5 rounded-xl bg-slate-900 border border-white/15 font-mono tabular-nums text-xs font-bold text-white outline-none focus:border-blue-500"
                       />
                       <button
                         type="button"
                         onClick={() => setCashTendered(cartFinalTotal)}
-                        className="px-2 h-8 rounded-lg bg-white border border-slate-200 text-[10px] font-bold shrink-0 hover:bg-slate-100 cursor-pointer"
+                        className="px-2.5 h-8 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-[10px] font-bold shrink-0 hover:bg-slate-700 cursor-pointer"
                       >
                         بالضبط
                       </button>
                       <button
                         type="button"
                         onClick={() => setCashTendered((Number(cashTendered) || cartFinalTotal) + 50)}
-                        className="px-2 h-8 rounded-lg bg-white border border-slate-200 text-[10px] font-mono tabular-nums font-bold shrink-0 hover:bg-slate-100 cursor-pointer"
+                        className="px-2 h-8 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-[10px] font-mono tabular-nums font-bold shrink-0 hover:bg-slate-700 cursor-pointer"
                       >
                         +50
                       </button>
                       <button
                         type="button"
                         onClick={() => setCashTendered((Number(cashTendered) || cartFinalTotal) + 100)}
-                        className="px-2 h-8 rounded-lg bg-white border border-slate-200 text-[10px] font-mono tabular-nums font-bold shrink-0 hover:bg-slate-100 cursor-pointer"
+                        className="px-2 h-8 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-[10px] font-mono tabular-nums font-bold shrink-0 hover:bg-slate-700 cursor-pointer"
                       >
                         +100
                       </button>
@@ -5241,12 +5681,12 @@ const POS: React.FC<POSProps> = ({
 
               {/* 5. Hard Block Rule (§28–§31) Safety Guard if Selling Below Cost */}
               {isCartBelowCost && !ownerOverrideGranted && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 text-xs space-y-2 animate-in fade-in">
+                <div className="p-3 rounded-2xl bg-rose-950/70 border border-rose-500/40 text-rose-200 text-xs space-y-2 animate-in fade-in">
                   <div className="flex items-center gap-1.5 font-bold">
-                    <ShieldAlert size={16} className="text-rose-600 shrink-0" />
+                    <ShieldAlert size={16} className="text-rose-400 shrink-0" />
                     <span>❌ العملية مرفوضة (§28): تجاوز الحد الأدنى الصلب للسعر والمساهمة</span>
                   </div>
-                  <p className="text-[11px] leading-tight text-rose-800">
+                  <p className="text-[11px] leading-tight text-rose-300">
                     {strictSaleSafety.rejectionReason ||
                       `لا يسمح النظام بعملية بيع طبيعية تقل فيها المساهمة عن 10 جنيهات (الحد الأدنى لصافي البيع: ${cartMinSafeNetPrice} ج | أقصى خصم مسموح: ${cartMaxSafeDiscount} ج).`}
                   </p>
@@ -5254,7 +5694,7 @@ const POS: React.FC<POSProps> = ({
                   <button
                     type="button"
                     onClick={() => setOwnerExceptionModalOpen(true)}
-                    className="w-full py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                    className="w-full py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
                   >
                     <Lock size={12} />
                     <span>تحويل لمعاملة استثنائية معتمدة من المالك (0% عمولة)</span>
@@ -5263,19 +5703,19 @@ const POS: React.FC<POSProps> = ({
               )}
 
               {ownerOverrideGranted && (
-                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between">
+                <div className="p-2.5 rounded-2xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between">
                   <span className="font-bold flex items-center gap-1">
-                    <CheckCircle2 size={13} className="text-emerald-600" />
+                    <CheckCircle2 size={13} className="text-emerald-400" />
                     <span>تم اعتماد استثناء المالك: {ownerExceptionReason}</span>
                   </span>
-                  <span className="text-[10px] font-mono tabular-nums text-emerald-800">موثق في التدقيق</span>
+                  <span className="text-[10px] font-mono tabular-nums text-emerald-400">موثق في التدقيق</span>
                 </div>
               )}
 
               {/* 6. High-Contrast Final Ledger & Checkout Action Dock */}
-              <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-3">
+              <div className="p-4 rounded-3xl bg-slate-950 border border-white/10 text-white space-y-3.5 shadow-xl">
                 {totalAppliedDiscount > 0 && (
-                  <div className="space-y-1 pb-2 border-b border-slate-800 text-[11px]">
+                  <div className="space-y-1.5 pb-2.5 border-b border-white/10 text-[11px]">
                     <div className="flex justify-between text-slate-400">
                       <span>إجمالي الأصناف قبل الخصم:</span>
                       <span className="font-mono tabular-nums font-bold text-slate-200">
@@ -5290,14 +5730,21 @@ const POS: React.FC<POSProps> = ({
                         </span>
                       </div>
                     )}
-                    {orderDiscount > 0 && (
+                    {activePromotionalSavings ? (
+                      <div className="flex justify-between text-emerald-400 font-bold bg-emerald-950/40 p-2 rounded-xl border border-emerald-500/30">
+                        <span>✨ عرض ترويجي ({activePromotionalSavings.offerName}):</span>
+                        <span className="font-mono tabular-nums">
+                          توفير -{activePromotionalSavings.savedAmount} {settings.currency} ({activePromotionalSavings.savingsPercent}%)
+                        </span>
+                      </div>
+                    ) : orderDiscount > 0 ? (
                       <div className="flex justify-between text-rose-400 font-bold">
                         <span>خصم ترويجي إضافي:</span>
                         <span className="font-mono tabular-nums">
                           -{orderDiscount} {settings.currency}
                         </span>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
 
@@ -5306,23 +5753,23 @@ const POS: React.FC<POSProps> = ({
                     <span className="text-[10px] font-bold text-slate-400 block">
                       صافي المطلوب سداده ({paymentMethod}):
                     </span>
-                    <div className="flex items-center gap-2 text-[10px] text-emerald-400 font-mono tabular-nums font-bold">
+                    <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono tabular-nums font-bold bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
                       <span>عمولة البيع ({tieredCommissionResult.effectiveRateLabel}):</span>
                       <span>+{cartTotalCommission} {settings.currency}</span>
                     </div>
                   </div>
 
                   <div className="text-left">
-                    <span className="text-2xl font-black font-mono tabular-nums text-white tracking-tight">
+                    <span className="text-3xl sm:text-4xl font-black font-mono tabular-nums text-white tracking-tight drop-shadow-[0_2px_15px_rgba(255,255,255,0.2)]">
                       {cartFinalTotal.toLocaleString('ar-EG')}
                     </span>
-                    <span className="text-xs font-bold text-slate-400 mr-1">{settings.currency}</span>
+                    <span className="text-xs font-bold text-slate-400 mr-1.5">{settings.currency}</span>
                   </div>
                 </div>
 
                 {/* Historical / Backdated Paper Book Sales Selector */}
                 {canRecordBackdated && (
-                  <div className="pt-2 pb-1 border-t border-slate-800 space-y-1.5">
+                  <div className="pt-2 pb-1 border-t border-white/10 space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5 cursor-pointer">
                         <input
@@ -5334,7 +5781,7 @@ const POS: React.FC<POSProps> = ({
                         <span>تسجيل بيع بتاريخ سابق (الدفتر الورقي)</span>
                       </label>
                       {isBackdatedSaleMode && (
-                        <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                        <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
                           أثر رجعي
                         </span>
                       )}
@@ -5378,21 +5825,50 @@ const POS: React.FC<POSProps> = ({
                   </div>
                 )}
 
+                {/* Grand Checkout Action Button */}
                 <button
                   type="button"
                   onClick={() => handleConfirmOrder(false)}
                   disabled={cart.length === 0 || (isCartBelowCost && !ownerOverrideGranted)}
-                  className={`w-full py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
+                  className={`w-full py-3.5 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition-all ${
                     cart.length > 0 && (!isCartBelowCost || ownerOverrideGranted)
-                      ? 'bg-[#0071E3] hover:bg-[#0077ED] text-white shadow-[0_6px_20px_rgba(0,113,227,0.4)] cursor-pointer active:scale-98'
-                      : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-[0_10px_30px_rgba(37,99,235,0.4)] cursor-pointer active:scale-98 border border-blue-400/30'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
                   }`}
                 >
-                  <Check size={18} strokeWidth={2.5} />
+                  <Check size={20} strokeWidth={2.8} />
                   <span>
-                    إصدار وطباعة الفاتورة ({cartFinalTotal.toLocaleString('ar-EG')} {settings.currency})
+                    إصدار وطباعة الفاتورة الفورية ({cartFinalTotal.toLocaleString('ar-EG')} {settings.currency})
                   </span>
                 </button>
+
+                {/* Instant Adaptive Smart Invoice & Offers Action Row */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleOpenQuickInvoicePreview}
+                    disabled={cart.length === 0}
+                    className={`py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                      cart.length > 0
+                        ? 'bg-slate-800 hover:bg-slate-700 text-blue-300 border border-blue-400/30 cursor-pointer shadow-xs active:scale-98'
+                        : 'bg-slate-800/40 text-slate-600 border border-slate-700/40 cursor-not-allowed'
+                    }`}
+                    title="معاينة الفاتورة الحرارية في نافذة مستقلة ذكية متكيفة قبل الإصدار النهائي"
+                  >
+                    <Eye size={14} className="text-blue-400" />
+                    <span>معاينة الفاتورة الحرارية</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPromotionalCalculatorModal(true)}
+                    className="py-2.5 rounded-xl text-xs font-black bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98 shadow-xs"
+                    title="حاسبة العروض والخصومات وتطبيقها على الفاتورة"
+                  >
+                    <Sparkles size={14} className="text-amber-400" />
+                    <span>حاسبة العروض والخصومات</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -6410,18 +6886,348 @@ const POS: React.FC<POSProps> = ({
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* THERMAL RECEIPT & WHATSAPP MODAL                         */}
-      {/* ======================================================== */}
-      {completedSale && (
-        <ReceiptModal
-          sale={completedSale}
+      {/* PROMOTIONAL BUNDLES & OFFERS CALCULATOR MODAL */}
+      {showPromotionalCalculatorModal && (
+        <PromotionalBundlesCalculatorModal
+          isOpen={showPromotionalCalculatorModal}
+          onClose={() => setShowPromotionalCalculatorModal(false)}
+          products={products}
+          bottleSizes={bottleSizes}
           settings={settings}
-          onClose={() => setCompletedSale(null)}
+          onApplyBundleOfferToCart={handleApplyBundleOfferToCart}
+        />
+      )}
+
+      {/* ======================================================== */}
+      {/* THERMAL RECEIPT & WHATSAPP MODAL (LIVE SMART ADAPTIVE)   */}
+      {/* ======================================================== */}
+      {(completedSale || draftInvoicePreviewSale) && (
+        <ReceiptModal
+          sale={completedSale || draftInvoicePreviewSale!}
+          settings={settings}
+          onClose={() => {
+            setCompletedSale(null);
+            setDraftInvoicePreviewSale(null);
+          }}
           onUpdateSettings={onUpdateSettings}
           previousCustomers={previousCustomers}
           currentDailyNetContribution={todaysGrossProfit}
         />
+      )}
+
+      {/* ======================================================== */}
+      {/* FLOATING ACTION BUTTON (زر عائم لفتح الفاتورة الفورية)   */}
+      {/* ======================================================== */}
+      <div className="fixed bottom-5 left-5 sm:bottom-6 sm:left-6 z-40 flex items-center gap-2 pointer-events-auto">
+        <button
+          type="button"
+          onClick={handleOpenInstantInvoice}
+          className="group flex items-center gap-3 px-4 py-3 sm:px-5 sm:py-3.5 rounded-full bg-slate-900/95 hover:bg-slate-900 backdrop-blur-2xl border-2 border-amber-500/50 hover:border-amber-400 text-white shadow-[0_12px_40px_rgba(0,0,0,0.85),0_0_25px_rgba(245,158,11,0.3)] hover:shadow-[0_16px_50px_rgba(0,0,0,0.95),0_0_35px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer active:scale-95"
+          title="فتح الفاتورة الفورية ومحطة الدفع"
+        >
+          <div className="relative flex items-center justify-center">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 flex items-center justify-center font-black shadow-md group-hover:rotate-6 transition-transform">
+              <Receipt size={22} className="text-slate-950" />
+            </div>
+            {cart.length > 0 && (
+              <span className="absolute -top-1 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white font-mono text-[10px] font-black flex items-center justify-center ring-2 ring-slate-900 shadow-xs animate-pulse">
+                {cart.length}
+              </span>
+            )}
+          </div>
+
+          <div className="text-right">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-black text-amber-300">الفاتورة الفورية</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            </div>
+            <div className="flex items-baseline gap-1">
+              <span className="font-mono text-sm sm:text-base font-black text-white tabular-nums">
+                {cartFinalTotal.toFixed(1)}
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold">{settings.currency || 'ر.س'}</span>
+              <span className="text-[10px] text-slate-400 mr-1 hidden sm:inline">({cart.length} صنف)</span>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* ======================================================== */}
+      {/* MOBILE INSTANT INVOICE DRAWER (محطة الفاتورة السريعة للهواتف) */}
+      {/* ======================================================== */}
+      {isMobileInvoiceDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full sm:max-w-2xl max-h-[90vh] bg-[#0A0D17] border border-white/10 rounded-t-3xl sm:rounded-3xl shadow-[0_25px_70px_rgba(0,0,0,0.95)] flex flex-col overflow-hidden text-slate-100 animate-in slide-in-from-bottom duration-200">
+            {/* Header */}
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-slate-950/90 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center font-bold">
+                  <Receipt size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">الفاتورة الفورية والدفع السريع</h3>
+                  <p className="text-[11px] text-slate-400">
+                    {cart.length > 0
+                      ? `${cart.length} أصناف مسجلة · الإجمالي: ${cartFinalTotal.toFixed(1)} ${settings.currency || 'ر.س'}`
+                      : 'السلة فارغة حالياً'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileInvoiceDrawerOpen(false)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                title="إغلاق"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Quick Actions & Items List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3.5 modal-scroll-area">
+              {cart.length === 0 ? (
+                <div className="py-12 text-center space-y-3">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-500">
+                    <ShoppingBag size={24} />
+                  </div>
+                  <p className="text-sm font-bold text-slate-400">لا توجد عطور مضافة في الفاتورة بعد</p>
+                  <p className="text-xs text-slate-500">اختر من كتالوج العطور أو الميكس الذكي لإضافة أول عبوة</p>
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileInvoiceDrawerOpen(false)}
+                    className="mt-2 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs cursor-pointer"
+                  >
+                    العودة لكتالوج العطور
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-400 px-1">
+                      <span>الأصناف ({cart.length}):</span>
+                      <button
+                        type="button"
+                        onClick={() => setCart([])}
+                        className="text-rose-400 hover:text-rose-300 text-[11px] font-bold"
+                      >
+                        تفريغ السلة
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {cart.map((item) => (
+                        <div
+                          key={item.cartItemId}
+                          className="p-3 rounded-2xl bg-slate-900/80 border border-white/10 flex items-center justify-between gap-3 shadow-sm"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-black text-white truncate">{item.name}</h4>
+                            <p className="text-[10px] text-slate-400">
+                              عبوة {item.bottleSize}مل · {item.essenceGrams}جم زيت
+                            </p>
+                            <span className="font-mono text-xs font-black text-amber-400">
+                              {((item.sellingPrice || 0) * (item.quantity || 1)).toFixed(1)} {settings.currency || 'ر.س'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/10">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateItemQuantity(item.cartItemId, (item.quantity || 1) - 1)}
+                                className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xs"
+                              >
+                                -
+                              </button>
+                              <span className="font-mono text-xs font-black px-1.5 text-white">
+                                {item.quantity || 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateItemQuantity(item.cartItemId, (item.quantity || 1) + 1)}
+                                className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xs"
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFromCart(item.cartItemId)}
+                              className="w-7 h-7 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500 hover:text-white flex items-center justify-center transition-colors"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Customer Quick Input in Drawer */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-white/10 space-y-2">
+                    <span className="text-[11px] font-black text-slate-300 block">بيانات العميل (اختياري لنقاط الولاء):</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="اسم العميل..."
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs font-bold text-white outline-none focus:border-amber-400"
+                      />
+                      <input
+                        type="tel"
+                        placeholder="رقم الواتساب..."
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs font-bold text-white outline-none focus:border-amber-400 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Smart Discount Calculator in Mobile Drawer */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-white/10 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Percent size={13} className="text-amber-400" />
+                        <span className="text-[11px] font-black text-white">حاسبة الخصم الفوري:</span>
+                      </div>
+                      <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-900 border border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setDiscountInputMode('percent')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            discountInputMode === 'percent' ? 'bg-amber-500 text-slate-950 font-black' : 'text-slate-400'
+                          }`}
+                        >
+                          %
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDiscountInputMode('amount')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            discountInputMode === 'amount' ? 'bg-amber-500 text-slate-950 font-black' : 'text-slate-400'
+                          }`}
+                        >
+                          {settings.currency}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Presets */}
+                    <div className="grid grid-cols-5 gap-1">
+                      {discountInputMode === 'percent'
+                        ? [5, 10, 15, 20, 0].map((pct) => (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() => {
+                                setDiscountPercentInput(pct || '');
+                                setOrderDiscount(Math.round((cartSubtotal * pct) / 100));
+                              }}
+                              className={`py-1 rounded-lg text-[10px] font-mono font-black border transition-all ${
+                                discountPercentInput === pct && pct > 0
+                                  ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                  : pct === 0
+                                  ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                                  : 'bg-slate-900 text-slate-200 border-white/10'
+                              }`}
+                            >
+                              {pct === 0 ? 'إلغاء' : `${pct}%`}
+                            </button>
+                          ))
+                        : [10, 20, 30, 50, 0].map((amt) => (
+                            <button
+                              key={amt}
+                              type="button"
+                              onClick={() => {
+                                setOrderDiscount(amt);
+                                setDiscountPercentInput(cartSubtotal > 0 ? Math.round((amt / cartSubtotal) * 1000) / 10 : '');
+                              }}
+                              className={`py-1 rounded-lg text-[10px] font-mono font-black border transition-all ${
+                                orderDiscount === amt && amt > 0
+                                  ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                  : amt === 0
+                                  ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                                  : 'bg-slate-900 text-slate-200 border-white/10'
+                              }`}
+                            >
+                              {amt === 0 ? 'إلغاء' : `${amt}ج`}
+                            </button>
+                          ))}
+                    </div>
+
+                    {totalAppliedDiscount > 0 && (
+                      <div className="flex items-center justify-between text-[10px] font-mono text-rose-300 bg-rose-500/10 p-1.5 rounded-lg border border-rose-500/20">
+                        <span>إجمالي الخصم المطبق:</span>
+                        <span className="font-black">-{totalAppliedDiscount} {settings.currency}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payment Method Selector in Drawer */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-white/10 space-y-2">
+                    <span className="text-[11px] font-black text-slate-300 block">طريقة الدفع:</span>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {(['نقدي', 'شبكة', 'آجل', 'تحويل'] as const).map((method) => (
+                        <button
+                          key={method}
+                          type="button"
+                          onClick={() => setPaymentMethod(method)}
+                          className={`py-2 px-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                            paymentMethod === method
+                              ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                              : 'bg-slate-900 text-slate-300 border border-white/10'
+                          }`}
+                        >
+                          {method}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Footer with checkout action */}
+            {cart.length > 0 && (
+              <div className="p-4 border-t border-white/10 bg-slate-950/95 flex items-center justify-between gap-3 shrink-0">
+                <div>
+                  <span className="text-[10px] text-slate-400 block font-bold">الإجمالي النهائي المطلوب:</span>
+                  <span className="font-mono text-lg font-black text-white">
+                    {cartFinalTotal.toFixed(1)} {settings.currency || 'ر.س'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileInvoiceDrawerOpen(false);
+                      const el = document.getElementById('pos-cart-panel');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold"
+                  >
+                    عرض في الشاشة
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileInvoiceDrawerOpen(false);
+                      handleConfirmOrder(false);
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs shadow-lg active:scale-95 transition-all flex items-center gap-1.5"
+                  >
+                    <Check size={16} />
+                    <span>تأكيد وطباعة الفاتورة</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

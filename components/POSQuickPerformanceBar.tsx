@@ -18,6 +18,7 @@ import {
   Target,
   CheckCircle2,
   Wallet,
+  Gift,
 } from 'lucide-react';
 
 interface POSQuickPerformanceBarProps {
@@ -35,6 +36,7 @@ interface POSQuickPerformanceBarProps {
   onStartWork: () => void;
   onOpenShortages: () => void;
   onOpenSmartSearch: () => void;
+  onOpenPromotionalCalculator?: () => void;
   onOpenStaffEntitlements?: () => void;
 }
 
@@ -49,6 +51,7 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
   todayShortageCount,
   onOpenShortages,
   onOpenSmartSearch,
+  onOpenPromotionalCalculator,
   onOpenStaffEntitlements,
 }) => {
   const [showSellingPriceStrip, setShowSellingPriceStrip] = useState(false);
@@ -76,45 +79,45 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
   return (
     <section
       aria-label="شريط متابعة المبيعات السريع وأسعار العبوات"
-      className="rounded-2xl border border-slate-200/90 bg-white px-4 py-2.5 shadow-2xs transition-all duration-150"
+      className="rounded-2xl border border-white/10 bg-slate-900/85 backdrop-blur-xl p-3 sm:px-4 sm:py-3 shadow-xl transition-all duration-150 text-slate-100"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Right: Clean Live Cashier Telemetry (Tabular Numerals, Unboxed Separators) */}
+        {/* Right: Clean Live Cashier Telemetry (Tabular Numerals, High-Contrast Glowing Separators) */}
         <div className="flex flex-wrap items-center gap-3 sm:gap-5 text-xs">
           {/* 1. Today's Sales Metric */}
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center shrink-0">
-              <ShoppingBag size={14} />
+            <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0 shadow-xs">
+              <ShoppingBag size={15} />
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-slate-500 font-semibold">مبيعات اليوم:</span>
-              <strong className="font-mono tabular-nums font-black text-sm text-slate-900">
+              <span className="text-slate-400 font-semibold">مبيعات اليوم:</span>
+              <strong className="font-mono tabular-nums font-black text-sm sm:text-base text-white tracking-tight">
                 {todaysRevenue.toLocaleString('ar-EG')} {settings.currency}
               </strong>
-              <span aria-hidden="true" className="text-slate-300">·</span>
-              <span className="text-[11px] font-mono tabular-nums text-slate-500">
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="text-[11px] font-mono tabular-nums text-slate-400">
                 {todaysSalesList.length} فاتورة / {todaysBottles} عبوة
               </span>
             </div>
           </div>
 
-          <div className="h-4 w-px bg-slate-200 hidden sm:block" />
+          <div className="h-4 w-px bg-slate-700/80 hidden sm:block" />
 
-          {/* 2. Break-Even Metric: المتبقي للتعادل (استبعاد أي قيم صفرية غير منطقية) */}
+          {/* 2. Break-Even Metric: المتبقي للتعادل */}
           <div className="flex items-center gap-2">
             <div
-              className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+              className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border ${
                 isBreakEvenCovered
-                  ? 'bg-emerald-500/10 text-emerald-700'
-                  : 'bg-amber-500/15 text-amber-700'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
               }`}
             >
-              {isBreakEvenCovered ? <CheckCircle2 size={14} /> : <Target size={14} />}
+              {isBreakEvenCovered ? <CheckCircle2 size={15} /> : <Target size={15} />}
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-slate-500 font-semibold">نقطة التعادل:</span>
+              <span className="text-slate-400 font-semibold">نقطة التعادل:</span>
               <strong className={`font-mono tabular-nums font-black text-sm ${
-                isBreakEvenCovered ? 'text-emerald-700' : 'text-amber-800'
+                isBreakEvenCovered ? 'text-emerald-400' : 'text-amber-300'
               }`}>
                 {isBreakEvenCovered
                   ? `✓ تم تأمين التعادل`
@@ -122,8 +125,8 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
                       ? `المستهدف ${breakEvenTarget} ج`
                       : `متبقي ${Math.max(1, Math.ceil(remainingForBreakEven))} ج`)}
               </strong>
-              <span aria-hidden="true" className="text-slate-300">·</span>
-              <span className="text-[11px] font-mono tabular-nums text-slate-500">
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="text-[11px] font-mono tabular-nums text-slate-400">
                 {isBreakEvenCovered
                   ? (todaysGrossProfit > breakEvenTarget
                       ? `+${Math.round(todaysGrossProfit - breakEvenTarget)} ج أرباح`
@@ -135,34 +138,34 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
             </div>
           </div>
 
-          <div className="h-4 w-px bg-slate-200 hidden md:block" />
+          <div className="h-4 w-px bg-slate-700/80 hidden md:block" />
 
-          {/* 3. Cashier Entitlements Metric: قاعدة الحساب (إجمالي المستحقات - إجمالي المصروف) */}
+          {/* 3. Cashier Entitlements Metric */}
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-700 flex items-center justify-center shrink-0">
-              <Wallet size={14} />
+            <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center justify-center shrink-0">
+              <Wallet size={15} />
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-slate-500 font-semibold">مستحقات الكاشير:</span>
-              <strong className="font-mono tabular-nums font-black text-sm text-purple-800">
+              <span className="text-slate-400 font-semibold">مستحقات الكاشير:</span>
+              <strong className="font-mono tabular-nums font-black text-sm text-purple-300">
                 {remainingCashierDue > 0
                   ? `+${remainingCashierDue} ${settings.currency}`
                   : remainingCashierDue === 0
                   ? (totalCashierEntitlements > 0 ? 'مسواة بالكامل' : `${dailyBaseSalary} ${settings.currency}`)
                   : `${remainingCashierDue} ${settings.currency}`}
               </strong>
-              <span aria-hidden="true" className="text-slate-300">·</span>
-              <span className="text-[11px] font-mono tabular-nums text-slate-500" title="المعادلة: إجمالي المستحقات (الراتب + العمولة) - إجمالي المصروف">
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="text-[11px] font-mono tabular-nums text-slate-400" title="المعادلة: إجمالي المستحقات (الراتب + العمولة) - إجمالي المصروف">
                 مستحق: {totalCashierEntitlements} ج | مصروف: {totalCashierExpenses} ج
               </span>
               {onOpenStaffEntitlements && (
                 <button
                   type="button"
                   onClick={onOpenStaffEntitlements}
-                  className="mr-1 px-2 py-0.5 rounded-md bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-black transition-colors cursor-pointer"
+                  className="mr-1 px-2 py-0.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-400/30 text-[10px] font-black transition-colors cursor-pointer"
                   title="فتح شاشة مستحقات العاملين، العمولات والتسويات"
                 >
-                  المستحقات والتسوية ←
+                  المستحقات ←
                 </button>
               )}
             </div>
@@ -175,18 +178,30 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
             <button
               type="button"
               onClick={onOpenShortages}
-              className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100/80 text-amber-800 border border-amber-200/80 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
               title="عرض الأصناف التي وصلت للحد الحرج في المخزون"
             >
-              <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+              <AlertTriangle size={13} className="text-amber-400 shrink-0" />
               <span className="tabular-nums">نواقص المخزون ({todayShortageCount})</span>
+            </button>
+          )}
+
+          {onOpenPromotionalCalculator && (
+            <button
+              type="button"
+              onClick={onOpenPromotionalCalculator}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-purple-500/20 hover:from-amber-500/30 hover:to-purple-500/30 text-amber-300 border border-amber-500/40 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+              title="حاسبة العروض والخصومات الترويجية وتوفير العميل"
+            >
+              <Gift size={13} className="text-amber-400 shrink-0" />
+              <span>حاسبة العروض والخصومات 🎁</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={onOpenSmartSearch}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             title="مستشار ترشيح العطور الذكي حسب المناسبة والموسم"
           >
             <Sparkles size={13} className="text-[#C49746] shrink-0" />
@@ -198,11 +213,11 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
             onClick={() => setShowSellingPriceStrip(!showSellingPriceStrip)}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors border cursor-pointer whitespace-nowrap ${
               showSellingPriceStrip
-                ? 'bg-slate-900 text-white border-slate-900'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
             }`}
           >
-            <BookOpen size={13} className={showSellingPriceStrip ? 'text-amber-300' : 'text-[#0071E3]'} />
+            <BookOpen size={13} className={showSellingPriceStrip ? 'text-white' : 'text-blue-400'} />
             <span>جدول أسعار العبوات</span>
             {showSellingPriceStrip ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
@@ -211,13 +226,13 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
 
       {/* Expandable Customer-Safe Selling Price Strip */}
       {showSellingPriceStrip && (
-        <div className="mt-3 pt-3 border-t border-slate-100 animate-in fade-in duration-150">
+        <div className="mt-3 pt-3 border-t border-slate-800 animate-in fade-in duration-150">
           <div className="flex items-center justify-between mb-2.5 text-[11px]">
-            <span className="font-black text-slate-900 flex items-center gap-1.5">
-              <Sparkles size={12} className="text-[#C49746]" />
+            <span className="font-black text-amber-400 flex items-center gap-1.5">
+              <Sparkles size={12} className="text-amber-400" />
               <span>قائمة أسعار البيع المعتمدة للجمهور (آمنة للعرض أمام العميل):</span>
             </span>
-            <span className="text-[11px] text-slate-500">
+            <span className="text-[11px] text-slate-400">
               تشمل العبوة العادية · العود والمسك والنيش · العبوة الملونة الفاخرة
             </span>
           </div>
@@ -226,26 +241,26 @@ export const POSQuickPerformanceBar: React.FC<POSQuickPerformanceBarProps> = ({
             {DEFAULT_BOTTLE_SIZES.map((b) => (
               <div
                 key={b.id}
-                className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-200/70 text-right space-y-1"
+                className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-right space-y-1"
               >
-                <div className="flex items-center justify-between border-b border-slate-200/60 pb-1">
-                  <span className="font-mono tabular-nums font-black text-xs text-[#0071E3]">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-1">
+                  <span className="font-mono tabular-nums font-black text-xs text-blue-400">
                     {b.sizeMl} مل {b.isRollOn ? '(رول)' : ''}
                   </span>
-                  <span className="text-[10px] font-mono tabular-nums text-slate-500">{b.essenceGrams} جم</span>
+                  <span className="text-[10px] font-mono tabular-nums text-slate-400">{b.essenceGrams} جم</span>
                 </div>
                 <div className="flex justify-between text-[11px]">
-                  <span className="text-slate-600">فرنسي عادي:</span>
-                  <strong className="font-mono tabular-nums text-slate-900">{b.normalPrice} ج</strong>
+                  <span className="text-slate-400">فرنسي عادي:</span>
+                  <strong className="font-mono tabular-nums text-white">{b.normalPrice} ج</strong>
                 </div>
                 <div className="flex justify-between text-[11px]">
-                  <span className="text-[#9A6E23]">عود / مسك:</span>
-                  <strong className="font-mono tabular-nums text-[#9A6E23]">{b.specialPrice} ج</strong>
+                  <span className="text-amber-400">عود / مسك:</span>
+                  <strong className="font-mono tabular-nums text-amber-300">{b.specialPrice} ج</strong>
                 </div>
                 {b.coloredNormalPrice && (
-                  <div className="flex justify-between text-[10px] pt-0.5 border-t border-dashed border-slate-200">
-                    <span className="text-amber-700">عبوة ملونة:</span>
-                    <strong className="font-mono tabular-nums text-amber-800">{b.coloredNormalPrice} ج</strong>
+                  <div className="flex justify-between text-[10px] pt-0.5 border-t border-dashed border-slate-800">
+                    <span className="text-purple-300">عبوة ملونة:</span>
+                    <strong className="font-mono tabular-nums text-purple-200">{b.coloredNormalPrice} ج</strong>
                   </div>
                 )}
               </div>

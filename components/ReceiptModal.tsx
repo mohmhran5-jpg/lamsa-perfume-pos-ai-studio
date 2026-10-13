@@ -87,6 +87,53 @@ export const LINE_SPACING_MAP: Record<ReceiptDesignConfig['lineSpacing'], number
   relaxed: 1.7,
 };
 
+export const ThermalBarcodeSvg: React.FC<{ value: string }> = ({ value }) => {
+  const bars = useMemo(() => {
+    const clean = (value || '00000000').slice(-8);
+    const pattern: number[] = [2, 1, 1, 2, 1];
+    for (let i = 0; i < clean.length; i++) {
+      const code = clean.charCodeAt(i) % 7;
+      pattern.push(
+        (code % 3) + 1,
+        1,
+        ((code + 1) % 2) + 1,
+        1,
+        ((code + 2) % 3) + 1,
+        1
+      );
+    }
+    pattern.push(2, 1, 2, 2);
+    return pattern;
+  }, [value]);
+
+  let xPos = 4;
+  return (
+    <div className="flex flex-col items-center justify-center my-1 select-none w-full">
+      <svg viewBox="0 0 160 26" className="w-40 max-w-full h-6" preserveAspectRatio="none">
+        {bars.map((w, idx) => {
+          const isBar = idx % 2 === 0;
+          const currentX = xPos;
+          xPos += w * 1.5;
+          if (!isBar) return null;
+          return (
+            <rect
+              key={idx}
+              x={currentX}
+              y={0}
+              width={w * 1.4}
+              height={26}
+              fill="#000000"
+            />
+          );
+        })}
+      </svg>
+      <span className="text-[8px] font-mono tracking-widest font-black text-black block mt-0.5">
+        *{value.slice(-8)}*
+      </span>
+    </div>
+  );
+};
+
 export const ThermalReceiptLiveView: React.FC<ThermalReceiptLiveViewProps> = ({
   sale,
   design,
@@ -412,6 +459,33 @@ export const ThermalReceiptLiveView: React.FC<ThermalReceiptLiveViewProps> = ({
           </div>
         ) : null}
 
+        {/* Promotional Offer & Customer Savings Banner */}
+        {(sale.promotionalSavings || (sale.discount && sale.discount > 0)) && (
+          <div
+            style={{
+              fontSize: `${Math.max(8.5, design.baseFontSizePx - 1.5)}px`,
+              borderColor: effectivePrimaryColor,
+            }}
+            className="my-1 p-1.5 rounded-lg border border-dashed text-center bg-slate-50 space-y-0.5"
+          >
+            <div className="font-black flex items-center justify-center gap-1 text-emerald-800">
+              <span>🎉 مبروك! وفرت في هذه الفاتورة:</span>
+              <span className="font-mono font-black underline">
+                {sale.promotionalSavings?.savedAmount ?? sale.discount} {branding.currency}
+              </span>
+            </div>
+            {sale.promotionalSavings?.offerName ? (
+              <div className="text-[10px] opacity-90 font-bold text-slate-700">
+                ({sale.promotionalSavings.offerName} · خصم {sale.promotionalSavings.savingsPercent}%)
+              </div>
+            ) : (
+              <div className="text-[9.5px] opacity-80 font-bold text-emerald-700">
+                (خصم ترويجي معتمد للعميل)
+              </div>
+            )}
+          </div>
+        )}
+
         <div
           style={{
             fontSize: `${Math.min(16, design.totalFontSizePx)}px`,
@@ -465,9 +539,14 @@ export const ThermalReceiptLiveView: React.FC<ThermalReceiptLiveViewProps> = ({
             <div className="w-9 h-9 rounded-lg border border-black/20 flex items-center justify-center bg-white p-0.5">
               <QrCode size={26} className="text-black" />
             </div>
-            <span className="text-[7px] font-mono opacity-65 mt-0.5">واتساب</span>
+            <span className="text-[7px] font-mono opacity-65 mt-0.5">فاتورة إلكترونية</span>
           </div>
         )}
+      </div>
+
+      {/* 6. GENUINE THERMAL CODE-128 BARCODE */}
+      <div className="pt-1 border-t border-dashed border-black/20 mt-1 flex flex-col items-center justify-center">
+        <ThermalBarcodeSvg value={sale.id} />
       </div>
     </div>
   );
@@ -838,18 +917,18 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-xl smart-modal-overlay animate-in fade-in duration-200">
-      <div className="bg-[#FBFBFD]/98 backdrop-blur-2xl smart-modal-window rounded-[28px] w-full max-w-5xl max-h-[92vh] overflow-y-auto md:overflow-hidden shadow-[0_32px_90px_-15px_rgba(0,0,0,0.45),0_0_0_1px_rgba(255,255,255,0.7)_inset] border border-black/[0.08] flex flex-col md:flex-row animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-2xl smart-modal-overlay flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-950/95 text-white backdrop-blur-3xl smart-modal-window rounded-[28px] w-full max-w-5xl max-h-[92vh] overflow-y-auto md:overflow-hidden shadow-[0_32px_100px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.08)_inset] border border-slate-800/80 flex flex-col md:flex-row animate-in zoom-in-95 duration-200">
         
         {/* ======================================================== */}
         {/* LEFT / TOP: Live Interactive Thermal Receipt Preview      */}
         {/* ======================================================== */}
-        <div className="w-full md:w-[415px] md:max-h-[92vh] bg-[#F2F2F7]/90 p-3.5 border-b md:border-b-0 md:border-l border-black/[0.08] flex flex-col justify-between shrink-0 min-h-0">
+        <div className="w-full md:w-[415px] md:max-h-[92vh] bg-slate-900/90 text-white p-3.5 border-b md:border-b-0 md:border-l border-slate-800/80 flex flex-col justify-between shrink-0 min-h-0">
           {/* Top Bar of Preview */}
-          <div className="flex items-center justify-between pb-2.5 border-b border-black/[0.06] mb-2 shrink-0">
+          <div className="flex items-center justify-between pb-2.5 border-b border-slate-800/80 mb-2 shrink-0">
             <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
-              <span className="text-xs font-black text-[#1D1D1F]">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#10B981] animate-pulse" />
+              <span className="text-xs font-black text-slate-100">
                 معاينة تذكرة الطباعة الحرارية ({draftDesign.paperWidth})
               </span>
             </div>
@@ -858,8 +937,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               onClick={() => setIsEditingBranding(!isEditingBranding)}
               className={`px-2.5 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
                 isEditingBranding
-                  ? 'bg-[#1D1D1F] text-white shadow-xs'
-                  : 'bg-[#0071E3]/10 text-[#0071E3] hover:bg-[#0071E3]/20'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs font-black'
+                  : 'bg-white/10 text-slate-200 hover:bg-white/20'
               }`}
             >
               <Settings2 size={12} />
@@ -888,9 +967,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           </div>
 
           {/* Direct Print & Quick Paper Width Switcher */}
-          <div className="pt-2.5 border-t border-black/[0.06] space-y-2 shrink-0 mt-2 bg-[#F2F2F7]/95">
+          <div className="pt-2.5 border-t border-slate-800/80 space-y-2 shrink-0 mt-2 bg-slate-900/95">
             {/* Paper Width Switcher with clear badges */}
-            <div className="flex items-center justify-between gap-1.5 bg-black/[0.05] p-1 rounded-xl">
+            <div className="flex items-center justify-between gap-1.5 bg-black/40 p-1 rounded-xl border border-white/5">
               {(['58mm', '80mm', 'A4'] as const).map((pw) => (
                 <button
                   key={pw}
@@ -898,11 +977,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                   onClick={() => setDraftDesign((prev) => ({ ...prev, paperWidth: pw }))}
                   className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
                     draftDesign.paperWidth === pw
-                      ? 'bg-white text-[#1D1D1F] shadow-2xs'
-                      : 'text-[#86868B] hover:text-[#1D1D1F]'
+                      ? 'bg-amber-400 text-slate-950 shadow-xs font-black'
+                      : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  <span>{pw === '58mm' ? '58mm تذاكر مدمجة' : pw === '80mm' ? '80mm قياسي' : 'A4 رسمي'}</span>
+                  <span>{pw === '58mm' ? '58mm مدمجة' : pw === '80mm' ? '80mm قياسي' : 'A4 رسمي'}</span>
                 </button>
               ))}
             </div>
@@ -910,7 +989,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             {/* Bluetooth Status Notification if active */}
             {bluetoothStatusMessage && (
               <div className={`p-2 rounded-xl text-[11px] font-bold flex items-center gap-1.5 animate-in fade-in duration-150 ${
-                isBluetoothSuccess ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
+                isBluetoothSuccess ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30' : 'bg-amber-950/60 text-amber-300 border border-amber-500/30'
               }`}>
                 <Radio size={13} className="animate-pulse shrink-0" />
                 <span className="leading-tight">{bluetoothStatusMessage}</span>
@@ -922,10 +1001,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               <button
                 type="button"
                 onClick={handlePrint}
-                className="apple-btn col-span-1 py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-black text-white text-[11px] font-black flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                title="طباعة حرارية مخصصة لطابعات التذاكر بدون هوامش وبأعلى تباين"
+                className="col-span-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-[11px] font-black flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/25 transition-all cursor-pointer active:scale-98"
+                title="طباعة حرارية معزولة لطابعات التذاكر (تطبع الفاتورة فقط بدون أي عناصر أخرى من الموقع)"
               >
-                <Printer size={14} />
+                <Printer size={15} />
                 <span>طباعة حرارية ({draftDesign.paperWidth})</span>
               </button>
 
@@ -933,25 +1012,25 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 type="button"
                 onClick={handleBluetoothPrint}
                 disabled={isBluetoothPrinting}
-                className="apple-btn col-span-1 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-[11px] font-black flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                title="طباعة مباشرة عبر البلوتوث لطابعات التذاكر المتنقلة الصغيرة"
+                className="col-span-1 py-2.5 rounded-xl bg-[#0071E3] hover:bg-[#0077ED] text-white text-[11px] font-black flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/25 transition-all cursor-pointer disabled:opacity-50 active:scale-98"
+                title="طباعة مباشرة عبر البلوتوث لطابعات التذاكر المتنقلة"
               >
-                <Bluetooth size={14} className={isBluetoothPrinting ? 'animate-spin' : ''} />
+                <Bluetooth size={15} className={isBluetoothPrinting ? 'animate-spin' : ''} />
                 <span>{isBluetoothPrinting ? 'جاري الاتصال...' : 'طابعة بلوتوث'}</span>
               </button>
             </div>
 
             {/* Quick Auto-Print Checkbox & RawBT fallback */}
             <div className="flex items-center justify-between gap-2 px-1 text-[11px]">
-              <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 select-none">
+              <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-300 select-none">
                 <input
                   type="checkbox"
                   checked={Boolean(draftDesign.autoPrintOnSale)}
                   onChange={handleToggleAutoPrint}
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
+                  className="rounded border-slate-700 text-amber-500 focus:ring-amber-500 w-3.5 h-3.5"
                 />
                 <span className="flex items-center gap-1">
-                  <Zap size={11} className="text-amber-500" />
+                  <Zap size={11} className="text-amber-400" />
                   طباعة تلقائية عند كل بيع
                 </span>
               </label>
@@ -959,7 +1038,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               <button
                 type="button"
                 onClick={handleRawBTPrint}
-                className="text-[10px] text-slate-500 hover:text-slate-800 underline decoration-dotted font-mono"
+                className="text-[10px] text-slate-400 hover:text-amber-300 underline decoration-dotted font-mono"
                 title="إرسال الفاتورة عبر تطبيق RawBT لأندرويد"
               >
                 طابعة RawBT (أندرويد)
@@ -974,27 +1053,27 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         <div className="flex-1 md:max-h-[92vh] p-4 sm:p-5 flex flex-col justify-between gap-2.5 min-h-0 overflow-hidden">
           
           {/* Top Apple Modal Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] shrink-0">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 shrink-0">
             <div className="flex items-center gap-3">
               <div
                 className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold shadow-2xs ${
                   isEditingBranding
-                    ? 'bg-[#0071E3] text-white'
-                    : 'bg-emerald-500/12 text-emerald-600'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-amber-500/20'
+                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 }`}
               >
                 {isEditingBranding ? <Sliders size={19} /> : <Share2 size={19} />}
               </div>
               <div>
-                <h2 className="text-sm sm:text-base font-black text-[#1D1D1F]">
+                <h2 className="text-sm sm:text-base font-black text-white">
                   {isEditingBranding
                     ? 'استوديو التحكم الشامل في الفاتورة والطباعة (معاينة فورية)'
-                    : 'مشاركة الفاتورة والتوجيه الذكي للمبيعات'}
+                    : 'محطة الفاتورة والمشاركة الرقمية الذكية'}
                 </h2>
-                <p className="text-[11px] text-[#86868B]">
+                <p className="text-[11px] text-slate-400">
                   {isEditingBranding
                     ? 'تحكم في إظهار أو إخفاء كل عنصر، الخط، الحجم، السُمك، واللون قبل الاعتماد'
-                    : 'إرسال فوري عبر WhatsApp أو تخصيص تصميم الفاتورة الحرارية'}
+                    : 'إرسال فوري عبر WhatsApp، نسخ، أو تخصيص تصميم الفاتورة الحرارية'}
                 </p>
               </div>
             </div>
@@ -1002,7 +1081,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-full bg-black/[0.05] hover:bg-black/[0.1] text-[#86868B] hover:text-[#1D1D1F] flex items-center justify-center transition-all cursor-pointer"
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer"
               title="إغلاق"
             >
               <X size={16} />
@@ -1010,8 +1089,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           </div>
 
           {savedNotice && (
-            <div className="px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2 shrink-0 animate-in fade-in duration-150">
-              <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+            <div className="px-3.5 py-2 rounded-2xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 shrink-0 animate-in fade-in duration-150">
+              <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
               <span>{savedNotice}</span>
             </div>
           )}
@@ -1020,7 +1099,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           {isEditingBranding ? (
             <div className="flex-1 min-h-0 flex flex-col justify-between gap-3 overflow-hidden">
               {/* Apple Segmented Control for Studio Tabs */}
-              <div className="grid grid-cols-4 gap-1 bg-[#F2F2F7] p-1 rounded-2xl border border-black/[0.05] shrink-0">
+              <div className="grid grid-cols-4 gap-1 bg-black/40 p-1 rounded-2xl border border-white/10 shrink-0">
                 {[
                   { id: 'elements', label: 'العناصر (18)', icon: Eye },
                   { id: 'typography', label: 'الخط واللون', icon: Type },
@@ -1036,11 +1115,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                       onClick={() => setStudioTab(t.id as any)}
                       className={`py-1.5 px-2 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                         active
-                          ? 'bg-white text-[#1D1D1F] shadow-xs'
-                          : 'text-[#86868B] hover:text-[#1D1D1F]'
+                          ? 'bg-amber-400 text-slate-950 shadow-xs'
+                          : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      <Icon size={13} className={active ? 'text-[#0071E3]' : ''} />
+                      <Icon size={13} className={active ? 'text-slate-950' : ''} />
                       <span className="truncate">{t.label}</span>
                     </button>
                   );

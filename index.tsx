@@ -12,6 +12,21 @@ if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
   }
 }
 
+// Clean up any stale development service workers that could attempt HMR communication
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  try {
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      for (const reg of registrations) {
+        if (reg.active?.scriptURL?.includes('dev-sw')) {
+          reg.unregister().catch(() => {});
+        }
+      }
+    }).catch(() => {});
+  } catch {
+    // Ignore in unsupported environments
+  }
+}
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");

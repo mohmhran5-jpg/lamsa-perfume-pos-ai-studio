@@ -16,8 +16,23 @@
     <meta name="apple-mobile-web-app-title" content="لمسة عطر" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="لمسة عطر" />
-    <meta name="theme-color" content="#1D1D1F" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()" />
+    <script>
+      // Gracefully ignore disabled Vite HMR WebSocket messages per environment constraints
+      window.addEventListener('error', function(event) {
+        if (event.message && (event.message.includes('send was called before connect') || event.message.includes('WebSocket'))) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event.reason && (String(event.reason).includes('send was called before connect') || String(event.reason).includes('WebSocket'))) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      }, true);
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

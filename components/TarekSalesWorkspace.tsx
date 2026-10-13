@@ -9,7 +9,12 @@ import {
   CommissionPolicy,
   CustomerFollowUpTask,
   StagnantPerfumeItem,
-  MarketingPostIdea
+  MarketingPostIdea,
+  DashboardCardStyle,
+  resolveUserDashboardCardStyle,
+  saveUserDashboardCardStyle,
+  resolveUserDashboardCardsOrder,
+  saveUserDashboardCardsOrder
 } from '../types';
 import { calculateExactDailyCommission, loadCommissionPolicies } from '../services/staffEntitlementsService';
 import {
@@ -41,7 +46,11 @@ import {
   Send,
   ExternalLink,
   ShieldCheck,
-  Filter
+  Filter,
+  Palette,
+  ArrowUp,
+  ArrowDown,
+  Sliders
 } from 'lucide-react';
 
 interface TarekSalesWorkspaceProps {
@@ -83,6 +92,36 @@ export const TarekSalesWorkspace: React.FC<TarekSalesWorkspaceProps> = ({
   const [activeTab, setActiveTab] = useState<
     'performance' | 'activation_tasks' | 'customers_crm' | 'stagnant_perfumes' | 'marketing_studio' | 'paper_book_ledger'
   >('performance');
+
+  // Per-user dashboard card style & reordering state
+  const [cardStyle, setCardStyle] = useState<DashboardCardStyle>(() =>
+    resolveUserDashboardCardStyle(currentUser?.id)
+  );
+
+  const [cardsOrder, setCardsOrder] = useState<string[]>(() =>
+    resolveUserDashboardCardsOrder(currentUser?.id)
+  );
+
+  const [isCardCustomizerOpen, setIsCardCustomizerOpen] = useState<boolean>(false);
+
+  const handleSelectCardStyle = (newStyle: DashboardCardStyle) => {
+    setCardStyle(newStyle);
+    saveUserDashboardCardStyle(newStyle, currentUser?.id);
+  };
+
+  const handleMoveCard = (cardKey: string, direction: 'up' | 'down') => {
+    const index = cardsOrder.indexOf(cardKey);
+    if (index === -1) return;
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= cardsOrder.length) return;
+
+    const newOrder = [...cardsOrder];
+    const [moved] = newOrder.splice(index, 1);
+    newOrder.splice(newIndex, 0, moved);
+
+    setCardsOrder(newOrder);
+    saveUserDashboardCardsOrder(newOrder, currentUser?.id);
+  };
 
   // Copied feedback flash
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -167,6 +206,29 @@ export const TarekSalesWorkspace: React.FC<TarekSalesWorkspaceProps> = ({
     const policies = loadCommissionPolicies();
     return calculateExactDailyCommission(sales, 'طارق', todayKey, policies[0]);
   }, [todayKey, sales]);
+
+  // Cumulative Unwithdrawn Commission calculation for Tarek since start of month
+  const monthlyUnwithdrawnCommission = useMemo(() => {
+    const currentMonthPrefix = todayKey.slice(0, 7); // '2026-10'
+    const monthSales = sales.filter(s => !s.isReversed && s.date.slice(0, 7) === currentMonthPrefix);
+
+    const policies = loadCommissionPolicies();
+    let totalMonthEarned = 0;
+
+    const salesByDay = new Map<string, Sale[]>();
+    monthSales.forEach(s => {
+      const dKey = s.date.slice(0, 10);
+      const existing = salesByDay.get(dKey) || [];
+      salesByDay.set(dKey, [...existing, s]);
+    });
+
+    salesByDay.forEach((daySales, dKey) => {
+      const commRes = calculateExactDailyCommission(sales, 'طارق', dKey, policies[0]);
+      totalMonthEarned += commRes.calculatedCommissionEgp || commRes.totalCommissionEgp || 0;
+    });
+
+    return Math.round(totalMonthEarned);
+  }, [sales, todayKey]);
 
   // Achievement percentages and remaining gaps
   const revenueProgressPct = Math.min(100, Math.round((todayGrossSales / dailyTargetRevenue) * 100));
@@ -502,8 +564,144 @@ export const TarekSalesWorkspace: React.FC<TarekSalesWorkspaceProps> = ({
             <Award size={15} />
             <span>عمولاتي ومستحقاتي</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setIsCardCustomizerOpen((prev) => !prev)}
+            className="px-3.5 py-2.5 rounded-2xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-900 dark:text-purple-300 border border-purple-500/30 font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+          >
+            <Palette size={15} />
+            <span>نمط وترتيب البطاقات 🎨</span>
+          </button>
         </div>
       </div>
+
+      {/* CARD STYLE & REORDERING CUSTOMIZER PANEL */}
+      {isCardCustomizerOpen && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-white/95 dark:bg-[#1D1D1F]/95 backdrop-blur-2xl border-2 border-purple-500/40 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-purple-600 text-white flex items-center justify-center font-black shadow-md">
+                <Palette size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
+                  تخصيص نمط وترتيب بطاقات الداشبورد (خاص بحسابك فقط) 🎨
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  اختر الشكل البصري ورتب بطاقات الأداء حسب أولوياتك دون التأثير على المستخدمين الآخرين
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsCardCustomizerOpen(false)}
+              className="w-8 h-8 rounded-full bg-slate-100 dark:bg-white/10 hover:bg-slate-200 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-xs cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Section 1: Card Style Selector */}
+          <div className="space-y-2">
+            <span className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+              1. اختر نمط تصميم البطاقات المفضّل لديك:
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {[
+                {
+                  id: 'liquid_glass' as DashboardCardStyle,
+                  title: '💧 زجاج سائل (Liquid Glass)',
+                  desc: 'خلفية زجاجية شفافة متوهجة مع حواف أبل البراقة',
+                  badge: 'الافتراضي'
+                },
+                {
+                  id: 'apple_sleek' as DashboardCardStyle,
+                  title: '🍏 أبل أنيق (Apple Sleek)',
+                  desc: 'تصميم نقي وبسيط بحواف ناعمة مريحة للعين',
+                  badge: 'نقي وعصري'
+                },
+                {
+                  id: 'classic_clean' as DashboardCardStyle,
+                  title: '🏛️ كلاسيكي (Classic Clean)',
+                  desc: 'بطاقات صلبة واضحة ومحددة بتنسيق قياسي',
+                  badge: 'عالي التباين'
+                }
+              ].map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => handleSelectCardStyle(st.id)}
+                  className={`p-3.5 rounded-2xl border-2 text-right transition-all cursor-pointer flex flex-col justify-between space-y-2 ${
+                    cardStyle === st.id
+                      ? 'bg-purple-50 dark:bg-purple-950/40 border-purple-600 text-purple-950 dark:text-purple-200 shadow-md'
+                      : 'bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 hover:border-purple-300 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-xs">{st.title}</span>
+                    {cardStyle === st.id && (
+                      <span className="px-2 py-0.5 rounded-full bg-purple-600 text-white text-[10px] font-black">
+                        مُفعل ✓
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{st.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 2: Card Order Management */}
+          <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-white/10">
+            <span className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+              2. تحكم بظهور وترتيب بطاقات الأداء (استخدم الأسهُم للتقديم أو التأخير):
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {cardsOrder.map((cardKey, index) => {
+                const cardLabels: Record<string, string> = {
+                  contribution_center: '🎯 مركز المساهمة والتعادل والتارجت',
+                  raw_material_cost: '🔒 المبلغ المفترض عزله بالدرج للزيوت',
+                  unwithdrawn_commission: '👑 العمولة التراكمية غير المسحوبة',
+                  sales_revenue: '📈 مبيعات اليوم المحققة والهدف',
+                  bottles_sold: '🛍️ العبوات المباعة اليوم',
+                  live_commission: '🏆 عمولتي المستحقة اليوم',
+                  performance_analysis: '⚡ تحليل الموقف البيعي ومسار التعادل'
+                };
+                return (
+                  <div
+                    key={cardKey}
+                    className="p-3 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                      {index + 1}. {cardLabels[cardKey] || cardKey}
+                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={() => handleMoveCard(cardKey, 'up')}
+                        className="w-7 h-7 rounded-xl bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 disabled:opacity-30 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold cursor-pointer"
+                        title="تقديم للأعلى"
+                      >
+                        <ArrowUp size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === cardsOrder.length - 1}
+                        onClick={() => handleMoveCard(cardKey, 'down')}
+                        className="w-7 h-7 rounded-xl bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 disabled:opacity-30 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold cursor-pointer"
+                        title="تأخير للأسفل"
+                      >
+                        <ArrowDown size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ======================================================== */}
       {/* WORKSPACE NAVIGATION TABS (Apple Segmented Glass Control) */}
@@ -542,7 +740,134 @@ export const TarekSalesWorkspace: React.FC<TarekSalesWorkspaceProps> = ({
       {/* ======================================================== */}
       {activeTab === 'performance' && (
         <div className="space-y-4">
-                    {/* 🔒 RAW MATERIAL COST ISOLATION & RESTOCK GUARD CARD FOR TAREK */}
+          {/* 🎯 TOP PRIORITY: CONTRIBUTION CENTER & TARGET CARD WITH GEMINI ANIMATED BORDER */}
+          <div className="gemini-animated-border-wrapper">
+            <div className="rounded-3xl p-5 sm:p-6 bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl text-slate-900 dark:text-white shadow-2xl space-y-4">
+              {/* Header & Badges */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3.5 border-b border-slate-200/80 dark:border-white/10">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#4285F4] via-[#9B72CB] to-[#D9657B] text-white flex items-center justify-center font-black shadow-lg shadow-purple-500/20 shrink-0">
+                    <Target size={26} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-3 py-0.5 rounded-full bg-gradient-to-r from-blue-500/15 via-purple-500/15 to-pink-500/15 text-blue-700 dark:text-purple-300 border border-purple-500/30 text-[11px] font-black flex items-center gap-1.5">
+                        <Sparkles size={13} className="text-purple-500 animate-pulse" />
+                        <span>مركز المساهمة والتعادل والتارجت اليومي 🎯</span>
+                      </span>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10.5px] font-black border ${
+                        paceStatus === 'ahead'
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                          : paceStatus === 'on_track'
+                          ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30'
+                          : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 animate-pulse'
+                      }`}>
+                        {paceStatus === 'ahead' ? '🌟 متجاوز للهدف اليومي' : paceStatus === 'on_track' ? '🟢 على المسار المستهدف' : '⚠️ جاري تسريع الأداء اليومي'}
+                      </span>
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-black text-slate-950 dark:text-white mt-1">
+                      المساهمة المحققة اليوم والهدف المطلوب لسد فجوة التعادل
+                    </h3>
+                  </div>
+                </div>
+
+                {/* Target & Realized Contribution Totals */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="px-4 py-2.5 rounded-2xl bg-slate-100/80 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-right">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-bold block">
+                      هدف المساهمة اليومية:
+                    </span>
+                    <span className="text-xl font-black font-mono text-slate-900 dark:text-white">
+                      {targetContribution.toLocaleString('ar-EG')} {settings.currency}
+                    </span>
+                  </div>
+
+                  <div className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md text-right">
+                    <span className="text-[11px] font-black block opacity-90">
+                      المساهمة المحققة فعلياً:
+                    </span>
+                    <span className="text-2xl font-black font-mono">
+                      {todayContribution.toLocaleString('ar-EG')} {settings.currency}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Progress Bar & Indicators */}
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-black text-slate-700 dark:text-slate-200">
+                    <span>نسبة إنجاز مستهدف المساهمة اليومية ({contributionProgressPct}%):</span>
+                    <span className="font-mono text-amber-600 dark:text-amber-400">
+                      {remainingContribution === 0 ? '✓ تم تغطية كامل الهدف بكفاءة!' : `متبقي للهدف: ${remainingContribution.toLocaleString('ar-EG')} ${settings.currency}`}
+                    </span>
+                  </div>
+                  <div className="w-full h-3 rounded-full bg-slate-100 dark:bg-white/10 overflow-hidden p-0.5 border border-slate-200/60 dark:border-white/5">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#4285F4] via-[#9B72CB] via-amber-500 to-emerald-500 transition-all duration-700 shadow-sm"
+                      style={{ width: `${contributionProgressPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* 3 Pillars */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1">
+                  {/* Pillar 1 */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50/80 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 space-y-1.5">
+                    <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                      <span className="font-black text-xs">1. تغطية المصروفات الثابتة (التعادل):</span>
+                      <span className="font-mono font-bold text-amber-600 dark:text-amber-400">{fixedExpenseCoveredPct}%</span>
+                    </div>
+                    <p className="text-[11.5px] text-slate-600 dark:text-slate-300 leading-normal">
+                      المصروف الثابت اليومي للتعادل: <strong className="font-mono text-slate-900 dark:text-white">{breakEvenFixedExpense} ج.م</strong>.
+                      {todayContribution >= breakEvenFixedExpense ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold block pt-1">
+                          ✓ تم أمان التعادل وتحقيق ما بعده أرباحاً صافية!
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400 font-bold block pt-1">
+                          متبقي لنقطة التعادل: {remainingFixedExpense} ج.م مساهمة.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Pillar 2 */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50/80 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 space-y-1.5">
+                    <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                      <span className="font-black text-xs">2. معادلة حساب المساهمة:</span>
+                      <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{todayGrossSales} ج.م مبيعات</span>
+                    </div>
+                    <p className="text-[11.5px] text-slate-600 dark:text-slate-300 leading-normal">
+                      المساهمة = (الإجمالي {todayGrossSales} ج) - (تكلفة الخامات المباشرة {todayCost} ج).
+                      تضمن بقاء أموال الشراء والتوريد آمنة بالدرج.
+                    </p>
+                  </div>
+
+                  {/* Pillar 3 */}
+                  <div className="p-3.5 rounded-2xl bg-blue-50/80 dark:bg-purple-950/20 border border-blue-200/80 dark:border-purple-800/30 space-y-1.5">
+                    <div className="flex justify-between items-center text-blue-900 dark:text-purple-200">
+                      <span className="font-black text-xs">3. العبوات المتبقية للتارجت:</span>
+                      <span className="font-mono font-bold">~{remainingBottlesEst} عبوة</span>
+                    </div>
+                    <p className="text-[11.5px] text-blue-900 dark:text-purple-200 leading-normal">
+                      {remainingContribution === 0 ? (
+                        <span className="text-emerald-600 dark:text-emerald-300 font-bold">
+                          🎉 تم تحقيق كامل مستهدف المساهمة اليومي بنجاح!
+                        </span>
+                      ) : (
+                        <>
+                          سد الفجوة ببيع <strong>{remainingBottles50Ml} عبوات 50مل</strong> (مساهمة 82ج) أو <strong>{remainingBottles30Ml} عبوات 30مل</strong> (مساهمة 51ج).
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 🔒 RAW MATERIAL COST ISOLATION & RESTOCK GUARD CARD FOR TAREK */}
           <div className="rounded-3xl p-4 sm:p-5 bg-gradient-to-r from-amber-950 via-slate-900 to-slate-950 text-white border-2 border-amber-500/40 shadow-xl space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
               <div className="flex items-center gap-3">
@@ -583,6 +908,101 @@ export const TarekSalesWorkspace: React.FC<TarekSalesWorkspaceProps> = ({
                   يا طارق، مبلغ الـ <strong className="font-mono text-amber-300 text-sm px-1 font-black">{todayCost.toLocaleString("ar-EG")} {settings.currency}</strong> هو التكلفة المباشرة للزيوت العطرية والعبوات التي بيعت اليوم. **يُمنع بتاتاً سحب هذا المبلغ أو صرفه لأي بند مصروفات أو نثريات أو رواتب**، حيث يُعزل بالدرج ويُرحل لحساب توريد المخزون حتى لا يحدث عجز في مشتريات الزيوت العادلة!
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* CUMULATIVE MONTHLY UNWITHDRAWN COMMISSION & PSYCHOLOGICAL MOTIVATION CARD */}
+          <div className="rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-amber-500/10 via-purple-500/10 to-slate-900 border-2 border-amber-400/40 text-slate-900 dark:text-white shadow-2xl space-y-4 apple-glass backdrop-blur-2xl">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3.5 border-b border-black/10 dark:border-white/10">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-lg shrink-0">
+                  <Award size={26} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-900 dark:text-amber-300 border border-amber-500/40 text-[10px] font-black">
+                      رصيد طارق التراكمي الفاخر 👑
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                      تتبع الرصيد المتجدد من {new Date().toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' })}
+                    </span>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-amber-300 mt-0.5">
+                    العمولة التراكمية غير المسحوبة والعمولة الجديدة لليوم
+                  </h3>
+                </div>
+              </div>
+
+              {/* Badges Display */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="px-4 py-2.5 rounded-2xl bg-white/80 dark:bg-black/50 border border-amber-500/30 text-right">
+                  <span className="text-[10px] text-slate-500 dark:text-amber-200/80 font-bold block">
+                    عمولة اليوم الجديدة:
+                  </span>
+                  <span className="text-xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                    +{Number(todayCommission.calculatedCommissionEgp || 0).toLocaleString('ar-EG')} {settings.currency}
+                  </span>
+                </div>
+
+                <div className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 shadow-md text-right">
+                  <span className="text-[10px] font-bold block opacity-90">
+                    العمولة التراكمية بالخزينة (لم تُسحب):
+                  </span>
+                  <span className="text-2xl font-black font-mono">
+                    {monthlyUnwithdrawnCommission.toLocaleString('ar-EG')} {settings.currency}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Psychological & Behavioral Sales Coaching Trigger */}
+            <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-950/60 border border-amber-500/25 space-y-2.5">
+              <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-black text-xs">
+                <Sparkles size={16} className="text-amber-500 animate-pulse" />
+                <span>الرسالة التحفيزية والنفسية لليوم (Sales Psychology Coaching):</span>
+              </div>
+              <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-medium">
+                «يا طارق، رصيدك التراكمي المتاح بانتظارك بالخزينة وهو ينمو باستمرار كلما أتممت عملية بيع جديدة! 🌿
+                أنت الآن على بُعد <strong className="font-mono text-amber-600 dark:text-amber-300 font-black text-sm underline">{remainingBottles50Ml} عبوات 50 مل</strong> فقط لتغطية مستهدف اليوم والانتقال لشريحة العمولات الذهبية (+20% بونوس)!
+                استثمر الإقبال اليوم برسم البسمة وترشيح عبوات الـ 50 مل أو الميكس العطري الفاخر لزيادة متوسط الفاتورة وإضافة أرباح حقيقية لعمولتك فوراً.»
+              </p>
+
+              {/* Progress bar towards monthly milestone */}
+              <div className="space-y-1 pt-1">
+                <div className="flex justify-between text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                  <span>مستوى التراكم الشهري لعمولتك:</span>
+                  <span className="font-mono text-amber-600 dark:text-amber-400">
+                    {monthlyUnwithdrawnCommission} ج.م / المستهدف 2,000 ج.م
+                  </span>
+                </div>
+                <div className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400 transition-all duration-700"
+                    style={{ width: `${Math.min(100, Math.round((monthlyUnwithdrawnCommission / 2000) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex items-center gap-2.5 flex-wrap pt-1">
+              <button
+                type="button"
+                onClick={onNavigateToPOS}
+                className="apple-btn px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md flex items-center gap-2 cursor-pointer"
+              >
+                <ShoppingBag size={16} />
+                <span>الانتقال للكاشير وإصدار بيع جديد 🛒</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('stagnant_perfumes')}
+                className="apple-btn px-4 py-2.5 rounded-xl bg-white/80 dark:bg-white/10 hover:bg-white text-slate-900 dark:text-white font-bold text-xs border border-black/10 dark:border-white/15 flex items-center gap-2 cursor-pointer"
+              >
+                <Box size={16} className="text-amber-500" />
+                <span>عرض خطة تنشيط العطور الراكدة 🧴</span>
+              </button>
             </div>
           </div>
 

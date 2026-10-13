@@ -11,6 +11,7 @@ import {
   ThemeSurfaceStyleId,
   SiteHeadingColorMode,
   resolveActiveAppTheme,
+  saveUserThemePreference,
   convertDigitsToSystem,
 } from '../types';
 import {
@@ -344,7 +345,7 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
 
   const handleSelectTheme = (theme: AppThemeDefinition) => {
     try {
-      localStorage.setItem('lamsa_active_theme_v1', theme.id);
+      saveUserThemePreference(theme.id);
     } catch {}
     onUpdateSettings((prev) => ({
       ...prev,
@@ -353,8 +354,8 @@ export const AppleThemeStudioPanel: React.FC<AppleThemeStudioPanelProps> = ({
     }));
     if (onNotify) {
       onNotify(
-        `تم تفعيل ثيم: ${theme.nameAr}`,
-        `${theme.moodDescription} (${theme.fragranceInspiration})`,
+        `تم تفعيل الثيم الخاص بحسابك: ${theme.nameAr}`,
+        `تطبيق مستقل على واجهتك دون إجبار بقية المستخدمين (${theme.fragranceInspiration})`,
         theme.badge
       );
     }

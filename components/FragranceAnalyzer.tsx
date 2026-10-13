@@ -43,7 +43,8 @@ import {
   TrendingUp,
   DollarSign,
   ShoppingCart,
-  Share2
+  Share2,
+  Package,
 } from 'lucide-react';
 
 interface FragranceAnalyzerProps {
@@ -82,8 +83,59 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
   const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
   const [adminStatusMessage, setAdminStatusMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'analyzer' | 'profitable_blends'>('analyzer');
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'profitable_blends' | 'demand_forecast'>('analyzer');
   const [copiedFormulaNotice, setCopiedFormulaNotice] = useState<string | null>(null);
+
+  // Next Week Expected Demand Forecast based on previous month's sales velocity & low stock alerts
+  const nextWeekDemandForecast = useMemo(() => {
+    const last30DaysGramsMap = new Map<string, number>();
+
+    (sales || []).forEach(s => {
+      if (!s.isReversed && isLiveProductionSale(s)) {
+        (s.items || []).forEach(it => {
+          const grams = Number(it.essenceGrams) || 0;
+          const matchedProd = products.find(
+            p => String(p.id) === String(it.productId) || p.name.trim().toLowerCase() === (it.productName || '').trim().toLowerCase()
+          );
+          if (matchedProd) {
+            const key = String(matchedProd.id);
+            const prevGrams = last30DaysGramsMap.get(key) || 0;
+            last30DaysGramsMap.set(key, prevGrams + grams);
+          }
+        });
+      }
+    });
+
+    const items = products.map(p => {
+      const gramsSoldPastMonth = last30DaysGramsMap.get(String(p.id)) || 0;
+      const dailyVelocityGrams = gramsSoldPastMonth / 30;
+      const expectedDemandNextWeekGrams = gramsSoldPastMonth > 0 ? Math.ceil(dailyVelocityGrams * 7) : 15;
+      const expectedBottles50MlNextWeek = Math.ceil(expectedDemandNextWeekGrams / 15);
+      const currentStockGrams = p.stock_grams || 0;
+      const isLowStockDeficit = currentStockGrams < expectedDemandNextWeekGrams;
+      const deficitGrams = isLowStockDeficit ? expectedDemandNextWeekGrams - currentStockGrams : 0;
+
+      return {
+        product: p,
+        gramsSoldPastMonth,
+        dailyVelocityGrams: Number(dailyVelocityGrams.toFixed(1)),
+        expectedDemandNextWeekGrams,
+        expectedBottles50MlNextWeek,
+        currentStockGrams,
+        isLowStockDeficit,
+        deficitGrams,
+      };
+    });
+
+    const deficitCount = items.filter(i => i.isLowStockDeficit).length;
+    const totalNextWeekDemandGrams = items.reduce((sum, i) => sum + i.expectedDemandNextWeekGrams, 0);
+
+    return {
+      items: items.sort((a, b) => (b.isLowStockDeficit ? 1 : 0) - (a.isLowStockDeficit ? 1 : 0) || b.expectedDemandNextWeekGrams - a.expectedDemandNextWeekGrams),
+      deficitCount,
+      totalNextWeekDemandGrams,
+    };
+  }, [sales, products]);
 
   // Monthly Best Sellers Analysis & Profitable Blend Recommendations
   const monthlyBestSellersAnalysis = useMemo(() => {
@@ -489,6 +541,26 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
           <span>محلل واقتراحات الخلطات الأكثر ربحية (مبيعات الشهر)</span>
           <span className="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-900 text-[10px] font-black">ذكاء المبيعات</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('demand_forecast')}
+          className={`apple-btn px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'demand_forecast'
+              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+          }`}
+        >
+          <TrendingUp size={15} />
+          <span>الطلب المتوقع للأسبوع القادم والتنبيهات</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+            nextWeekDemandForecast.deficitCount > 0
+              ? 'bg-rose-500 text-white animate-pulse'
+              : 'bg-emerald-500/20 text-emerald-800'
+          }`}>
+            {nextWeekDemandForecast.deficitCount > 0 ? `⚠️ ${nextWeekDemandForecast.deficitCount} نواقص` : 'آمن ✓'}
+          </span>
+        </button>
       </div>
 
       {/* IF TAB IS PROFITABLE BLENDS */}
@@ -649,6 +721,127 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
             </div>
           </div>
         </div>
+      ) : activeTab === 'demand_forecast' ? (
+        /* TAB: NEXT WEEK EXPECTED DEMAND FORECAST & LOW STOCK ALERTS */
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Summary Overview Header Card */}
+          <div className="p-5 rounded-3xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 text-white border border-blue-800/40 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-blue-800/30">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-black shadow-lg shrink-0">
+                  <TrendingUp size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-blue-200">
+                    الطلب المتوقع للأسبوع القادم وتحليل المخزون الحرج
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    توقعات دقيقة لحجم السحب بالجرام بناءً على معدلات مبيعات الشهر السابق لتجنب نفاد المخزون المفاجئ.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="px-4 py-2 rounded-2xl bg-white/10 border border-blue-400/30 text-right">
+                  <span className="text-[10px] text-blue-200 font-bold block">إجمالي الطلب المتوقع (7 أيام):</span>
+                  <span className="text-lg font-black font-mono text-amber-300">
+                    {nextWeekDemandForecast.totalNextWeekDemandGrams.toLocaleString('ar-EG')} جم زيت
+                  </span>
+                </div>
+
+                <div className={`px-4 py-2 rounded-2xl border text-right ${
+                  nextWeekDemandForecast.deficitCount > 0
+                    ? 'bg-rose-500/20 border-rose-500/40 text-rose-200 animate-pulse'
+                    : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
+                }`}>
+                  <span className="text-[10px] font-bold block">تنبيهات عجز المخزون:</span>
+                  <span className="text-lg font-black font-mono">
+                    {nextWeekDemandForecast.deficitCount > 0
+                      ? `⚠️ ${nextWeekDemandForecast.deficitCount} أصناف حرجة`
+                      : '✅ المخزون أمان 100%'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              💡 <strong>معادلة التوقع الذكية:</strong> يتم حساب معدل السحب اليومي الفعلي لكل عطر في الـ 30 يوماً الماضية وضرب الناتج في 7 أيام لتوقع كمية الزيت المطلوبة بدقة للأسبوع القادم.
+            </p>
+          </div>
+
+          {/* Forecast & Deficit Items Table */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1D1D1F] border border-black/[0.08] shadow-apple-xs space-y-3">
+            <h4 className="text-sm font-black text-[#1D1D1F] dark:text-white flex items-center gap-2">
+              <Package size={16} className="text-blue-600" />
+              <span>جدول توقعات السحب وتنبيهات إعادة التوريد ({nextWeekDemandForecast.items.length} عطر)</span>
+            </h4>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead>
+                  <tr className="border-b border-black/[0.08] text-[#86868B] font-bold">
+                    <th className="p-2.5">اسم العطر والنوع</th>
+                    <th className="p-2.5">مبيعات الشهر الماضي</th>
+                    <th className="p-2.5">السحب اليومي</th>
+                    <th className="p-2.5">الطلب المتوقع (7 أيام)</th>
+                    <th className="p-2.5">المخزون الحالي</th>
+                    <th className="p-2.5">حالة الأمان والتنبيه</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/[0.05]">
+                  {nextWeekDemandForecast.items.map(({ product, gramsSoldPastMonth, dailyAverageGrams, expectedDemandNextWeekGrams, expectedBottles50MlNextWeek, currentStockGrams, isLowStockDeficit, deficitGrams }) => (
+                    <tr
+                      key={product.id}
+                      className={`hover:bg-black/[0.02] transition-colors ${
+                        isLowStockDeficit ? 'bg-rose-500/5' : ''
+                      }`}
+                    >
+                      <td className="p-2.5 font-bold text-[#1D1D1F] dark:text-white">
+                        <div className="flex items-center gap-2">
+                          {isLowStockDeficit && <AlertTriangle size={15} className="text-rose-600 shrink-0 animate-bounce" />}
+                          <div>
+                            <span className="block font-black text-xs">{product.name}</span>
+                            <span className="text-[10px] text-[#86868B]">{product.brand} · {product.type}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="p-2.5 font-mono font-bold">
+                        {gramsSoldPastMonth} جم
+                      </td>
+
+                      <td className="p-2.5 font-mono text-[#86868B]">
+                        {dailyAverageGrams} جم/يوم
+                      </td>
+
+                      <td className="p-2.5 font-mono font-black text-[#0071E3]">
+                        {expectedDemandNextWeekGrams} جم ({expectedBottles50MlNextWeek} عبوات 50مل)
+                      </td>
+
+                      <td className="p-2.5 font-mono font-black">
+                        <span className={isLowStockDeficit ? 'text-rose-600' : 'text-slate-900 dark:text-white'}>
+                          {currentStockGrams} جم
+                        </span>
+                      </td>
+
+                      <td className="p-2.5">
+                        {isLowStockDeficit ? (
+                          <span className="px-2.5 py-1 rounded-xl bg-rose-500/15 text-rose-800 border border-rose-500/30 font-black text-[11px] inline-flex items-center gap-1">
+                            ⚠️ عجز متوقع: {deficitGrams} جم زيت
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-800 border border-emerald-500/30 font-bold text-[11px] inline-flex items-center gap-1">
+                            ✅ آمن ومستقر
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       ) : (
         /* IF TAB IS ANALYZER / ENCYCLOPEDIA (Existing Grid) */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -792,6 +985,85 @@ const FragranceAnalyzer: React.FC<FragranceAnalyzerProps> = ({
                     {activeProfile?.generalCharacter || `التصنيف: ${selectedProduct?.type} · المنشأ: ${selectedProduct?.origin} · رصيد المخزون: ${selectedProduct?.stock_grams} جم`}
                   </p>
                 </div>
+
+              {/* 🔮 NEXT WEEK'S DEMAND FORECAST & STOCK DEFICIT ALERT */}
+              {selectedProduct && (() => {
+                const currentMonthStr = new Date().toISOString().slice(0, 7);
+                let salesGramsThisMonth = 0;
+                (sales || []).forEach(s => {
+                  if (s.date && s.date.startsWith(currentMonthStr) && isLiveProductionSale(s)) {
+                    (s.items || []).forEach(it => {
+                      if (String(it.productId) === String(selectedProduct.id) || (it.productName || '').trim().toLowerCase() === selectedProduct.name.trim().toLowerCase()) {
+                        salesGramsThisMonth += Number(it.essenceGrams) || 0;
+                      }
+                    });
+                  }
+                });
+
+                const dailyBurnGrams = salesGramsThisMonth > 0 ? (salesGramsThisMonth / 30) : 5;
+                const nextWeekProjectedDemandGrams = Math.max(35, Math.ceil(dailyBurnGrams * 7));
+                const currentStockGrams = selectedProduct.stock_grams || 0;
+                const isInsufficient = currentStockGrams < nextWeekProjectedDemandGrams;
+                const deficitGrams = Math.max(0, nextWeekProjectedDemandGrams - currentStockGrams);
+
+                return (
+                  <div className={`p-4 sm:p-5 rounded-3xl border transition-all space-y-3 ${
+                    isInsufficient
+                      ? 'bg-rose-500/[0.08] dark:bg-rose-950/30 border-rose-500/40 text-rose-950 dark:text-rose-100 shadow-md'
+                      : 'bg-emerald-500/[0.06] dark:bg-emerald-950/20 border-emerald-500/30 text-emerald-950 dark:text-emerald-100'
+                  }`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-sm font-black ${
+                          isInsufficient ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
+                        }`}>
+                          {isInsufficient ? <AlertTriangle size={20} className="animate-pulse" /> : <TrendingUp size={20} />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-sm font-black">الطلب المتوقع للأسبوع القادم (Next 7 Days Forecast)</h4>
+                            <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-black border ${
+                              isInsufficient
+                                ? 'bg-rose-600 text-white border-rose-500 animate-pulse'
+                                : 'bg-emerald-600 text-white border-emerald-500'
+                            }`}>
+                              {isInsufficient ? '🚨 مخزون غير كافٍ - عجز متوقع' : '✅ رصيد كافٍ ومستقر'}
+                            </span>
+                          </div>
+                          <p className="text-xs opacity-80 mt-0.5">
+                            محسوب بناءً على مبيعات وسحوبات الشهر السابق ({salesGramsThisMonth} جم زيت مباع هذا الشهر).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-left bg-white/80 dark:bg-slate-900/80 p-3 rounded-2xl border border-black/10 shrink-0">
+                        <span className="text-[10px] font-bold opacity-75 block text-right sm:text-left">الطلب المتوقع:</span>
+                        <span className="text-lg font-black font-mono text-purple-700 dark:text-purple-300 block text-right sm:text-left">
+                          {nextWeekProjectedDemandGrams} جم
+                        </span>
+                        <span className="text-[10px] font-mono opacity-80 block text-right sm:text-left">
+                          الرصيد الحالي: {currentStockGrams} جم
+                        </span>
+                      </div>
+                    </div>
+
+                    {isInsufficient && (
+                      <div className="p-3 rounded-2xl bg-rose-600 text-white text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
+                        <span>⚠️ عجز متوقع بمقدار <strong>{deficitGrams} جم</strong> خلال الأسبوع القادم — يرجى إعادة الطلب لتفادي النفاد!</span>
+                        {onNavigateToPOS && (
+                          <button
+                            type="button"
+                            onClick={() => onNavigateToPOS(selectedProduct)}
+                            className="px-3 py-1.5 rounded-xl bg-white text-rose-900 hover:bg-slate-100 text-xs font-black shrink-0 cursor-pointer shadow-2xs"
+                          >
+                            طلب توريد / تزويد
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
                 <div className="flex items-center gap-2">
                   {/* Approve button for unapproved profiles */}

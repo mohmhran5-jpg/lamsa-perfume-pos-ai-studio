@@ -825,6 +825,7 @@ const App: React.FC = () => {
       return () => clearInterval(timer);
     }
   }, [
+    effectiveUser?.id,
     settings.activeThemeId,
     settings.themeAmbientGlow,
     settings.themeGlassIntensity,

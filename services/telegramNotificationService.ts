@@ -175,7 +175,7 @@ export const dispatchExpenseTelegramAlert = async (
 📝 <b>البيان:</b> ${expense.title || expense.category}
 💰 <b>المبلغ:</b> ${expense.amount.toLocaleString('ar-EG')} ${currency}
 📂 <b>الفئة:</b> ${expense.category}
-👨‍د <b>بواسطة:</b> ${expense.recordedBy || 'الإدارة'}
+👨‍د <b>بواسطة:</b> ${(expense as any).recordedBy || 'الإدارة'}
 ⏱️ <b>التاريخ:</b> ${expense.date}`;
 
   const res = await sendTelegramMessage(config.botToken, config.chatId, text);
