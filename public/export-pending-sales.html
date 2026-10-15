@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>تصدير المبيعات المعلّقة — لمسة عطر</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f5f5f7; color: #1d1d1f; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; padding: 24px; display: grid; place-items: center; }
+    main { width: min(100%, 620px); padding: 32px; border: 1px solid #e4e4e7; border-radius: 20px; background: #fff; box-shadow: 0 12px 36px #1d1d1f12; }
+    h1 { margin: 0 0 12px; font-size: clamp(1.35rem, 4vw, 1.8rem); }
+    p { color: #52525b; line-height: 1.8; }
+    ul { padding-inline-start: 1.25rem; color: #52525b; line-height: 1.8; }
+    button { width: 100%; margin-top: 12px; padding: 14px 18px; border: 0; border-radius: 12px; background: #1d1d1f; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    button:hover { background: #38383b; }
+    button:focus-visible { outline: 3px solid #7c3aed; outline-offset: 3px; }
+    #result { min-height: 1.8em; margin-top: 16px; font-weight: 600; }
+    .notice { margin-top: 20px; padding: 12px 14px; border-radius: 10px; background: #f4f4f5; font-size: .94rem; }
+    .small { font-size: .88rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>تصدير المبيعات غير المتزامنة</h1>
+    <p>ينشئ هذا الزر ملف JSON محلياً من طابور المزامنة في هذا المتصفح، لمراجعته قبل أي استعادة.</p>
+    <ul>
+      <li>يضم مبيعات الطابور المعلّقة أو الجاري مزامنتها أو الفاشلة فقط.</li>
+      <li>يحتفظ بمعرّف البيع وتاريخه وطريقة الدفع والبنود والكميات وأسعار البيع والخصم ونقاط الولاء اللازمة للمراجعة.</li>
+      <li>لا يتضمن أسماء العملاء أو هواتفهم أو بريدهم، ولا تكاليف المنتجات أو الأرباح أو العمولات.</li>
+    </ul>
+    <button id="download" type="button">تنزيل ملف المبيعات المعلّقة</button>
+    <div id="result" role="status" aria-live="polite"></div>
+    <div class="notice">لا يرفع هذا التصدير أي بيانات إلى خادم، ولا يغيّر أو يمسح الطابور المحفوظ في المتصفح.</div>
+    <p class="small">افتح هذه الصفحة على الجهاز والمتصفح اللذين يحتويان على المبيعات المعلّقة. احتفظ بالملف لمراجعته قبل استعادة أي سجل.</p>
+  </main>
+  <script>
+    (() => {
+      'use strict';
+      const QUEUE_KEY = 'lamsa_offline_queue_v1';
+      const UNSYNCED_STATUSES = new Set(['معلق', 'جاري المزامنة', 'فشل']);
+      const $button = document.getElementById('download');
+      const $result = document.getElementById('result');
+
+      const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+      const safeString = (value, maxLength = 160) => typeof value === 'string' ? value.slice(0, maxLength) : undefined;
+      const safeNumber = (value) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+      const put = (target, key, value) => { if (value !== undefined) target[key] = value; };
+
+      function cleanMixComponent(component) {
+        if (!isRecord(component)) return null;
+        const result = {};
+        put(result, 'productId', typeof component.productId === 'string' || typeof component.productId === 'number' ? component.productId : undefined);
+        put(result, 'productName', safeString(component.productName));
+        put(result, 'brand', safeString(component.brand));
+        put(result, 'productType', safeString(component.productType, 80));
+        put(result, 'grams', safeNumber(component.grams));
+        put(result, 'percentage', safeNumber(component.percentage));
+        return result;
+      }
+
+      function cleanSaleItem(item) {
+        if (!isRecord(item)) return null;
+        const result = {};
+        put(result, 'id', safeString(item.id));
+        put(result, 'productId', typeof item.productId === 'string' || typeof item.productId === 'number' ? item.productId : undefined);
+        put(result, 'productName', safeString(item.productName));
+        put(result, 'productType', safeString(item.productType, 80));
+        put(result, 'compositionType', safeString(item.compositionType, 80));
+        put(result, 'isMix', typeof item.isMix === 'boolean' ? item.isMix : undefined);
+        if (Array.isArray(item.mixComponents)) {
+          result.mixComponents = item.mixComponents.map(cleanMixComponent).filter(Boolean);
+        }
+        put(result, 'customFormulaName', safeString(item.customFormulaName));
+        put(result, 'bottleSize', safeNumber(item.bottleSize));
+        put(result, 'essenceGrams', safeNumber(item.essenceGrams));
+        put(result, 'sellingPrice', safeNumber(item.sellingPrice));
+        put(result, 'quantity', safeNumber(item.quantity));
+        put(result, 'isColoredBottle', typeof item.isColoredBottle === 'boolean' ? item.isColoredBottle : undefined);
+        put(result, 'isRollOn', typeof item.isRollOn === 'boolean' ? item.isRollOn : undefined);
+        put(result, 'alcoholMl', safeNumber(item.alcoholMl));
+        put(result, 'fixativeGrams', safeNumber(item.fixativeGrams));
+        return result;
+      }
+
+      function cleanSale(queueItem) {
+        const sale = isRecord(queueItem.payload) ? queueItem.payload : {};
+        const result = {
+          queueItemId: safeString(queueItem.id, 200) || null,
+          queueStatus: queueItem.status,
+          retryCount: safeNumber(queueItem.retryCount) ?? 0
+        };
+        put(result, 'deviceTimestamp', safeString(queueItem.deviceTimestamp || sale.deviceTimestamp, 100));
+        put(result, 'id', safeString(sale.id || sale.transactionId || queueItem.id, 200));
+        put(result, 'transactionId', safeString(sale.transactionId || queueItem.id, 200));
+        put(result, 'date', safeString(sale.date || sale.timestamp || queueItem.deviceTimestamp, 100));
+        put(result, 'paymentMethod', safeString(sale.paymentMethod, 80));
+        put(result, 'transactionType', safeString(sale.transactionType, 80));
+        put(result, 'totalPrice', safeNumber(sale.totalPrice));
+        put(result, 'discount', safeNumber(sale.discount));
+        put(result, 'loyaltyPointsRedeemed', safeNumber(sale.loyaltyPointsRedeemed));
+        put(result, 'loyaltyDiscountAmount', safeNumber(sale.loyaltyDiscountAmount));
+        put(result, 'loyaltyPointsEarned', safeNumber(sale.loyaltyPointsEarned));
+        put(result, 'packagingOptionId', safeString(sale.packagingOptionId, 80));
+        put(result, 'packagingRevenueEgp', safeNumber(sale.packagingRevenueEgp));
+        put(result, 'isBasicBagReplacedByLuxury', typeof sale.isBasicBagReplacedByLuxury === 'boolean' ? sale.isBasicBagReplacedByLuxury : undefined);
+        if (isRecord(sale.promotionalSavings)) {
+          const promo = {};
+          put(promo, 'originalTotal', safeNumber(sale.promotionalSavings.originalTotal));
+          put(promo, 'finalTotal', safeNumber(sale.promotionalSavings.finalTotal));
+          put(promo, 'savedAmount', safeNumber(sale.promotionalSavings.savedAmount));
+          put(promo, 'savingsPercent', safeNumber(sale.promotionalSavings.savingsPercent));
+          if (Object.keys(promo).length) result.promotionalSavings = promo;
+        }
+        if (Array.isArray(sale.items)) result.items = sale.items.map(cleanSaleItem).filter(Boolean);
+        put(result, 'isReversed', typeof sale.isReversed === 'boolean' ? sale.isReversed : undefined);
+        put(result, 'originalSaleId', safeString(sale.originalSaleId, 200));
+        return result;
+      }
+
+      function download() {
+        try {
+          const raw = window.localStorage.getItem(QUEUE_KEY);
+          if (raw === null) throw new Error('لم يُعثر على طابور المزامنة في هذا النطاق من المتصفح.');
+          const queue = JSON.parse(raw);
+          if (!Array.isArray(queue)) throw new Error('صيغة طابور المزامنة غير متوقعة؛ لم يتم تنزيل ملف.');
+
+          const eligible = queue.filter((item) => isRecord(item)
+            && item.entityType === 'sale'
+            && UNSYNCED_STATUSES.has(item.status));
+          const records = eligible.map(cleanSale);
+          const output = {
+            format: 'lamsa-pending-sales-export',
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            sourceKey: QUEUE_KEY,
+            recordCount: records.length,
+            records
+          };
+          const blob = new Blob([JSON.stringify(output, null, 2)], { type: 'application/json;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          const day = new Date().toISOString().slice(0, 10);
+          link.href = url;
+          link.download = `lamsa-pending-sales-${day}.json`;
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+          $result.textContent = records.length
+            ? `تم تجهيز ${records.length} سجل مبيعات غير متزامن للتنزيل. لم يُعدّل الطابور.`
+            : 'لا توجد مبيعات معلّقة أو فاشلة في الطابور. لم يُعدّل الطابور.';
+        } catch (error) {
+          $result.textContent = error instanceof Error ? error.message : 'تعذّر قراءة الطابور؛ لم يُعدّل أي سجل.';
+        }
+      }
+
+      $button.addEventListener('click', download);
+    })();
+  </script>
+</body>
+</html>
