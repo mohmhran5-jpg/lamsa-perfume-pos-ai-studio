@@ -11,7 +11,11 @@ import {
   resolveLamsaCorsOrigin,
   resolveTrustedServerTimeCorsOrigin,
 } from '../src/workerRuntimePolicy.mjs';
-import { assertLamsaRequestAllowed, assertTrustedServerTimeRequestAllowed } from '../src/index.mjs';
+import {
+  assertLamsaCommissionCounterBootstrapAllowed,
+  assertLamsaRequestAllowed,
+  assertTrustedServerTimeRequestAllowed,
+} from '../src/index.mjs';
 
 const PAGES_ORIGIN = 'https://mohmhran5-jpg.github.io';
 
@@ -62,9 +66,9 @@ test('production routes stay disabled unless both explicit flags and one exact H
   }), true);
 });
 
-test('production sale paths fail closed before the agreed UTC cutover and open at the cutover instant', () => {
-  assert.equal(isLamsaSalesCutoverReached(new Date('2026-10-16T23:59:59.999Z')), false);
-  assert.equal(isLamsaSalesCutoverReached(new Date('2026-10-17T00:00:00.000Z')), true);
+test('production sales open on Oct 16 while the commission counter bootstrap stays gated until Oct 17 UTC', () => {
+  assert.equal(isLamsaSalesCutoverReached(new Date('2026-10-15T23:59:59.999Z')), false);
+  assert.equal(isLamsaSalesCutoverReached(new Date('2026-10-16T00:00:00.000Z')), true);
   assert.equal(isLamsaSalesCutoverReached(new Date(Number.NaN)), false);
 
   const env = {
@@ -77,14 +81,25 @@ test('production sale paths fail closed before the agreed UTC cutover and open a
     GCP_SERVICE_ACCOUNT_EMAIL: 'firestore-store-worker@gen-lang-client-0515786951.iam.gserviceaccount.com',
     GCP_SERVICE_ACCOUNT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
   };
-  const request = new Request('https://worker.test/api/lamsa/sales/quote', {
+  const saleRequest = new Request('https://worker.test/api/lamsa/sales/quote', {
     method: 'POST', headers: { origin: PAGES_ORIGIN },
   });
   assert.throws(
-    () => assertLamsaRequestAllowed(request, env, new Date('2026-10-16T23:59:59.999Z')),
+    () => assertLamsaRequestAllowed(saleRequest, env, new Date('2026-10-15T23:59:59.999Z')),
     (error) => error.code === 'sale/cutover-not-started',
   );
-  assert.doesNotThrow(() => assertLamsaRequestAllowed(request, env, new Date('2026-10-17T00:00:00.000Z')));
+  assert.doesNotThrow(() => assertLamsaRequestAllowed(saleRequest, env, new Date('2026-10-16T00:00:00.000Z')));
+
+  const bootstrapRequest = new Request('https://worker.test/api/lamsa/commission-counter/bootstrap', {
+    method: 'POST', headers: { origin: PAGES_ORIGIN },
+  });
+  assert.throws(
+    () => assertLamsaCommissionCounterBootstrapAllowed(bootstrapRequest, env, new Date('2026-10-16T23:59:59.999Z')),
+    (error) => error.code === 'sale/commission-counter-bootstrap-not-started',
+  );
+  assert.doesNotThrow(() => assertLamsaCommissionCounterBootstrapAllowed(
+    bootstrapRequest, env, new Date('2026-10-17T00:00:00.000Z'),
+  ));
 });
 
 test('production CORS allows only the verified GitHub Pages origin, with no wildcard or path', () => {

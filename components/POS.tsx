@@ -52,6 +52,7 @@ import {
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
 import { createCommissionTimeEvidence, getTrustedServerTimeEstimate, subscribeTrustedServerTime } from '../services/commissionTimeEvidence';
+import { isLamsaSalesCutoverReached } from '../services/saleCutoverPolicy';
 import { getAuthorizedSalePrice } from '../services/workerSaleContract';
 import { soundAlertService } from '../services/soundAlertService';
 import { dispatchSaleTelegramAlert, dispatchLowStockTelegramAlert } from '../services/telegramNotificationService';
@@ -2054,13 +2055,9 @@ const POS: React.FC<POSProps> = ({
   };
 
   // §27: Non-Retroactive Tiered Commission (First 10 spray bottles today = 5%, 11th+ spray bottle = 7%, Roll-ons = 0%, Exception/Non-normal = 0%)
-  const priorSprayBottlesSoldToday = useMemo(() => {
-    // If the counter is unavailable, use the higher approved tier and hold this
-    // commission for owner review rather than crediting an uncertain lower rate.
-    return commissionCounterReady ? commissionCounterState.sprayBottlesSold || 0 : Number.MAX_SAFE_INTEGER;
-  }, [commissionCounterReady, commissionCounterState.sprayBottlesSold]);
-
   const tieredCommissionResult = useMemo(() => {
+    // Do not calculate or credit a commission until today's counter and generation are ready.
+    if (!commissionCounterReady || !Number.isSafeInteger(commissionCounterState.generation)) return null;
     const discountRatio = cartSubtotal > 0 ? Math.max(0, cartFinalTotal / cartSubtotal) : 1;
     const mappedItems = cart.map((item) => ({
       netUnitSellingPrice: Math.round(item.sellingPrice * discountRatio),
@@ -2080,7 +2077,7 @@ const POS: React.FC<POSProps> = ({
       : 'بيع_طبيعي';
     return calculateNonRetroactiveTieredCommission({
       items: mappedItems,
-      priorSprayBottlesSoldToday,
+      priorSprayBottlesSoldToday: commissionCounterState.sprayBottlesSold || 0,
       transactionType: mappedTxType,
       baseRate: settings.commissionRate || 0.05,
       tieredRate: settings.tieredCommissionRate || 0.07,
@@ -2090,7 +2087,9 @@ const POS: React.FC<POSProps> = ({
     cart,
     cartSubtotal,
     cartFinalTotal,
-    priorSprayBottlesSoldToday,
+    commissionCounterReady,
+    commissionCounterState.sprayBottlesSold,
+    commissionCounterState.generation,
     ownerOverrideGranted,
     ownerExceptionReason,
     settings.commissionRate,
@@ -2098,7 +2097,7 @@ const POS: React.FC<POSProps> = ({
     settings.tieredCommissionBottleThreshold,
   ]);
 
-  const cartTotalCommission = tieredCommissionResult.totalCommissionEgp;
+  const cartTotalCommission = tieredCommissionResult?.totalCommissionEgp ?? 0;
 
   const cartTotalNetProfit = useMemo(() => {
     return cartFinalTotal - cartTotalCost - cartTotalCommission;
@@ -2176,8 +2175,8 @@ const POS: React.FC<POSProps> = ({
     if (cart.length === 0) return;
     const trustedClock = getTrustedServerTimeEstimate();
     const estimatedNowMs = trustedClock?.serverNowMs ?? Date.now();
-    if (estimatedNowMs < Date.UTC(2026, 9, 17, 0, 0, 0)) {
-      setCheckoutError('لم يبدأ تسجيل المبيعات الجديدة بعد؛ يبدأ عند 03:00 صباحاً بتوقيت القاهرة يوم 17 أكتوبر.');
+    if (!isLamsaSalesCutoverReached(estimatedNowMs)) {
+      setCheckoutError('لم يبدأ تسجيل المبيعات الجديدة بعد؛ يبدأ عند 03:00 صباحاً بتوقيت القاهرة يوم 16 أكتوبر.');
       return;
     }
 
@@ -2346,7 +2345,7 @@ const POS: React.FC<POSProps> = ({
         && Number.isSafeInteger(commissionCounterState.generation)
         ? {
             commissionDayKey: timingEvidence.commissionCandidateDayKey ?? todayIso,
-            commissionSprayBottleCount: tieredCommissionResult.sprayBottlesInThisSale,
+            commissionSprayBottleCount: tieredCommissionResult?.sprayBottlesInThisSale ?? 0,
             commissionCounterGeneration: commissionCounterState.generation,
           }
         : {}),

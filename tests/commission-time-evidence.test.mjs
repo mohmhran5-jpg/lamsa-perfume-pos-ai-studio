@@ -8,6 +8,8 @@ import {
   MAX_TRUSTED_TIME_SAMPLE_AGE_MS,
   recordTrustedServerTimeSample,
 } from '../services/commissionTimeEvidence.ts';
+import { LAMSA_COMMISSION_CUTOVER_AT_UTC_MS } from '../services/commissionCounterSchedule.ts';
+import { isLamsaSalesCutoverReached, LAMSA_SALES_CUTOVER_AT_UTC_MS } from '../services/saleCutoverPolicy.ts';
 
 const T0 = Date.parse('2026-10-16T23:59:30.000Z');
 
@@ -70,6 +72,14 @@ test('marks a missing or stale trusted sample for owner review', () => {
   assert.equal(stale.commissionTimingStatus, 'needs_owner_review');
   assert.equal(stale.commissionReviewReason, 'stale-time-sample');
   clearTrustedServerTimeSample();
+});
+
+test('owner POS opens on Oct 16 UTC while commission counter bootstrap remains gated until Oct 17 UTC', () => {
+  assert.equal(LAMSA_SALES_CUTOVER_AT_UTC_MS, Date.parse('2026-10-16T00:00:00.000Z'));
+  assert.equal(isLamsaSalesCutoverReached(Date.parse('2026-10-15T23:59:59.999Z')), false);
+  assert.equal(isLamsaSalesCutoverReached(Date.parse('2026-10-16T00:00:00.000Z')), true);
+  assert.equal(isLamsaSalesCutoverReached(Date.parse('2026-10-16T21:00:00.000Z')), true);
+  assert.equal(LAMSA_COMMISSION_CUTOVER_AT_UTC_MS, Date.parse('2026-10-17T00:00:00.000Z'));
 });
 
 test('a sale with valid timing but unavailable counter remains saleable and is excluded for owner review', () => {
