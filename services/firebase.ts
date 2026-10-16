@@ -85,6 +85,7 @@ import {
   projectTarekProduct,
   projectTarekSaleBottleSize,
   projectTarekSaleProduct,
+  projectTarekSavedMix,
   SEPARATED_COLLECTIONS,
 } from './separatedDataModel';
 
@@ -1817,20 +1818,26 @@ export const subscribeToSavedMixes = (
 
 export const saveSavedMixCloud = async (formula: SavedMixFormula) => {
   await requireOwnerAuth();
-  const docRef = doc(db, 'saved_mixes', formula.id);
-  await setDoc(
-    docRef,
-    cleanForFirestore({
-      ...formula,
-      updatedAt: new Date().toISOString(),
-    }),
-    { merge: true }
+  const updatedFormula = { ...formula, updatedAt: new Date().toISOString() };
+  const batch = writeBatch(db);
+  batch.set(
+    doc(db, 'saved_mixes', formula.id),
+    cleanForFirestore(updatedFormula),
+    { merge: true },
   );
+  const tarekProjectionRef = doc(db, SEPARATED_COLLECTIONS.tarekSavedMixes, formula.id);
+  const tarekProjection = projectTarekSavedMix(updatedFormula);
+  if (tarekProjection) batch.set(tarekProjectionRef, cleanForFirestore(tarekProjection));
+  else batch.delete(tarekProjectionRef);
+  await batch.commit();
 };
 
 export const deleteSavedMixCloud = async (mixId: string) => {
   await requireOwnerAuth();
-  await deleteDoc(doc(db, 'saved_mixes', mixId));
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'saved_mixes', mixId));
+  batch.delete(doc(db, SEPARATED_COLLECTIONS.tarekSavedMixes, mixId));
+  await batch.commit();
 };
 
 // ========================================================

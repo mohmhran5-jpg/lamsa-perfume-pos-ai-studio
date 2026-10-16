@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { deleteApp, initializeApp } from 'firebase/app';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, connectFirestoreEmulator, deleteDoc, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, orderBy, query, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, connectFirestoreEmulator, deleteDoc, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, orderBy, query, setDoc, where, writeBatch } from 'firebase/firestore';
 import {
   commitSaleAndInventory,
   deleteSaleAndRestoreInventory,
@@ -55,6 +55,7 @@ const ALLOWED_COLLECTIONS = [
   'product_costs',
   'tarek_operational_costs',
   'tarek_operational_costs_meta',
+  'tarek_saved_mixes',
   'mix_operations',
   'mix_costs',
   'sale_operations',
@@ -80,6 +81,16 @@ function validWritePayload(collection, id) {
     date: '2026-10-15T10:00:00.000Z',
     items: [{ id: 'line-1', productId: 'oil', productName: 'Oil', bottleSize: 10, essenceGrams: 3, sellingPrice: 30 }],
     totalPrice: 30,
+  };
+  if (collection === 'tarek_saved_mixes') return {
+    schemaVersion: 1,
+    id,
+    name: 'وصفة اختبار معتمدة',
+    bottleSizeMl: 30,
+    totalEssenceGrams: 10,
+    components: [{ productId: 'oil-a', grams: 6 }, { productId: 'oil-b', grams: 4 }],
+    isOwnerApproved: true,
+    updatedAt: '2026-10-16T12:00:00.000Z',
   };
   if (collection === 'products') return { id, name: 'Oil', stock_grams: 100 };
   if (collection === 'customers') return { id, name: 'Test Customer' };
@@ -249,6 +260,8 @@ beforeEach(async () => {
         ? { seeded: true, id: 'seed-document', date: '2026-10-15T10:00:00.000Z', items: [], totalPrice: 0 }
         : collectionName === 'tarek_operational_costs'
         ? { schemaVersion: 1, productId: 'seed-product', customGramCostEgp: 12 }
+        : collectionName === 'tarek_saved_mixes'
+        ? validWritePayload(collectionName, 'seed-document')
         : { seeded: true }),
     );
     seededDocuments.push(
@@ -406,6 +419,54 @@ for (const collection of TAREK_OPERATIONAL_READS) {
     await assertFails(setDoc(doc(tarekDb, collection, 'tarek-write-attempt'), { forgedRole: 'OWNER' }));
   });
 }
+
+test('Tarek can read only owner-approved, narrow saved-mix projections', async () => {
+  const safeMix = {
+    schemaVersion: 1,
+    id: 'approved-mix',
+    name: 'وصفة معتمدة',
+    bottleSizeMl: 30,
+    totalEssenceGrams: 10,
+    components: [
+      { productId: 'oil-1', grams: 6 },
+      { productId: 'oil-2', grams: 4 },
+    ],
+    isOwnerApproved: true,
+    updatedAt: '2026-10-16T12:00:00.000Z',
+  };
+  await assertSucceeds(setDoc(doc(ownerDb, 'tarek_saved_mixes', safeMix.id), safeMix));
+  const savedMix = await assertSucceeds(getDoc(doc(tarekDb, 'tarek_saved_mixes', safeMix.id)));
+  assert.deepEqual(savedMix.data(), safeMix);
+  const approvedQuery = await assertSucceeds(getDocs(query(
+    collection(tarekDb, 'tarek_saved_mixes'),
+    where('isOwnerApproved', '==', true),
+    where('schemaVersion', '==', 1),
+    limit(100),
+  )));
+  assert.equal(approvedQuery.docs.some((item) => item.id === safeMix.id), true);
+  for (const item of approvedQuery.docs) {
+    assert.equal('totalCostEgp' in item.data(), false);
+    assert.equal('totalProfitEgp' in item.data(), false);
+  }
+  await assertFails(setDoc(doc(tarekDb, 'tarek_saved_mixes', 'tarek-write'), safeMix));
+  await assertFails(setDoc(doc(inventoryViewerDb, 'tarek_saved_mixes', 'viewer-write'), safeMix));
+  await assertFails(setDoc(doc(ownerDb, 'tarek_saved_mixes', 'unsafe-owner-write'), {
+    ...safeMix,
+    id: 'unsafe-owner-write',
+    totalCostEgp: 999,
+  }));
+
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'tarek_saved_mixes', 'malformed-projection'), {
+      ...safeMix,
+      id: 'malformed-projection',
+      components: [{ productId: 'oil-1', grams: 10, oilGramCostEgp: 999 }],
+    });
+  });
+  await assertFails(getDoc(doc(tarekDb, 'tarek_saved_mixes', 'malformed-projection')));
+  await assertFails(deleteDoc(doc(tarekDb, 'tarek_saved_mixes', safeMix.id)));
+  await assertSucceeds(deleteDoc(doc(ownerDb, 'tarek_saved_mixes', safeMix.id)));
+});
 
 test('verified Tarek can list only the separate narrow operational product-cost collection', async () => {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
@@ -874,6 +935,8 @@ for (const collection of ALLOWED_COLLECTIONS) {
       ? { seeded: true, id: 'seed-document', date: '2026-10-15T10:00:00.000Z', items: [], totalPrice: 0 }
       : collection === 'tarek_operational_costs'
       ? { schemaVersion: 1, productId: 'seed-product', customGramCostEgp: 12 }
+      : collection === 'tarek_saved_mixes'
+      ? validWritePayload(collection, 'seed-document')
       : { seeded: true };
     assert.deepEqual(snapshot.data(), expected);
   });

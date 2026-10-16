@@ -15,7 +15,7 @@ import {
   subscribeToTarekSaleOutbox,
   type TarekSaleOutboxEntry,
 } from '../services/tarekSaleOutbox';
-import type { TarekOperationalProduct, TarekSaleBottleSize, TarekSaleProduct } from '../services/separatedDataModel';
+import type { TarekOperationalProduct, TarekSaleBottleSize, TarekSaleProduct, TarekSavedMixFormula } from '../services/separatedDataModel';
 import type { TarekSafeSaleDraft, WorkerSaleIntentComponentV2 } from '../services/workerSaleContract';
 import { TAREK_SALE_PRESET_OFFERS } from '../services/tarekSalePresets';
 import {
@@ -45,6 +45,7 @@ type Props = {
   catalogReady: boolean;
   products: TarekSaleProduct[];
   bottleSizes: TarekSaleBottleSize[];
+  savedMixes: TarekSavedMixFormula[];
   stockProducts: TarekOperationalProduct[];
 };
 
@@ -73,7 +74,7 @@ function amount(value: string): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : Number.NaN;
 }
 
-export default function TarekSafePOS({ canCreateSales, catalogReady, products, bottleSizes, stockProducts }: Props) {
+export default function TarekSafePOS({ canCreateSales, catalogReady, products, bottleSizes, savedMixes, stockProducts }: Props) {
   const [saleId, setSaleId] = useState(() => newId('tarek-sale'));
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedProductId, setSelectedProductId] = useState('');
@@ -81,6 +82,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
   const [quantity, setQuantity] = useState('1');
   const [colored, setColored] = useState(false);
   const [lineMode, setLineMode] = useState<'single' | 'mix'>('single');
+  const [selectedSavedMixId, setSelectedSavedMixId] = useState('');
   const [mixDraftComponents, setMixDraftComponents] = useState<MixDraftComponent[]>([
     { productId: '', grams: '' }, { productId: '', grams: '' },
   ]);
@@ -116,6 +118,15 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     () => bottleSizes.filter((bottle) => bottle.isActive !== false).sort((a, b) => a.sizeMl - b.sizeMl),
     [bottleSizes],
   );
+  const availableSavedMixes = useMemo(() => savedMixes.filter((mix) => {
+    const compatibleBottle = activeBottleSizes.some((bottle) => (
+      bottle.sizeMl === mix.bottleSizeMl
+      && bottle.essenceGrams === mix.totalEssenceGrams
+      && Boolean(bottle.isRollOn) === Boolean(mix.isRollOn)
+      && (!mix.isColoredBottle || bottle.coloredNormalPrice !== undefined || bottle.coloredSpecialPrice !== undefined)
+    ));
+    return compatibleBottle && mix.components.every((component) => activeProducts.some((product) => product.id === component.productId));
+  }), [savedMixes, activeBottleSizes, activeProducts]);
   const selectedBottle = activeBottleSizes.find((bottle) => bottle.id === selectedBottleId);
   const selectedProduct = activeProducts.find((product) => product.id === selectedProductId);
   const selectedOffer = TAREK_SALE_PRESET_OFFERS.find((offer) => offer.id === promotionId);
@@ -240,6 +251,36 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     invalidateQuote(next);
   }
 
+  function applySavedMix(mixId: string) {
+    const formula = availableSavedMixes.find((mix) => mix.id === mixId);
+    if (!formula) {
+      setSelectedSavedMixId('');
+      setError('الوصفة غير متاحة أو لم تعد متوافقة مع كتالوج البيع الحالي.');
+      return;
+    }
+    const bottle = activeBottleSizes.find((item) => (
+      item.sizeMl === formula.bottleSizeMl
+      && item.essenceGrams === formula.totalEssenceGrams
+      && Boolean(item.isRollOn) === Boolean(formula.isRollOn)
+      && (!formula.isColoredBottle || item.coloredNormalPrice !== undefined || item.coloredSpecialPrice !== undefined)
+    ));
+    if (!bottle) {
+      setError('لا توجد عبوة نشطة تطابق حجم وجرامات الوصفة.');
+      return;
+    }
+    setSelectedSavedMixId(formula.id);
+    setSelectedBottleId(bottle.id);
+    setColored(Boolean(formula.isColoredBottle));
+    setLineMode('mix');
+    setMixDraftComponents(formula.components.map((component) => ({
+      productId: component.productId,
+      grams: String(component.grams),
+    })));
+    setMixFormulaName(formula.name);
+    setError(null);
+    setNotice('تم تحميل وصفة المالك المعتمدة؛ سيعيد العامل حساب السعر والتحقق من المخزون الحالي.');
+  }
+
   function addMixLine() {
     if (!selectedBottle) return;
     const count = Number(quantity);
@@ -292,6 +333,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
   }
 
   function updateMixDraftComponent(index: number, patch: Partial<MixDraftComponent>) {
+    setSelectedSavedMixId('');
     setMixDraftComponents((current) => current.map((component, position) => (
       position === index ? { ...component, ...patch } : component
     )));
@@ -299,11 +341,13 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
 
   function addMixDraftComponent() {
     if (mixDraftComponents.length >= 3) return;
+    setSelectedSavedMixId('');
     setMixDraftComponents((current) => [...current, { productId: '', grams: '' }]);
   }
 
   function removeMixDraftComponent(index: number) {
     if (mixDraftComponents.length <= 2) return;
+    setSelectedSavedMixId('');
     setMixDraftComponents((current) => current.filter((_, position) => position !== index));
   }
 
@@ -585,6 +629,21 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
         </div>
 
         {lineMode === 'mix' && selectedBottle && <div className="space-y-3 rounded-2xl border border-black/10 bg-[#F5F5F7] p-4">
+          <label className="block space-y-1 text-xs font-semibold">
+            وصفة المالك المعتمدة (اختياري)
+            <select value={selectedSavedMixId} onChange={(event) => {
+              const id = event.target.value;
+              if (!id) {
+                setSelectedSavedMixId('');
+                return;
+              }
+              applySavedMix(id);
+            }} disabled={cartHasQueuedSale} className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm">
+              <option value="">تركيب يدوي</option>
+              {availableSavedMixes.map((mix) => <option value={mix.id} key={mix.id}>{mix.name} · {mix.bottleSizeMl} مل</option>)}
+            </select>
+            <span className="block font-normal text-[#6E6E73]">لا تظهر إلا الوصفات المعتمدة المتوافقة؛ يعيد العامل تسعيرها والتحقق من المخزون.</span>
+          </label>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <strong className="text-sm">مكوّنات الميكس</strong>
@@ -614,7 +673,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
             <button type="button" onClick={addMixDraftComponent} disabled={cartHasQueuedSale || mixDraftComponents.length >= 3} className="rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40">إضافة مكوّن (حتى 3)</button>
             <label className="space-y-1 text-xs font-semibold">
               اسم اختياري للخلطة
-              <input value={mixFormulaName} onChange={(event) => setMixFormulaName(event.target.value.slice(0, 120))} maxLength={120} disabled={cartHasQueuedSale} className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm" />
+              <input value={mixFormulaName} onChange={(event) => { setSelectedSavedMixId(''); setMixFormulaName(event.target.value.slice(0, 120)); }} maxLength={120} disabled={cartHasQueuedSale} className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm" />
             </label>
           </div>
           <p className="text-xs text-[#6E6E73]">يُخصم المخزون لكل مكوّن داخل معاملة البيع. لا تُعرض أو تُرسل تكاليف المكوّنات من جهاز طارق.</p>
@@ -683,7 +742,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
           </label>
         </div>
         {selectedOffer && !offerMatches && <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-950">شروط العرض {selectedOffer.name}: {selectedOffer.quantity} عبوة مفردة غير ملوّنة مقاس {selectedOffer.sizeMl} مل بالضبط؛ لا تنطبق العروض الجاهزة على الميكس.</p>}
-        <p className="text-xs text-[#6E6E73]">سقف الخصم يحدده العامل بحسب التكلفة والعمولة والهامش المحمي؛ إدخال الخصم لا يضمن قبوله. الميكس اليدوي متاح لمكوّنين أو ثلاثة فقط ولا يُحفظ في المكتبة. العروض المخصصة ودفتر CRM واستبدال نقاط الولاء وإحصاءات إعادة الشراء غير مفعّلة حتى يتوفر مرجع خادمي معتمد.</p>
+        <p className="text-xs text-[#6E6E73]">سقف الخصم يحدده العامل بحسب التكلفة والعمولة والهامش المحمي؛ إدخال الخصم لا يضمن قبوله. يمكن استخدام وصفة المالك المعتمدة أو تركيب ميكس يدوي من مكوّنين أو ثلاثة؛ لا تُعرض تكاليف الوصفة. العروض المخصصة ودفتر CRM واستبدال نقاط الولاء وإحصاءات إعادة الشراء غير مفعّلة حتى يتوفر مرجع خادمي وسياسة موحدة معتمدة.</p>
 
         <div className="flex flex-wrap gap-3">
           <button type="button" onClick={() => void requestQuote()} disabled={!canCreateSales || !catalogReady || !saleWorkerEnabled || quoteBusy || busy || cart.length === 0 || cartHasQueuedSale || !offerMatches || !Number.isFinite(discountAmount)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-800 px-4 py-2 text-sm font-bold text-emerald-900 disabled:opacity-40">

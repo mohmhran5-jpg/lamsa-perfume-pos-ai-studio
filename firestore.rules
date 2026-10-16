@@ -61,6 +61,49 @@ service cloud.firestore {
         && (!('updatedAt' in data) || data.updatedAt is string);
     }
 
+    function validTarekMixComponent(data) {
+      return data is map
+        && data.keys().hasAll(['productId', 'grams'])
+        && data.keys().hasOnly(['productId', 'grams'])
+        && data.productId is string
+        && data.productId.size() > 0
+        && data.productId.size() <= 1500
+        && !data.productId.matches('.*[/].*')
+        && data.grams is int
+        && data.grams > 0;
+    }
+
+    function validTarekSavedMix(data, documentId) {
+      let components = data.components;
+      return data is map
+        && data.keys().hasAll(['schemaVersion', 'id', 'name', 'bottleSizeMl', 'totalEssenceGrams', 'components', 'isOwnerApproved', 'updatedAt'])
+        && data.keys().hasOnly(['schemaVersion', 'id', 'name', 'bottleSizeMl', 'totalEssenceGrams', 'components', 'isOwnerApproved', 'updatedAt', 'isRollOn', 'isColoredBottle'])
+        && data.schemaVersion == 1
+        && data.id == documentId
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 120
+        && data.bottleSizeMl is int
+        && data.bottleSizeMl > 0
+        && data.totalEssenceGrams is int
+        && data.totalEssenceGrams > 0
+        && data.isOwnerApproved == true
+        && data.updatedAt is string
+        && data.updatedAt.size() > 0
+        && data.updatedAt.size() <= 64
+        && (!('isRollOn' in data) || data.isRollOn is bool)
+        && (!('isColoredBottle' in data) || data.isColoredBottle is bool)
+        && components is list
+        && components.size() >= 2
+        && components.size() <= 3
+        && validTarekMixComponent(components[0])
+        && validTarekMixComponent(components[1])
+        && (components.size() == 2 || validTarekMixComponent(components[2]))
+        && components[0].productId != components[1].productId
+        && (components.size() == 2 || (components[2].productId != components[0].productId && components[2].productId != components[1].productId))
+        && components[0].grams + components[1].grams + (components.size() == 3 ? components[2].grams : 0) == data.totalEssenceGrams;
+    }
+
     function canReadOperationalSales() {
       return isVerifiedOwner() || isLegacyTarek() || hasActiveStoreManagerGrant();
     }
@@ -390,6 +433,15 @@ service cloud.firestore {
     }
     match /tarek_operational_costs_meta/{documentId} {
       allow read, write: if isVerifiedOwner();
+    }
+    match /tarek_saved_mixes/{documentId} {
+      allow get: if canReadOperationalSales() && validTarekSavedMix(resource.data, documentId);
+      // Firestore list rules must be provable from query filters; all owner writes still require the full safe schema.
+      allow list: if canReadOperationalSales()
+        && resource.data.schemaVersion == 1
+        && resource.data.isOwnerApproved == true;
+      allow create, update: if isVerifiedOwner() && validTarekSavedMix(request.resource.data, documentId);
+      allow delete: if isVerifiedOwner();
     }
     match /mix_operations/{documentId} {
       allow read: if isVerifiedOwner();

@@ -17,6 +17,7 @@ export const SEPARATED_COLLECTIONS = {
   productCosts: 'product_costs',
   tarekOperationalCosts: 'tarek_operational_costs',
   tarekOperationalCostsMeta: 'tarek_operational_costs_meta',
+  tarekSavedMixes: 'tarek_saved_mixes',
   tarekProducts: 'tarek_products',
   mixOperations: 'mix_operations',
   mixCosts: 'mix_costs',
@@ -126,6 +127,95 @@ export interface OperationalSavedMixFormula {
   balanceNotes?: string;
   timesSold?: number;
   repurchaseRatePercent?: number;
+}
+
+/** Tarek-safe approved recipe: no prices, costs, notes, ratings, or sales statistics. */
+export interface TarekSavedMixComponent {
+  productId: string;
+  grams: number;
+}
+
+export interface TarekSavedMixFormula {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  bottleSizeMl: number;
+  totalEssenceGrams: number;
+  components: TarekSavedMixComponent[];
+  isOwnerApproved: true;
+  updatedAt: string;
+  isRollOn?: boolean;
+  isColoredBottle?: boolean;
+}
+
+function normalizeTarekSavedMix(
+  value: Record<string, unknown>,
+  fallbackId: string,
+  requireSchemaVersion: boolean,
+): TarekSavedMixFormula | null {
+  if (requireSchemaVersion && value.schemaVersion !== 1) return null;
+  const id = typeof value.id === 'string' ? value.id.trim() : fallbackId.trim();
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const bottleSizeMl = value.bottleSizeMl;
+  const totalEssenceGrams = value.totalEssenceGrams;
+  const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt.trim() : '';
+  if (!id || id.length > 1500 || id.includes('/') || (fallbackId && id !== fallbackId)) return null;
+  if (!name || name.length > 120) return null;
+  if (!Number.isSafeInteger(bottleSizeMl) || Number(bottleSizeMl) <= 0) return null;
+  if (!Number.isSafeInteger(totalEssenceGrams) || Number(totalEssenceGrams) <= 0) return null;
+  if (value.isOwnerApproved !== true) return null;
+  if (!updatedAt || updatedAt.length > 64) return null;
+  if (value.isRollOn !== undefined && typeof value.isRollOn !== 'boolean') return null;
+  if (value.isColoredBottle !== undefined && typeof value.isColoredBottle !== 'boolean') return null;
+  if (!Array.isArray(value.components) || value.components.length < 2 || value.components.length > 3) return null;
+
+  const components: TarekSavedMixComponent[] = [];
+  for (const componentValue of value.components) {
+    if (!componentValue || typeof componentValue !== 'object') return null;
+    const component = componentValue as Record<string, unknown>;
+    const rawProductId = component.productId;
+    const productId = typeof rawProductId === 'string'
+      ? rawProductId.trim()
+      : typeof rawProductId === 'number' && Number.isSafeInteger(rawProductId)
+        ? String(rawProductId)
+        : '';
+    const grams = component.grams;
+    if (!productId || productId.length > 1500 || productId.includes('/')) return null;
+    if (!Number.isSafeInteger(grams) || Number(grams) <= 0) return null;
+    components.push({ productId, grams: Number(grams) });
+  }
+
+  if (new Set(components.map((component) => component.productId)).size !== components.length) return null;
+  if (components.reduce((sum, component) => sum + component.grams, 0) !== totalEssenceGrams) return null;
+
+  return {
+    schemaVersion: 1,
+    id,
+    name,
+    bottleSizeMl: Number(bottleSizeMl),
+    totalEssenceGrams: Number(totalEssenceGrams),
+    components,
+    isOwnerApproved: true,
+    updatedAt,
+    ...(typeof value.isRollOn === 'boolean' ? { isRollOn: value.isRollOn } : {}),
+    ...(typeof value.isColoredBottle === 'boolean' ? { isColoredBottle: value.isColoredBottle } : {}),
+  };
+}
+
+export function projectTarekSavedMix(formula: SavedMixFormula): TarekSavedMixFormula | null {
+  return normalizeTarekSavedMix(
+    formula as unknown as Record<string, unknown>,
+    String(formula.id),
+    false,
+  );
+}
+
+/** Validate and re-project a Firestore DTO; unexpected fields are never returned to the UI. */
+export function projectTarekSavedMixDTO(
+  value: Record<string, unknown>,
+  fallbackId: string,
+): TarekSavedMixFormula | null {
+  return normalizeTarekSavedMix(value, fallbackId, true);
 }
 
 export interface SavedMixCostRecord {

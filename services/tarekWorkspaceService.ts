@@ -5,6 +5,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  where,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { auth, db, requireTarekAuth } from './firebase';
@@ -12,10 +13,11 @@ import {
   getCurrentFirebaseRoleAssignment,
   TAREK_AUTH_EMAIL,
 } from './authPolicy';
-import { projectTarekProductCostDTO } from './separatedDataModel';
+import { projectTarekProductCostDTO, projectTarekSavedMixDTO } from './separatedDataModel';
 import type {
   OperationalSaleRecord,
   ProductCostRecord,
+  TarekSavedMixFormula,
   TarekOperationalProduct,
   TarekSaleBottleSize,
   TarekSaleProduct,
@@ -27,6 +29,7 @@ export interface TarekWorkspaceData {
   sales: OperationalSaleRecord[];
   saleProducts: TarekSaleProduct[];
   saleBottleSizes: TarekSaleBottleSize[];
+  savedMixes: TarekSavedMixFormula[];
   saleCatalogReady: boolean;
   permissions: {
     canViewStock: boolean;
@@ -42,6 +45,7 @@ const emptyData: TarekWorkspaceData = {
   sales: [],
   saleProducts: [],
   saleBottleSizes: [],
+  savedMixes: [],
   saleCatalogReady: false,
   permissions: { canViewStock: false, canViewOperationalCosts: false, canViewOperationalSales: false, canCreateSales: false },
 };
@@ -71,6 +75,7 @@ export async function subscribeToTarekWorkspace(
   let sales = emptyData.sales;
   let saleProducts = emptyData.saleProducts;
   let saleBottleSizes = emptyData.saleBottleSizes;
+  let savedMixes = emptyData.savedMixes;
   let saleProductSnapshotReady = false;
   let saleBottleSnapshotReady = false;
   const publish = () => onUpdate({
@@ -79,6 +84,7 @@ export async function subscribeToTarekWorkspace(
     sales,
     saleProducts,
     saleBottleSizes,
+    savedMixes,
     saleCatalogReady: saleProductSnapshotReady && saleBottleSnapshotReady,
     permissions: { canViewStock, canViewOperationalCosts, canViewOperationalSales, canCreateSales },
   });
@@ -146,6 +152,17 @@ export async function subscribeToTarekWorkspace(
           id: item.id,
         }) as TarekSaleBottleSize);
         saleBottleSnapshotReady = true;
+        publish();
+      },
+      reportError,
+    ));
+    subscriptions.push(onSnapshot(
+      query(collection(db, 'tarek_saved_mixes'), where('isOwnerApproved', '==', true), where('schemaVersion', '==', 1), limit(100)),
+      (snapshot) => {
+        savedMixes = snapshot.docs.flatMap((item) => {
+          const formula = projectTarekSavedMixDTO(item.data(), item.id);
+          return formula ? [formula] : [];
+        }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
         publish();
       },
       reportError,

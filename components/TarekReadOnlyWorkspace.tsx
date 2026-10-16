@@ -17,6 +17,7 @@ const INITIAL_DATA: TarekWorkspaceData = {
   sales: [],
   saleProducts: [],
   saleBottleSizes: [],
+  savedMixes: [],
   saleCatalogReady: false,
   permissions: { canViewStock: false, canViewOperationalCosts: false, canViewOperationalSales: false, canCreateSales: false },
 };
@@ -73,7 +74,7 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
   }, []);
 
   const hasAnyProjection = data.products.length > 0 || data.productCosts.length > 0 || data.sales.length > 0
-    || data.saleProducts.length > 0 || data.saleBottleSizes.length > 0;
+    || data.saleProducts.length > 0 || data.saleBottleSizes.length > 0 || data.savedMixes.length > 0;
   const productCostById = new Map<string, number | undefined>(
     data.productCosts.map((cost) => [cost.productId, cost.customGramCostEgp] as const),
   );
@@ -115,6 +116,7 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
           catalogReady={data.saleCatalogReady}
           products={data.saleProducts}
           bottleSizes={data.saleBottleSizes}
+          savedMixes={data.savedMixes}
           stockProducts={data.products}
         />}
 
