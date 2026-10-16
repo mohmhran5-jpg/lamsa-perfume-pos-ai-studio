@@ -30,6 +30,7 @@ function productionEnv(overrides = {}) {
     GCP_SERVICE_ACCOUNT_EMAIL: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
     GCP_SERVICE_ACCOUNT_PRIVATE_KEY: testPrivateKey,
     FIRESTORE_PRODUCTION_TRANSPORT_ENABLED: 'true',
+    SALE_WORKER_PRODUCTION_ENABLED: 'false',
     ...overrides,
   };
 }
@@ -164,10 +165,33 @@ test('production transport pins identity/resource and rejects URL escape attempt
   }), (error) => error.code === 'firestore/endpoint-not-allowed');
 });
 
+test('production /health is read-only and returns no environment, data, or secret fields', async () => {
+  const previousFetch = globalThis.fetch;
+  let networkCalls = 0;
+  globalThis.fetch = async () => { networkCalls += 1; throw new Error('health must not use the network'); };
+  try {
+    const healthy = await Worker.fetch(new Request('https://worker.test/health'), productionEnv({
+      FIRESTORE_PRODUCTION_TRANSPORT_ENABLED: 'false',
+      SALE_WORKER_PRODUCTION_ENABLED: 'false',
+    }));
+    assert.equal(healthy.status, 200);
+    assert.equal(healthy.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await healthy.json(), { ok: true });
+
+    const missingSecret = await Worker.fetch(new Request('https://worker.test/health'), productionEnv({
+      GCP_SERVICE_ACCOUNT_PRIVATE_KEY: '',
+    }));
+    assert.equal(missingSecret.status, 503);
+    assert.deepEqual(await missingSecret.json(), { ok: false });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(networkCalls, 0);
+});
+
 test('public sale routes remain disabled by default even when only the internal REST switch is enabled', async () => {
   const env = productionEnv();
   const routes = [
-    new Request('https://worker.test/health'),
     new Request('https://worker.test/api/lamsa/commission-counter/bootstrap', { method: 'POST', headers: { origin: 'https://mohmhran5-jpg.github.io', 'content-type': 'application/json' }, body: '{}' }),
     new Request('https://worker.test/api/lamsa/sales/quote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
     new Request('https://worker.test/api/lamsa/sales', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
@@ -177,9 +201,9 @@ test('public sale routes remain disabled by default even when only the internal 
   for (const [index, request] of routes.entries()) {
     const response = await Worker.fetch(request, env);
     assert.equal(response.status, 503, request.url);
-    const expected = index === 0 ? { ok: false }
-      : index === routes.length - 1 ? { ok: false, error: 'prototype/emulator-only' }
-        : { ok: false, error: 'prototype/production-routes-disabled' };
+    const expected = index === routes.length - 1
+      ? { ok: false, error: 'prototype/emulator-only' }
+      : { ok: false, error: 'prototype/production-routes-disabled' };
     assert.deepEqual(await response.json(), expected, request.url);
   }
 });
@@ -210,13 +234,21 @@ test('actual Worker preflight returns exact local CORS headers and rejects non-l
   assert.deepEqual(await denied.json(), { ok: false, error: 'worker/origin-not-allowed' });
 });
 
-test('Wrangler remains local-only and stores no service-account credential', async () => {
+test('Wrangler pins the production environment safely without storing credentials or enabling routes', async () => {
   const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
   assert.match(wrangler, /ENVIRONMENT = "local-emulator"/);
   assert.match(wrangler, /PROJECT_ID = "demo-worker-sale"/);
   assert.match(wrangler, /FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"/);
   assert.match(wrangler, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
   assert.match(wrangler, /CORS_ALLOWED_ORIGIN = "https:\/\/mohmhran5-jpg\.github\.io"/);
-  assert.doesNotMatch(wrangler, /\[env\.production\]/);
-  assert.doesNotMatch(wrangler, /GCP_SERVICE_ACCOUNT_PRIVATE_KEY|GCP_SERVICE_ACCOUNT_EMAIL/);
+  assert.match(wrangler, /\[env\.production\]/);
+  assert.match(wrangler, /name = "lamsa-sales-worker"/);
+  const productionVars = wrangler.split('[env.production.vars]')[1] || '';
+  assert.match(productionVars, /PROJECT_ID = "gen-lang-client-0515786951"/);
+  assert.match(productionVars, /FIRESTORE_DATABASE_ID = "ai-studio-remixremixremixr-0f36aa66-a2c8-4d8a-bad2-ea0f72310677"/);
+  assert.match(productionVars, /GCP_SERVICE_ACCOUNT_EMAIL = "firestore-store-worker@gen-lang-client-0515786951\.iam\.gserviceaccount\.com"/);
+  assert.match(productionVars, /FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"/);
+  assert.match(productionVars, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
+  assert.doesNotMatch(wrangler, /^\s*GCP_SERVICE_ACCOUNT_PRIVATE_KEY\s*=/m);
+  assert.doesNotMatch(wrangler, /-----BEGIN PRIVATE KEY-----/);
 });

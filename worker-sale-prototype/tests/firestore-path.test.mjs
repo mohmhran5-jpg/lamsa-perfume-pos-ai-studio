@@ -59,7 +59,7 @@ test('emulator guard accepts the configured named database only with demo projec
   };
   const response = await worker.fetch(new Request('http://worker.local/health'), env);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, environment: 'local-emulator', project: 'demo-worker-sale' });
+  assert.deepEqual(await response.json(), { ok: true });
 
   const nonDemoProject = await worker.fetch(new Request('http://worker.local/health'), {
     ...env,

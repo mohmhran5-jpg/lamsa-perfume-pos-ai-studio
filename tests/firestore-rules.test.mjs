@@ -75,6 +75,14 @@ const NESTED_DOCUMENTS = [
   'unlisted_security_test/seed-parent/private/seed-document',
 ];
 
+test('Firebase CLI Firestore rules target only the named database used by the app', async () => {
+  const firebaseConfig = JSON.parse(await readFile(new URL('../firebase.json', import.meta.url), 'utf8'));
+  assert.ok(Array.isArray(firebaseConfig.firestore));
+  assert.deepEqual(firebaseConfig.firestore.map((entry) => ({ database: entry.database, rules: entry.rules })), [
+    { database: NAMED_DATABASE_ID, rules: 'firestore.rules' },
+  ]);
+});
+
 function validWritePayload(collection, id) {
   if (collection === 'sales') return {
     id,

@@ -83,8 +83,8 @@ export function firestoreDocumentsPath(projectId, databaseId) {
   return `projects/${projectId}/databases/${databaseId}/documents`;
 }
 
-export function assertProductionFirestoreConfig(env) {
-  if (env?.FIRESTORE_PRODUCTION_TRANSPORT_ENABLED !== 'true') {
+export function assertProductionFirestoreConfig(env, { requireTransportEnabled = true } = {}) {
+  if (requireTransportEnabled && env?.FIRESTORE_PRODUCTION_TRANSPORT_ENABLED !== 'true') {
     throw new ApiError(503, 'prototype/production-transport-disabled');
   }
   if (env?.ENVIRONMENT !== 'production'
@@ -97,7 +97,7 @@ export function assertProductionFirestoreConfig(env) {
       || env.FIRESTORE_EMULATOR_HOST || env.FIRESTORE_EMULATOR_ADMIN_TOKEN || env.FIREBASE_TEST_CERTS_URL) {
     throw new ApiError(503, 'prototype/production-transport-not-approved');
   }
-  return firestoreDocumentsPath(PRODUCTION_FIRESTORE_PROJECT_ID, PRODUCTION_FIRESTORE_DATABASE_ID);
+  return firestoreDocumentsPath(env.PROJECT_ID, env.FIRESTORE_DATABASE_ID);
 }
 
 function assertLamsaRequestAllowed(request, env) {
@@ -715,7 +715,11 @@ export default {
       }
     }
     if (request.method === 'GET' && url.pathname === '/health') {
-      try { assertEmulatorOnly(env); return json({ ok: true, environment: env.ENVIRONMENT, project: env.PROJECT_ID }); }
+      try {
+        if (env?.ENVIRONMENT === 'local-emulator') assertEmulatorOnly(env);
+        else assertProductionFirestoreConfig(env, { requireTransportEnabled: false });
+        return json({ ok: true });
+      }
       catch { return json({ ok: false }, 503); }
     }
     if (request.method === 'POST' && url.pathname === '/api/lamsa/commission-counter/bootstrap') {

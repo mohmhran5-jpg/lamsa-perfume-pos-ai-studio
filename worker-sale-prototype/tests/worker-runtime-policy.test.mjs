@@ -63,12 +63,19 @@ test('local emulator permits only its local browser origins and never the live P
   assert.equal(isAllowedLamsaRequestOrigin(env, 'https://evil.example'), false);
 });
 
-test('checked-in Wrangler config pins Pages origin but leaves both production routes and REST disabled', async () => {
+test('checked-in Wrangler config pins the app project/database and keeps both production gates closed', async () => {
   const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
   assert.match(wrangler, /ENVIRONMENT = "local-emulator"/);
-  assert.match(wrangler, /FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"/);
-  assert.match(wrangler, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
   assert.match(wrangler, /CORS_ALLOWED_ORIGIN = "https:\/\/mohmhran5-jpg\.github\.io"/);
-  assert.doesNotMatch(wrangler, /\[env\.production\]/);
-  assert.doesNotMatch(wrangler, /GCP_SERVICE_ACCOUNT_PRIVATE_KEY|GCP_SERVICE_ACCOUNT_EMAIL/);
+  assert.match(wrangler, /\[env\.production\]/);
+  const productionVars = wrangler.split('[env.production.vars]')[1] || '';
+  assert.match(productionVars, /ENVIRONMENT = "production"/);
+  assert.match(productionVars, /PROJECT_ID = "gen-lang-client-0515786951"/);
+  assert.match(productionVars, /FIRESTORE_DATABASE_ID = "ai-studio-remixremixremixr-0f36aa66-a2c8-4d8a-bad2-ea0f72310677"/);
+  assert.match(productionVars, /GCP_SERVICE_ACCOUNT_EMAIL = "firestore-store-worker@gen-lang-client-0515786951\.iam\.gserviceaccount\.com"/);
+  assert.match(productionVars, /OWNER_EMAIL = "moh\.mhran@gmail\.com"/);
+  assert.match(productionVars, /FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"/);
+  assert.match(productionVars, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
+  assert.doesNotMatch(wrangler, /^\s*GCP_SERVICE_ACCOUNT_PRIVATE_KEY\s*=/m);
+  assert.doesNotMatch(wrangler, /-----BEGIN PRIVATE KEY-----/);
 });

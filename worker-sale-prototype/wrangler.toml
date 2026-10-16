@@ -13,3 +13,17 @@ CORS_ALLOWED_ORIGIN = "https://mohmhran5-jpg.github.io"
 FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
 # Emulator-only admin bypass. This literal is not a production credential.
 FIRESTORE_EMULATOR_ADMIN_TOKEN = "owner"
+
+[env.production]
+name = "lamsa-sales-worker"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+PROJECT_ID = "gen-lang-client-0515786951"
+FIRESTORE_DATABASE_ID = "ai-studio-remixremixremixr-0f36aa66-a2c8-4d8a-bad2-ea0f72310677"
+GCP_SERVICE_ACCOUNT_EMAIL = "firestore-store-worker@gen-lang-client-0515786951.iam.gserviceaccount.com"
+OWNER_EMAIL = "moh.mhran@gmail.com"
+FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"
+SALE_WORKER_PRODUCTION_ENABLED = "false"
+CORS_ALLOWED_ORIGIN = "https://mohmhran5-jpg.github.io"
+# Never place GCP_SERVICE_ACCOUNT_PRIVATE_KEY here; it must be a runtime secret if separately approved.
