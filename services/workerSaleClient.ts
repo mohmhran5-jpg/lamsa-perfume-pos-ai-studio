@@ -88,6 +88,16 @@ export function resolveTarekSaleWorkerEndpoint(config: TarekSaleWorkerBuildConfi
   }
 }
 
+export function getConfiguredCommissionCounterBootstrapEndpoint(
+  config: TarekSaleWorkerBuildConfig = runtimeTarekSaleWorkerBuildConfig(),
+): string | null {
+  const saleEndpoint = resolveTarekSaleWorkerEndpoint(config);
+  if (!saleEndpoint) return null;
+  const url = new URL(saleEndpoint);
+  url.pathname = '/api/lamsa/commission-counter/bootstrap';
+  return url.toString();
+}
+
 function runtimeTarekSaleWorkerBuildConfig(): TarekSaleWorkerBuildConfig {
   const env = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
   if (!env) return { mode: 'production', enabled: false };
@@ -305,6 +315,25 @@ export async function bootstrapCommissionCounterOnLocalEmulatorWorker(
     throw new Error('worker-sale/local-emulator-only');
   }
   const payload = await postJson<Record<string, unknown>>(url, {}, getIdToken, fetcher, 'bootstrap');
+  if (!['ready', 'already-ready'].includes(String(payload.status))
+      || typeof payload.dateKey !== 'string'
+      || !Number.isSafeInteger(payload.sprayBottlesSold)
+      || !Number.isSafeInteger(payload.generation)
+      || typeof payload.historyScanned !== 'boolean') {
+    throw new Error('worker-sale/invalid-bootstrap-response');
+  }
+  return payload as unknown as CommissionCounterBootstrapResult;
+}
+
+/** Owner-only bootstrap through the explicitly configured Worker; production dates are enforced server-side. */
+export async function bootstrapCommissionCounterOnConfiguredWorker(
+  getIdToken: TokenProvider,
+  fetcher: FetchLike = fetch,
+  config: TarekSaleWorkerBuildConfig = runtimeTarekSaleWorkerBuildConfig(),
+): Promise<CommissionCounterBootstrapResult> {
+  const endpoint = getConfiguredCommissionCounterBootstrapEndpoint(config);
+  if (!endpoint) throw new Error('worker-sale/not-enabled');
+  const payload = await postJson<Record<string, unknown>>(new URL(endpoint), {}, getIdToken, fetcher, 'bootstrap');
   if (!['ready', 'already-ready'].includes(String(payload.status))
       || typeof payload.dateKey !== 'string'
       || !Number.isSafeInteger(payload.sprayBottlesSold)

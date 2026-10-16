@@ -6,7 +6,9 @@ import {
   toWorkerSaleIntent,
 } from '../services/workerSaleContract.ts';
 import {
+  bootstrapCommissionCounterOnConfiguredWorker,
   bootstrapCommissionCounterOnLocalEmulatorWorker,
+  getConfiguredCommissionCounterBootstrapEndpoint,
   getConfiguredTarekSaleWorkerEndpoint,
   quoteTarekSaleToWorker,
   quoteTarekSaleToLocalEmulatorWorker,
@@ -367,6 +369,53 @@ test('daily counter bootstrap client is owner-driven and rejects every non-local
     'https://live-worker.example/api/lamsa/commission-counter/bootstrap',
     async () => { throw new Error('token must not be requested for remote endpoint'); },
   ), /local-emulator-only/);
+});
+
+test('configured Worker bootstrap uses only the explicit HTTPS production origin and sends an empty body', async () => {
+  const config = {
+    mode: 'production',
+    enabled: true,
+    workerUrl: 'https://lamsa-sales-worker.example.workers.dev',
+  };
+  assert.equal(getConfiguredCommissionCounterBootstrapEndpoint(config),
+    'https://lamsa-sales-worker.example.workers.dev/api/lamsa/commission-counter/bootstrap');
+  let sentUrl;
+  let sentBody;
+  let sentAuthorization;
+  const result = await bootstrapCommissionCounterOnConfiguredWorker(
+    async () => 'owner-google-id-token',
+    async (url, init) => {
+      sentUrl = String(url);
+      sentBody = JSON.parse(String(init?.body));
+      sentAuthorization = new Headers(init?.headers).get('authorization');
+      return new Response(JSON.stringify({
+        ok: true,
+        status: 'ready',
+        dateKey: '2026-10-17',
+        sprayBottlesSold: 0,
+        generation: 0,
+        historyScanned: true,
+        historicalSaleIdsScanned: 0,
+      }), { status: 200 });
+    },
+    config,
+  );
+  assert.equal(sentUrl, 'https://lamsa-sales-worker.example.workers.dev/api/lamsa/commission-counter/bootstrap');
+  assert.deepEqual(sentBody, {});
+  assert.equal(sentAuthorization, 'Bearer owner-google-id-token');
+  assert.equal(result.dateKey, '2026-10-17');
+  assert.equal(result.sprayBottlesSold, 0);
+  assert.deepEqual(Object.keys(result).sort(), [
+    'dateKey', 'generation', 'historicalSaleIdsScanned', 'historyScanned', 'ok', 'sprayBottlesSold', 'status',
+  ]);
+
+  let networkCalls = 0;
+  await assert.rejects(bootstrapCommissionCounterOnConfiguredWorker(
+    async () => { throw new Error('token must not be requested when disabled'); },
+    async () => { networkCalls += 1; throw new Error('network must not be used'); },
+    { mode: 'production', enabled: false, workerUrl: 'https://lamsa-sales-worker.example.workers.dev' },
+  ), /worker-sale\/not-enabled/);
+  assert.equal(networkCalls, 0);
 });
 
 test('the approved registration cutover is 2026-10-17 03:00 Cairo / 00:00 UTC', () => {

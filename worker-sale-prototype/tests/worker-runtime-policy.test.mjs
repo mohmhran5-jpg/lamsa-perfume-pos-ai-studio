@@ -4,9 +4,11 @@ import test from 'node:test';
 import {
   isAllowedLamsaRequestOrigin,
   isExactHttpsOrigin,
+  isLamsaSalesCutoverReached,
   isProductionLamsaRouteEnabled,
   resolveLamsaCorsOrigin,
 } from '../src/workerRuntimePolicy.mjs';
+import { assertLamsaRequestAllowed } from '../src/index.mjs';
 
 const PAGES_ORIGIN = 'https://mohmhran5-jpg.github.io';
 
@@ -27,6 +29,31 @@ test('production routes stay disabled unless both explicit flags and one exact H
     FIRESTORE_PRODUCTION_TRANSPORT_ENABLED: 'true',
     CORS_ALLOWED_ORIGIN: PAGES_ORIGIN,
   }), true);
+});
+
+test('production sale paths fail closed before the agreed UTC cutover and open at the cutover instant', () => {
+  assert.equal(isLamsaSalesCutoverReached(new Date('2026-10-16T23:59:59.999Z')), false);
+  assert.equal(isLamsaSalesCutoverReached(new Date('2026-10-17T00:00:00.000Z')), true);
+  assert.equal(isLamsaSalesCutoverReached(new Date(Number.NaN)), false);
+
+  const env = {
+    ENVIRONMENT: 'production',
+    SALE_WORKER_PRODUCTION_ENABLED: 'true',
+    FIRESTORE_PRODUCTION_TRANSPORT_ENABLED: 'true',
+    CORS_ALLOWED_ORIGIN: PAGES_ORIGIN,
+    PROJECT_ID: 'gen-lang-client-0515786951',
+    FIRESTORE_DATABASE_ID: 'ai-studio-remixremixremixr-0f36aa66-a2c8-4d8a-bad2-ea0f72310677',
+    GCP_SERVICE_ACCOUNT_EMAIL: 'firestore-store-worker@gen-lang-client-0515786951.iam.gserviceaccount.com',
+    GCP_SERVICE_ACCOUNT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
+  };
+  const request = new Request('https://worker.test/api/lamsa/sales/quote', {
+    method: 'POST', headers: { origin: PAGES_ORIGIN },
+  });
+  assert.throws(
+    () => assertLamsaRequestAllowed(request, env, new Date('2026-10-16T23:59:59.999Z')),
+    (error) => error.code === 'sale/cutover-not-started',
+  );
+  assert.doesNotThrow(() => assertLamsaRequestAllowed(request, env, new Date('2026-10-17T00:00:00.000Z')));
 });
 
 test('production CORS allows only the verified GitHub Pages origin, with no wildcard or path', () => {

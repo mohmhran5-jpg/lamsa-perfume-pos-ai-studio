@@ -18,6 +18,7 @@ import {
 } from './productionConfig.mjs';
 import {
   isAllowedLamsaRequestOrigin,
+  isLamsaSalesCutoverReached,
   isProductionLamsaRouteEnabled,
   resolveLamsaCorsOrigin,
 } from './workerRuntimePolicy.mjs';
@@ -100,7 +101,7 @@ export function assertProductionFirestoreConfig(env, { requireTransportEnabled =
   return firestoreDocumentsPath(env.PROJECT_ID, env.FIRESTORE_DATABASE_ID);
 }
 
-function assertLamsaRequestAllowed(request, env) {
+export function assertLamsaRequestAllowed(request, env, now = new Date()) {
   if (env?.ENVIRONMENT === 'local-emulator') {
     assertEmulatorOnly(env);
     if (!isAllowedLamsaRequestOrigin(env, request.headers.get('origin'))) {
@@ -112,6 +113,7 @@ function assertLamsaRequestAllowed(request, env) {
     throw new ApiError(503, 'prototype/production-routes-disabled');
   }
   assertProductionFirestoreConfig(env);
+  if (!isLamsaSalesCutoverReached(now)) throw new ApiError(503, 'sale/cutover-not-started');
   if (!isAllowedLamsaRequestOrigin(env, request.headers.get('origin'))) {
     throw new ApiError(403, 'worker/origin-not-allowed');
   }

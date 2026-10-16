@@ -3,6 +3,14 @@ const LOCAL_CORS_ORIGINS = new Set([
   'http://localhost:3000',
 ]);
 
+export const LAMSA_SALES_CUTOVER_DATE_KEY = '2026-10-17';
+
+export function isLamsaSalesCutoverReached(now = new Date()) {
+  return now instanceof Date
+    && !Number.isNaN(now.getTime())
+    && now.toISOString().slice(0, 10) >= LAMSA_SALES_CUTOVER_DATE_KEY;
+}
+
 /** Only a single canonical HTTPS origin is accepted for a production browser client. */
 export function isExactHttpsOrigin(value) {
   if (typeof value !== 'string' || !value || value.includes('*') || value.includes(',')) return false;
