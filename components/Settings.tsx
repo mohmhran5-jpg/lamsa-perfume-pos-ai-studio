@@ -128,7 +128,6 @@ interface SettingsProps {
   onNavigate?: (view: View) => void;
   onSaveAppUser?: (user: AppUser) => void;
   onAddAuditLog?: (log: AuditLogRecord) => void;
-  onPreviewUserPermissions?: (user: AppUser | null) => void;
   onUpdateSale?: (updatedSale: Sale, previousSale: Sale, adjustStock?: boolean) => void;
   initialSection?: SettingsSection;
 }
@@ -153,7 +152,6 @@ export const Settings: React.FC<SettingsProps> = ({
   onNavigate,
   onSaveAppUser,
   onAddAuditLog,
-  onPreviewUserPermissions,
   onUpdateSale,
   initialSection = 'pricing'
 }) => {
@@ -1325,7 +1323,6 @@ export const Settings: React.FC<SettingsProps> = ({
                 currentUser={currentUser || null}
                 onSaveUser={onSaveAppUser || (() => {})}
                 onAddAuditLog={onAddAuditLog || (() => {})}
-                onPreviewUserPermissions={onPreviewUserPermissions}
               />
             </div>
           )}

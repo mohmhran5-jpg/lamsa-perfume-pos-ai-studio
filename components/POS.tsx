@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { 
   Product, 
   Sale, 
@@ -50,6 +51,8 @@ import {
   View
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
+import { createCommissionTimeEvidence, getTrustedServerTimeEstimate, subscribeTrustedServerTime } from '../services/commissionTimeEvidence';
+import { getAuthorizedSalePrice } from '../services/workerSaleContract';
 import { soundAlertService } from '../services/soundAlertService';
 import { dispatchSaleTelegramAlert, dispatchLowStockTelegramAlert } from '../services/telegramNotificationService';
 import SalesCoachingCard from './SalesCoachingCard';
@@ -109,12 +112,25 @@ import {
   ChevronDown,
   Eye
 } from 'lucide-react';
-import { enqueueOfflineAction } from '../services/offlineSyncService';
 import ReceiptModal from './ReceiptModal';
+import { getSaleStockDeductions } from '../services/saleSync';
+import { db } from '../services/firebase';
+
+type CommissionCounterUiState = {
+  status: 'loading' | 'missing' | 'invalid' | 'error' | 'ready';
+  dateKey?: string;
+  sprayBottlesSold?: number;
+  generation?: number;
+};
+
+function createSaleId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid ? `sale-${uuid}` : `sale-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 
 interface POSProps {
   products: Product[];
-  onCompleteSale: (sale: Sale) => void;
+  onCompleteSale: (sale: Sale) => Promise<boolean>;
   settings?: StoreSettings;
   bottleSizes?: BottleSize[];
   dailyCoveredExpense?: number;
@@ -210,6 +226,7 @@ const POS: React.FC<POSProps> = ({
   const [showShortagesModal, setShowShortagesModal] = useState(false);
   const [showPromotionalCalculatorModal, setShowPromotionalCalculatorModal] = useState(false);
   const [activePromotionalSavings, setActivePromotionalSavings] = useState<{
+    promotionId?: string;
     offerName: string;
     originalTotal: number;
     finalTotal: number;
@@ -229,6 +246,7 @@ const POS: React.FC<POSProps> = ({
 
   // Floating Action Button & Mobile Instant Invoice Drawer State
   const [isMobileInvoiceDrawerOpen, setIsMobileInvoiceDrawerOpen] = useState(false);
+  const [commissionCounterState, setCommissionCounterState] = useState<CommissionCounterUiState>({ status: 'loading' });
 
   const handleOpenInstantInvoice = () => {
     if (window.innerWidth < 1024) {
@@ -354,8 +372,12 @@ const POS: React.FC<POSProps> = ({
 
   // Success & Smart Adaptive Invoice Terminal State
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+  const [completedSaleCloudSync, setCompletedSaleCloudSync] = useState<boolean | null>(null);
+  const [isFinalizingSale, setIsFinalizingSale] = useState(false);
+  const isFinalizingSaleRef = useRef(false);
   const [draftInvoicePreviewSale, setDraftInvoicePreviewSale] = useState<Sale | null>(null);
   const [addedItemFlash, setAddedItemFlash] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   // Open live adaptive smart invoice terminal for current cart
   const handleOpenQuickInvoicePreview = () => {
@@ -370,6 +392,7 @@ const POS: React.FC<POSProps> = ({
       date: new Date().toISOString(),
       items: cart.map(item => ({
         id: item.id,
+        ...(item.promotionId ? { promotionId: item.promotionId } : {}),
         productId: item.productId,
         productName: item.productName,
         productType: item.productType,
@@ -406,6 +429,7 @@ const POS: React.FC<POSProps> = ({
 
   // Apply Promotional Bundle Offer to Cart & Attach Savings to Receipt
   const handleApplyBundleOfferToCart = (bundleData: {
+    promotionId?: string;
     offerName: string;
     items: Array<{ product: Product; bottle: BottleSize; quantity: number }>;
     originalTotal: number;
@@ -416,7 +440,7 @@ const POS: React.FC<POSProps> = ({
     const newCartItems: CartItem[] = [];
 
     bundleData.items.forEach(({ product, bottle, quantity }) => {
-      const isSpecial = ['عود', 'مسك'].includes(product.type);
+      const isSpecial = ['نيش', 'عود', 'مسك'].includes(product.type);
       const unitPrice = isSpecial ? bottle.specialPrice : bottle.normalPrice;
       const unitCost = calculateDerivedProductCost({
         bottle,
@@ -431,6 +455,7 @@ const POS: React.FC<POSProps> = ({
         productName: product.name,
         productType: product.type,
         bottleSize: bottle.sizeMl,
+        bottleSizeId: bottle.id,
         essenceGrams: bottle.essenceGrams,
         cost: unitCost,
         sellingPrice: unitPrice,
@@ -440,12 +465,14 @@ const POS: React.FC<POSProps> = ({
         quantity: quantity || 1,
         isRollOn: bottle.isRollOn,
         isColoredBottle: false,
+        ...(bundleData.promotionId ? { promotionId: bundleData.promotionId } : {}),
       });
     });
 
     setCart(prev => [...newCartItems, ...prev]);
     setOrderDiscount(bundleData.savedAmount);
     setActivePromotionalSavings({
+      ...(bundleData.promotionId ? { promotionId: bundleData.promotionId } : {}),
       offerName: bundleData.offerName,
       originalTotal: bundleData.originalTotal,
       finalTotal: bundleData.finalTotal,
@@ -919,7 +946,48 @@ const POS: React.FC<POSProps> = ({
   }, [customerPhone, customerName, salesHistory, customCustomers]);
 
   // Filter products by search and category
-  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [todayIso, setTodayIso] = useState(() => getTrustedServerTimeEstimate()?.dateKey ?? new Date().toISOString().slice(0, 10));
+  useEffect(() => {
+    const refreshUtcDay = () => setTodayIso(getTrustedServerTimeEstimate()?.dateKey ?? new Date().toISOString().slice(0, 10));
+    const unsubscribeClock = subscribeTrustedServerTime(refreshUtcDay);
+    const timer = setInterval(refreshUtcDay, 60_000);
+    if (typeof window !== 'undefined') window.addEventListener('focus', refreshUtcDay);
+    return () => {
+      clearInterval(timer);
+      unsubscribeClock();
+      if (typeof window !== 'undefined') window.removeEventListener('focus', refreshUtcDay);
+    };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    setCommissionCounterState({ status: 'loading' });
+    const unsubscribe = onSnapshot(doc(db, 'commission_day_counters', todayIso), (snapshot) => {
+      if (!active) return;
+      if (!snapshot.exists()) {
+        setCommissionCounterState({ status: 'missing' });
+        return;
+      }
+      const counter = snapshot.data();
+      const isReady = counter.schemaVersion === 1
+        && counter.status === 'ready'
+        && counter.dateKey === todayIso
+        && Number.isSafeInteger(counter.sprayBottlesSold)
+        && counter.sprayBottlesSold >= 0
+        && Number.isSafeInteger(counter.generation)
+        && counter.generation >= 0;
+      setCommissionCounterState(isReady
+        ? { status: 'ready', dateKey: todayIso, sprayBottlesSold: counter.sprayBottlesSold, generation: counter.generation }
+        : { status: 'invalid' });
+    }, () => {
+      if (active) setCommissionCounterState({ status: 'error' });
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [todayIso]);
+  const commissionCounterReady = commissionCounterState.status === 'ready'
+    && commissionCounterState.dateKey === todayIso;
 
   // Store open status from daily closure
   const isStoreOpen = currentClosure?.status === 'مفتوح';
@@ -1246,10 +1314,8 @@ const POS: React.FC<POSProps> = ({
 
   const isOwner = currentUser?.role === 'OWNER';
   const rawCustomPrice = customPrice === '' ? null : Number(customPrice);
-  // Strict Protection: Non-owner staff (e.g. Tarek) cannot sell below suggested price!
-  const configItemFinalPrice = (!isOwner && rawCustomPrice !== null && rawCustomPrice < configItemSuggestedPrice)
-    ? configItemSuggestedPrice
-    : (rawCustomPrice !== null ? rawCustomPrice : configItemSuggestedPrice);
+  // Non-owner roles cannot modify an approved selling price in either direction.
+  const configItemFinalPrice = getAuthorizedSalePrice(isOwner, configItemSuggestedPrice, rawCustomPrice);
 
   // Roll-ons have 0% commission; spray bottles use rounded 5% commission per Section 10 of Reference
   const configItemCommission = selectedBottle.isRollOn ? 0 : Math.round(configItemFinalPrice * (settings.commissionRate || 0.05));
@@ -1274,8 +1340,8 @@ const POS: React.FC<POSProps> = ({
   const handleAddToCart = () => {
     if (!configuringProduct || !selectedBottle) return;
 
-    if (!isOwner && customPrice !== '' && Number(customPrice) < configItemSuggestedPrice) {
-      alert(`⚠️ غير مسموح بالبيع بأقل من السعر المقترح المعتمد (${configItemSuggestedPrice} ${settings.currency}) لحماية إيرادات المتجر ومستحقات التشغيل.`);
+    if (!isOwner && customPrice !== '') {
+      alert(`⚠️ تغيير السعر يتطلب صلاحية المالك؛ السعر المعتمد (${configItemSuggestedPrice} ${settings.currency}) لحماية إيرادات المتجر ومستحقات التشغيل.`);
       return;
     }
 
@@ -1291,6 +1357,7 @@ const POS: React.FC<POSProps> = ({
       productName: displayName,
       productType: configuringProduct.type,
       bottleSize: selectedBottle.sizeMl,
+      bottleSizeId: selectedBottle.id,
       essenceGrams: essenceGrams,
       cost: configItemCost,
       sellingPrice: configItemFinalPrice,
@@ -1336,6 +1403,7 @@ const POS: React.FC<POSProps> = ({
       productName: product.name,
       productType: product.type,
       bottleSize: targetBottle.sizeMl,
+      bottleSizeId: targetBottle.id,
       essenceGrams: targetBottle.essenceGrams,
       cost: itemCost,
       sellingPrice: itemPrice,
@@ -1378,10 +1446,10 @@ const POS: React.FC<POSProps> = ({
       bottle: mixBottle,
       components: mixComponents,
       isColoredBottle: mixIsColoredBottle,
-      customSellingPrice: mixCustomPrice,
+      customSellingPrice: isOwner ? mixCustomPrice : '',
       settings,
     });
-  }, [mixBottle, mixComponents, mixIsColoredBottle, mixCustomPrice, settings]);
+  }, [mixBottle, mixComponents, mixIsColoredBottle, mixCustomPrice, isOwner, settings]);
 
   // تحليل الملف العطري للعطر الأساسي المختار (القاعدة 3 و 24 و 25)
   const primaryMixPerfumeProfile = useMemo<OlfactoryProfileAnalysis | null>(() => {
@@ -1775,8 +1843,8 @@ const POS: React.FC<POSProps> = ({
     }
 
     const isOwner = currentUser?.role === 'OWNER';
-    if (!isOwner && mixCustomPrice !== '' && Number(mixCustomPrice) < mixAccounting.suggestedSellingPriceEgp) {
-      alert(`⚠️ غير مسموح بالبيع بأقل من السعر المقترح المعتمد (${mixAccounting.suggestedSellingPriceEgp} ${settings.currency}) لمزيج العطور.`);
+    if (!isOwner && mixCustomPrice !== '') {
+      alert(`⚠️ تغيير السعر يتطلب صلاحية المالك؛ السعر المعتمد (${mixAccounting.suggestedSellingPriceEgp} ${settings.currency}) لمزيج العطور.`);
       return;
     }
     const qty = Math.max(1, configQuantity || 1);
@@ -1791,6 +1859,7 @@ const POS: React.FC<POSProps> = ({
       productName: displayName,
       productType: mixAccounting.dominantType,
       bottleSize: mixBottle.sizeMl,
+      bottleSizeId: mixBottle.id,
       essenceGrams: mixAccounting.totalEssenceGrams,
       cost: mixAccounting.unitBottleCostEgp,
       sellingPrice: mixAccounting.finalSellingPriceEgp,
@@ -1861,6 +1930,7 @@ const POS: React.FC<POSProps> = ({
         ...item,
         productName: stillColored ? `${baseName} (عبوة ملونة)` : baseName,
         bottleSize: newBottle.sizeMl,
+        bottleSizeId: newBottle.id,
         essenceGrams: newBottle.essenceGrams,
         cost: newCost,
         sellingPrice: newPrice,
@@ -1985,15 +2055,10 @@ const POS: React.FC<POSProps> = ({
 
   // §27: Non-Retroactive Tiered Commission (First 10 spray bottles today = 5%, 11th+ spray bottle = 7%, Roll-ons = 0%, Exception/Non-normal = 0%)
   const priorSprayBottlesSoldToday = useMemo(() => {
-    return todaysSalesList.reduce((acc, s) => {
-      if (s.isReversed || (s.transactionType && s.transactionType !== 'بيع_طبيعي')) return acc;
-      const spraysInSale = (s.items || []).reduce((itemAcc, it) => {
-        if (it.isRollOn || [2, 3, 5].includes(it.bottleSize)) return itemAcc;
-        return itemAcc + (it.quantity || 1);
-      }, 0);
-      return acc + spraysInSale;
-    }, 0);
-  }, [todaysSalesList]);
+    // If the counter is unavailable, use the higher approved tier and hold this
+    // commission for owner review rather than crediting an uncertain lower rate.
+    return commissionCounterReady ? commissionCounterState.sprayBottlesSold || 0 : Number.MAX_SAFE_INTEGER;
+  }, [commissionCounterReady, commissionCounterState.sprayBottlesSold]);
 
   const tieredCommissionResult = useMemo(() => {
     const discountRatio = cartSubtotal > 0 ? Math.max(0, cartFinalTotal / cartSubtotal) : 1;
@@ -2106,9 +2171,34 @@ const POS: React.FC<POSProps> = ({
     setShowSuggestions(false);
   };
 
-  // Final checkout confirmation with pre-sale verification and backdated sales support
-  const handleConfirmOrder = (skipDuplicateCheck = false) => {
+  // Final checkout confirmation with pre-sale verification and counter-safe date bounds
+  const handleConfirmOrder = async (skipDuplicateCheck = false) => {
     if (cart.length === 0) return;
+    const trustedClock = getTrustedServerTimeEstimate();
+    const estimatedNowMs = trustedClock?.serverNowMs ?? Date.now();
+    if (estimatedNowMs < Date.UTC(2026, 9, 17, 0, 0, 0)) {
+      setCheckoutError('لم يبدأ تسجيل المبيعات الجديدة بعد؛ يبدأ عند 03:00 صباحاً بتوقيت القاهرة يوم 17 أكتوبر.');
+      return;
+    }
+
+    let stockRequirements: Map<string, number>;
+    try {
+      const lineItems = cart.map(item => ({
+        ...item,
+        essenceGrams: item.essenceGrams * (item.quantity || 1),
+      }));
+      stockRequirements = getSaleStockDeductions({ items: lineItems } as Pick<Sale, 'items'>);
+      for (const [productId, requiredGrams] of stockRequirements) {
+        const product = products.find(p => String(p.id) === productId);
+        if (!product || !Number.isFinite(product.stock_grams) || product.stock_grams < requiredGrams) {
+          throw new Error('sale-sync/preflight-insufficient-stock');
+        }
+      }
+      setCheckoutError(null);
+    } catch {
+      setCheckoutError('لم يُعتمد البيع: كمية الزيت المطلوبة تتجاوز المخزون المتاح أو تعذر التحقق منه. لم تُسجّل الفاتورة.');
+      return;
+    }
 
     // Hard Rule 16 Check: Block selling below cost unless Owner override granted
     if (isCartBelowCost && !ownerOverrideGranted) {
@@ -2116,18 +2206,29 @@ const POS: React.FC<POSProps> = ({
       return;
     }
 
-    // Determine actual sale date & time vs system recording time
-    let effectiveSaleIso = new Date().toISOString();
+    // Use the authenticated Worker estimate for the sale day; retain the device event separately.
+    const deviceEventIso = new Date().toISOString();
+    let effectiveSaleIso = trustedClock ? new Date(trustedClock.serverNowMs).toISOString() : deviceEventIso;
     let isBackdated = false;
     if (isBackdatedSaleMode && canRecordBackdated && customSaleDate) {
       const parsed = new Date(`${customSaleDate}T${customSaleTime || '12:00'}:00`);
       if (!isNaN(parsed.getTime())) {
         effectiveSaleIso = parsed.toISOString();
-        isBackdated = effectiveSaleIso.slice(0, 10) < new Date().toISOString().slice(0, 10);
+        isBackdated = effectiveSaleIso.slice(0, 10) < todayIso;
       }
     }
 
+    const timingEvidence = createCommissionTimeEvidence(
+      effectiveSaleIso,
+      undefined,
+      Date.now(),
+      commissionCounterReady && Number.isSafeInteger(commissionCounterState.generation),
+    );
     const targetDateStr = effectiveSaleIso.slice(0, 10);
+    if (targetDateStr !== todayIso) {
+      setCheckoutError('لم يُعتمد البيع: لا يوجد عداد عمولة مهيأ لهذا التاريخ؛ البيع خارج يوم UTC الحالي متوقف حتى تهيئة تاريخية معتمدة.');
+      return;
+    }
     const actorName = currentUser?.displayName?.replace(/\(.*?\)/g, '').trim() || currentUser?.displayName || 'طارق';
 
     // Duplicate detection check (منع التكرار غير المقصود لمبيعات الدفتر الورقي)
@@ -2144,7 +2245,7 @@ const POS: React.FC<POSProps> = ({
       if (potentialMatches.length > 0) {
         setPotentialDuplicateMatches(potentialMatches);
         setPendingDuplicateSale({
-          id: Date.now().toString(),
+          id: createSaleId(),
           date: effectiveSaleIso,
           items: cart.map(item => ({
             id: item.id,
@@ -2152,6 +2253,7 @@ const POS: React.FC<POSProps> = ({
             productName: item.productName,
             productType: item.productType,
             bottleSize: item.bottleSize,
+            bottleSizeId: item.bottleSizeId,
             essenceGrams: item.essenceGrams * (item.quantity || 1),
             cost: item.cost * (item.quantity || 1),
             sellingPrice: item.sellingPrice * (item.quantity || 1),
@@ -2175,7 +2277,7 @@ const POS: React.FC<POSProps> = ({
     }
 
     const newSale: Sale = {
-      id: Date.now().toString(),
+      id: skipDuplicateCheck && pendingDuplicateSale ? pendingDuplicateSale.id : createSaleId(),
       date: effectiveSaleIso,
       recordedAt: new Date().toISOString(),
       recordedBy: actorName,
@@ -2192,14 +2294,16 @@ const POS: React.FC<POSProps> = ({
       ],
       items: cart.map(item => ({
         id: item.id,
+        ...(item.promotionId ? { promotionId: item.promotionId } : {}),
         productId: item.productId,
         productName: item.productName,
         productType: item.productType,
         bottleSize: item.bottleSize,
+        bottleSizeId: item.bottleSizeId,
         essenceGrams: item.essenceGrams * (item.quantity || 1),
         cost: item.cost * (item.quantity || 1),
         sellingPrice: item.sellingPrice * (item.quantity || 1),
-        profit: item.profit * (item.quantity || 1),
+        profit: timingEvidence.commissionTimingStatus === 'verified' ? item.profit * (item.quantity || 1) : 0,
         quantity: item.quantity || 1,
         isColoredBottle: item.isColoredBottle,
         isRollOn: item.isRollOn,
@@ -2210,7 +2314,7 @@ const POS: React.FC<POSProps> = ({
       })),
       totalPrice: cartFinalTotal,
       totalCost: cartTotalCost,
-      totalProfit: cartTotalNetProfit,
+      totalProfit: timingEvidence.commissionTimingStatus === 'verified' ? cartTotalNetProfit : 0,
       ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
       ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
       paymentMethod,
@@ -2231,9 +2335,23 @@ const POS: React.FC<POSProps> = ({
       ...(packagingAccounting.replacesBasicBag
         ? { isBasicBagReplacedByLuxury: true }
         : {}),
-      commissionAmount: cartTotalCommission,
-      totalCommission: cartTotalCommission,
+      commissionAmount: timingEvidence.commissionTimingStatus === 'verified' ? cartTotalCommission : 0,
+      totalCommission: timingEvidence.commissionTimingStatus === 'verified' ? cartTotalCommission : 0,
+      commissionTimingStatus: timingEvidence.commissionTimingStatus,
+      ...(timingEvidence.commissionEventTime ? { commissionEventTime: timingEvidence.commissionEventTime } : {}),
+      ...(timingEvidence.commissionCandidateDayKey ? { commissionCandidateDayKey: timingEvidence.commissionCandidateDayKey } : {}),
+      ...(timingEvidence.commissionReviewReason ? { commissionReviewReason: timingEvidence.commissionReviewReason } : {}),
+      ...(timingEvidence.commissionClockDriftMs !== undefined ? { commissionClockDriftMs: timingEvidence.commissionClockDriftMs } : {}),
+      ...(timingEvidence.commissionTimingStatus === 'verified' && commissionCounterReady
+        && Number.isSafeInteger(commissionCounterState.generation)
+        ? {
+            commissionDayKey: timingEvidence.commissionCandidateDayKey ?? todayIso,
+            commissionSprayBottleCount: tieredCommissionResult.sprayBottlesInThisSale,
+            commissionCounterGeneration: commissionCounterState.generation,
+          }
+        : {}),
       ...(activePromotionalSavings ? { promotionalSavings: activePromotionalSavings } : {}),
+      ...(activePromotionalSavings?.promotionId ? { promotionId: activePromotionalSavings.promotionId } : {}),
       transactionType: ownerOverrideGranted
         ? ownerExceptionReason === 'هدية'
           ? 'هدية'
@@ -2262,21 +2380,39 @@ const POS: React.FC<POSProps> = ({
           ].filter(Boolean).join(' · ') || undefined
     };
 
+    if (isFinalizingSaleRef.current) return;
+    isFinalizingSaleRef.current = true;
+    setIsFinalizingSale(true);
+    let cloudSyncSucceeded = false;
+    try {
+      cloudSyncSucceeded = await onCompleteSale(newSale);
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : '';
+      if (/^sale-sync\/(?:preflight|invalid-|offline-queue|tarek-v3-required|commission-counter-(?:not-ready|stale|ambiguous-date))/.test(errorText)) {
+        setCheckoutError('لم يتم اعتماد الفاتورة أو تثبيت إعادة المحاولة. بقيت السلة كما هي؛ راجع المخزون أو الاتصال ثم أعد المحاولة.');
+        return;
+      }
+      console.error('Sale is retained locally; cloud confirmation failed:', error);
+    } finally {
+      isFinalizingSaleRef.current = false;
+      setIsFinalizingSale(false);
+    }
+    setCompletedSaleCloudSync(cloudSyncSucceeded);
     soundAlertService.playSaleChime();
-    onCompleteSale(newSale);
 
-    // Dispatch instant Telegram alert & low stock warning
-    dispatchSaleTelegramAlert(newSale, settings).catch(err => console.warn('Telegram alert error:', err));
-    cart.forEach(item => {
-      const prod = products.find(p => String(p.id) === String(item.productId));
-      if (prod) {
-        const remaining = Math.max(0, prod.stock_grams - (item.essenceGrams * (item.quantity || 1)));
+    // External sale/stock notices are sent only after Firestore confirms the sale batch.
+    if (cloudSyncSucceeded) {
+      dispatchSaleTelegramAlert(newSale, settings).catch(err => console.warn('Telegram alert error:', err));
+      for (const [productId, deduction] of stockRequirements) {
+        const prod = products.find(p => String(p.id) === productId);
+        if (!prod) continue;
+        const remaining = prod.stock_grams - deduction;
         const threshold = prod.min_threshold_grams ?? 50;
-        if (remaining <= threshold) {
-          dispatchLowStockTelegramAlert(prod.name, remaining, threshold, settings?.storeName || 'لمسة عطر').catch(e => {});
+        if (remaining >= 0 && remaining <= threshold) {
+          dispatchLowStockTelegramAlert(prod.name, remaining, threshold, settings?.storeName || 'لمسة عطر').catch(() => {});
         }
       }
-    });
+    }
 
     // If an owner override was granted, register in Audit Log
     if (ownerOverrideGranted && onAddAuditLog) {
@@ -2295,18 +2431,12 @@ const POS: React.FC<POSProps> = ({
       });
     }
 
-    if (!navigator.onLine) {
-      try {
-        enqueueOfflineAction('sale', newSale);
-      } catch (e) {
-        console.warn('Could not enqueue offline sale:', e);
-      }
-    }
-
     localStorage.removeItem('lamsa_pos_active_cart_v2');
     localStorage.removeItem('lamsa_pos_active_customer_v2');
     localStorage.removeItem('lamsa_pos_active_mix_v2');
     setRestoredSessionNotice(null);
+    setPendingDuplicateSale(null);
+    setPotentialDuplicateMatches([]);
 
     setCompletedSale(newSale);
 
@@ -2533,7 +2663,7 @@ const POS: React.FC<POSProps> = ({
           <div className="flex items-center gap-2.5">
             <WifiOff size={18} className="text-amber-400 shrink-0" />
             <span>
-              ⚡ وضع العمل دون إنترنت (Offline Mode) مفعّل: جميع عمليات البيع والتركيب تُحفظ محلياً بأمان 100% وتتم المزامنة التلقائية فور عودة الاتصال.
+              انقطع الاتصال: حفظ البيع محلياً لا يعني تأكيد المزامنة؛ ستُعاد محاولة الفواتير المعلقة عند عودة الشبكة وبعد تحقق جلسة المالك.
             </span>
           </div>
           <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-black shrink-0 self-start sm:self-auto">
@@ -2614,6 +2744,24 @@ const POS: React.FC<POSProps> = ({
       />
 
       {/* Top Item Added Toast Notification */}
+      {!commissionCounterReady && (
+        <div
+          role={commissionCounterState.status === 'error' || commissionCounterState.status === 'invalid' ? 'alert' : 'status'}
+          aria-live="polite"
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-[154] w-[94vw] max-w-lg px-4 py-3 rounded-2xl bg-amber-950/95 border border-amber-400/45 text-white text-xs font-bold shadow-xl"
+        >
+          {commissionCounterState.status === 'loading'
+            ? 'جارٍ التحقق من عداد العمولة؛ يمكن تسجيل البيع بعد بدء التاريخ، وتُعلّق العمولة للمراجعة عند عدم الجاهزية.'
+            : commissionCounterState.status === 'missing'
+              ? 'عداد عمولة اليوم غير مهيأ؛ المبيعات والمخزون يستمران، لكن العمولة والربح لا يُعتمدان آلياً حتى مراجعة المالك.'
+              : 'تعذر التحقق من عداد العمولة؛ سيُسجل البيع والمخزون ذرياً مع عمولة صفرية للمراجعة، ولن يُحتسب استحقاق تلقائي.'}
+        </div>
+      )}
+      {checkoutError && (
+        <div role="alert" className="fixed top-3.5 left-1/2 -translate-x-1/2 z-[156] w-[94vw] max-w-lg px-4 py-3 rounded-2xl bg-rose-950/95 border border-rose-400/45 text-white text-xs font-bold shadow-xl">
+          {checkoutError}
+        </div>
+      )}
       {addedItemFlash && (
         <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-[155] w-[94vw] max-w-lg px-4 py-3 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-emerald-400/35 text-white text-xs font-bold shadow-xl space-y-2 animate-in fade-in slide-in-from-top-4 duration-200">
           <div className="flex items-center justify-between gap-3">
@@ -3755,7 +3903,8 @@ const POS: React.FC<POSProps> = ({
                         type="number"
                         min={!isOwner ? mixAccounting.suggestedSellingPriceEgp : 0}
                         placeholder={`${mixAccounting.suggestedSellingPriceEgp}`}
-                        value={mixCustomPrice}
+                        value={isOwner ? mixCustomPrice : ''}
+                        disabled={!isOwner}
                         onChange={(e) => setMixCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
                         className={`w-24 h-8 px-2 rounded-xl bg-white border text-center font-mono font-black text-xs outline-none ${
                           !isOwner && mixCustomPrice !== '' && Number(mixCustomPrice) < mixAccounting.suggestedSellingPriceEgp
@@ -5829,16 +5978,18 @@ const POS: React.FC<POSProps> = ({
                 <button
                   type="button"
                   onClick={() => handleConfirmOrder(false)}
-                  disabled={cart.length === 0 || (isCartBelowCost && !ownerOverrideGranted)}
+                  disabled={isFinalizingSale || cart.length === 0 || (isCartBelowCost && !ownerOverrideGranted)}
                   className={`w-full py-3.5 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition-all ${
-                    cart.length > 0 && (!isCartBelowCost || ownerOverrideGranted)
+                    !isFinalizingSale && cart.length > 0 && (!isCartBelowCost || ownerOverrideGranted)
                       ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-[0_10px_30px_rgba(37,99,235,0.4)] cursor-pointer active:scale-98 border border-blue-400/30'
                       : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
                   }`}
                 >
                   <Check size={20} strokeWidth={2.8} />
                   <span>
-                    إصدار وطباعة الفاتورة الفورية ({cartFinalTotal.toLocaleString('ar-EG')} {settings.currency})
+                    {isFinalizingSale
+                      ? 'جارٍ تأكيد حفظ الفاتورة…'
+                      : `إصدار وطباعة الفاتورة الفورية (${cartFinalTotal.toLocaleString('ar-EG')} ${settings.currency})`}
                   </span>
                 </button>
 
@@ -6659,7 +6810,8 @@ const POS: React.FC<POSProps> = ({
                         type="number"
                         min={!isOwner ? configItemSuggestedPrice : 0}
                         placeholder={`${configItemSuggestedPrice}`}
-                        value={customPrice}
+                        value={isOwner ? customPrice : ''}
+                        disabled={!isOwner}
                         onChange={(e) => setCustomPrice(e.target.value === '' ? '' : Number(e.target.value))}
                         className={`w-full h-7 px-2 rounded-xl bg-white border font-mono text-xs font-black text-center outline-none ${
                           !isOwner && customPrice !== '' && Number(customPrice) < configItemSuggestedPrice
@@ -6905,8 +7057,10 @@ const POS: React.FC<POSProps> = ({
         <ReceiptModal
           sale={completedSale || draftInvoicePreviewSale!}
           settings={settings}
+          cloudSyncSucceeded={completedSale ? completedSaleCloudSync : null}
           onClose={() => {
             setCompletedSale(null);
+            setCompletedSaleCloudSync(null);
             setDraftInvoicePreviewSale(null);
           }}
           onUpdateSettings={onUpdateSettings}

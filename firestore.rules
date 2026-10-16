@@ -1,131 +1,512 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
+    function isVerifiedGoogleEmail(email) {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == email.lower()
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
 
-    // Operational Collections for POS Cashier, Inventory & Multi-Device Sync
-    match /sales/{saleId} {
-      allow read, write: if true;
+    function currentRoleAssignmentPath() {
+      return /databases/$(database)/documents/role_assignments/$(request.auth.token.email.lower());
     }
 
-    match /products/{productId} {
-      allow read, write: if true;
+    function hasActiveOperationalGrant() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && exists(currentRoleAssignmentPath())
+        && get(currentRoleAssignmentPath()).data.email == request.auth.token.email.lower()
+        && get(currentRoleAssignmentPath()).data.role in ['INVENTORY_VIEWER', 'STORE_MANAGER']
+        && get(currentRoleAssignmentPath()).data.active == true;
     }
 
-    match /customers/{customerId} {
-      allow read, write: if true;
+    function hasActiveStoreManagerGrant() {
+      return hasActiveOperationalGrant()
+        && get(currentRoleAssignmentPath()).data.role == 'STORE_MANAGER';
     }
 
-    match /customer_requests/{requestId} {
-      allow read, write: if true;
+    function isLegacyTarek() {
+      return isVerifiedGoogleEmail('ttaarreekkessam@gmail.com')
+        && !exists(currentRoleAssignmentPath());
     }
 
-    match /staff_attendance/{attendanceId} {
-      allow read, write: if true;
+    function isVerifiedOwner() {
+      return isVerifiedGoogleEmail('moh.mhran@gmail.com');
     }
 
-    match /bottleSizes/{bottleId} {
-      allow read, write: if true;
+    function isVerifiedTarek() {
+      return isLegacyTarek() || hasActiveOperationalGrant();
     }
 
-    match /production_batches/{batchId} {
-      allow read, write: if true;
+    function canReadOperationalStock() {
+      return isVerifiedOwner() || isVerifiedTarek();
     }
 
-    match /stock_checks/{checkId} {
-      allow read, write: if true;
+    function canReadOperationalCosts() {
+      return isVerifiedOwner() || isLegacyTarek() || hasActiveStoreManagerGrant();
     }
 
-    match /purchase_requests/{requestId} {
-      allow read, write: if true;
+    function validTarekProductCost(data) {
+      return data is map
+        && data.keys().hasAll(['schemaVersion', 'productId'])
+        && data.keys().hasOnly(['schemaVersion', 'productId', 'customGramCostEgp', 'updatedAt'])
+        && data.schemaVersion == 1
+        && data.productId is string
+        && (!('customGramCostEgp' in data)
+          || (data.customGramCostEgp is number && data.customGramCostEgp >= 0))
+        && (!('updatedAt' in data) || data.updatedAt is string);
     }
 
-    match /replenishment_orders/{orderId} {
-      allow read, write: if true;
+    function validTarekMixComponent(data) {
+      return data is map
+        && data.keys().hasAll(['productId', 'grams'])
+        && data.keys().hasOnly(['productId', 'grams'])
+        && data.productId is string
+        && data.productId.size() > 0
+        && data.productId.size() <= 1500
+        && !data.productId.matches('.*[/].*')
+        && data.grams is int
+        && data.grams > 0;
     }
 
-    match /fragrance_database/{profileId} {
-      allow read, write: if true;
+    function validTarekSavedMix(data, documentId) {
+      let components = data.components;
+      return data is map
+        && data.keys().hasAll(['schemaVersion', 'id', 'name', 'bottleSizeMl', 'totalEssenceGrams', 'components', 'isOwnerApproved', 'updatedAt'])
+        && data.keys().hasOnly(['schemaVersion', 'id', 'name', 'bottleSizeMl', 'totalEssenceGrams', 'components', 'isOwnerApproved', 'updatedAt', 'isRollOn', 'isColoredBottle'])
+        && data.schemaVersion == 1
+        && data.id == documentId
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 120
+        && data.bottleSizeMl is int
+        && data.bottleSizeMl > 0
+        && data.totalEssenceGrams is int
+        && data.totalEssenceGrams > 0
+        && data.isOwnerApproved == true
+        && data.updatedAt is string
+        && data.updatedAt.size() > 0
+        && data.updatedAt.size() <= 64
+        && (!('isRollOn' in data) || data.isRollOn is bool)
+        && (!('isColoredBottle' in data) || data.isColoredBottle is bool)
+        && components is list
+        && components.size() >= 2
+        && components.size() <= 3
+        && validTarekMixComponent(components[0])
+        && validTarekMixComponent(components[1])
+        && (components.size() == 2 || validTarekMixComponent(components[2]))
+        && components[0].productId != components[1].productId
+        && (components.size() == 2 || (components[2].productId != components[0].productId && components[2].productId != components[1].productId))
+        && components[0].grams + components[1].grams + (components.size() == 3 ? components[2].grams : 0) == data.totalEssenceGrams;
     }
 
-    match /saved_mixes/{mixId} {
-      allow read, write: if true;
+    function canReadOperationalSales() {
+      return isVerifiedOwner() || isLegacyTarek() || hasActiveStoreManagerGrant();
     }
 
-    match /connected_devices/{deviceId} {
-      allow read, write: if true;
+    function canReadTarekSaleCatalog() {
+      return isVerifiedOwner() || isLegacyTarek() || hasActiveStoreManagerGrant();
     }
 
-    match /owner_broadcasts/{broadcastId} {
-      allow read, write: if true;
+    function isNonNegativeNumber(value) {
+      return value is number && value >= 0;
     }
 
-    match /staff_entitlements/{id} {
-      allow read, write: if true;
+    function isPositiveNumber(value) {
+      return value is number && value > 0;
     }
 
-    match /staff_advances/{id} {
-      allow read, write: if true;
+    function validCommissionCounter(documentId) {
+      let data = request.resource.data;
+      return isVerifiedOwner()
+        && documentId.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data is map
+        && data.keys().hasAll(['schemaVersion', 'status', 'dateKey', 'sprayBottlesSold', 'generation', 'initializedAt', 'updatedAt', 'historySource', 'historicalSaleIdsScanned'])
+        && data.schemaVersion == 1
+        && data.status == 'ready'
+        && data.dateKey == documentId
+        && data.sprayBottlesSold is int
+        && data.sprayBottlesSold >= 0
+        && data.generation is int
+        && data.generation >= 0
+        && data.initializedAt is string
+        && data.updatedAt is string
+        && data.historySource == 'sales+sale_operations-v1'
+        && data.historicalSaleIdsScanned is int
+        && data.historicalSaleIdsScanned >= 0
+        && (!('lastAppliedSaleId' in data) || data.lastAppliedSaleId is string)
+        && (!('lastAppliedAction' in data) || data.lastAppliedAction in ['sale', 'reversal']);
     }
 
-    match /staff_settlements/{id} {
-      allow read, write: if true;
+    function hasMatchingCommissionCounterAfter(documentId, action) {
+      let data = request.resource.data;
+      let counterPath = /databases/$(database)/documents/commission_day_counters/$(data.commissionDayKey);
+      return data.keys().hasAll(['commissionDayKey', 'commissionSprayBottleCount', 'commissionCounterGeneration', 'commissionCounterAction'])
+        && data.commissionDayKey is string
+        && data.commissionDayKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.commissionSprayBottleCount is int
+        && data.commissionSprayBottleCount >= 0
+        && data.commissionCounterGeneration is int
+        && data.commissionCounterAction == action
+        && exists(counterPath)
+        && existsAfter(counterPath)
+        && get(counterPath).data.status == 'ready'
+        && getAfter(counterPath).data.status == 'ready'
+        && getAfter(counterPath).data.dateKey == data.commissionDayKey
+        && getAfter(counterPath).data.generation == data.commissionCounterGeneration
+        && getAfter(counterPath).data.generation == get(counterPath).data.generation + 1
+        && getAfter(counterPath).data.lastAppliedSaleId == documentId
+        && getAfter(counterPath).data.lastAppliedAction == action
+        && ((action == 'sale'
+            && getAfter(counterPath).data.sprayBottlesSold == get(counterPath).data.sprayBottlesSold + data.commissionSprayBottleCount)
+          || (action == 'reversal'
+            && getAfter(counterPath).data.sprayBottlesSold == get(counterPath).data.sprayBottlesSold - data.commissionSprayBottleCount
+            && get(counterPath).data.sprayBottlesSold >= data.commissionSprayBottleCount));
     }
 
-    match /staff_incentives/{id} {
-      allow read, write: if true;
+    function validCommissionCounterUpdate(documentId) {
+      let data = request.resource.data;
+      let salePath = /databases/$(database)/documents/sales/$(data.lastAppliedSaleId);
+      return validCommissionCounter(documentId)
+        && resource.data.status == 'ready'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'sprayBottlesSold', 'generation', 'lastAppliedSaleId', 'lastAppliedAction', 'updatedAt'
+        ])
+        && data.generation == resource.data.generation + 1
+        && data.schemaVersion == resource.data.schemaVersion
+        && data.dateKey == resource.data.dateKey
+        && data.initializedAt == resource.data.initializedAt
+        && data.historySource == resource.data.historySource
+        && data.historicalSaleIdsScanned == resource.data.historicalSaleIdsScanned
+        && data.lastAppliedSaleId is string
+        && data.lastAppliedAction in ['sale', 'reversal']
+        && existsAfter(salePath)
+        && getAfter(salePath).data.commissionDayKey == documentId
+        && getAfter(salePath).data.commissionSprayBottleCount is int
+        && getAfter(salePath).data.commissionSprayBottleCount >= 0
+        && getAfter(salePath).data.commissionCounterGeneration == data.generation
+        && getAfter(salePath).data.commissionCounterAction == data.lastAppliedAction
+        && ((data.lastAppliedAction == 'sale'
+            && !exists(salePath)
+            && getAfter(salePath).data.get('isReversed', false) != true)
+          || (data.lastAppliedAction == 'reversal'
+            && exists(salePath)
+            && get(salePath).data.get('isReversed', false) != true
+            && getAfter(salePath).data.isReversed == true));
     }
 
-    match /staff_deductions/{id} {
-      allow read, write: if true;
+    function validNeedsOwnerReviewSale(data) {
+      return data.get('commissionTimingStatus', '') == 'needs_owner_review'
+        && data.get('commissionReviewReason', '') in [
+          'missing-time-sample', 'stale-time-sample', 'device-clock-drift',
+          'invalid-event-time', 'event-clock-drift', 'counter-not-ready', 'counter-stale'
+        ]
+        && 'serverAcceptedAt' in data
+        && data.serverAcceptedAt == request.time
+        && data.get('commissionAmount', 0) == 0
+        && data.get('totalCommission', 0) == 0
+        && data.get('totalProfit', 0) == 0
+        && !('commissionDayKey' in data)
+        && !('commissionSprayBottleCount' in data)
+        && !('commissionCounterGeneration' in data)
+        && !('commissionCounterAction' in data);
     }
 
-    match /vaults/{vaultId} {
-      allow read, write: if true;
+    function validSale(documentId) {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll(['id', 'items', 'totalPrice', 'date'])
+        && data.id is string
+        && data.id == documentId
+        && data.items is list
+        && data.items.size() > 0
+        && data.items.size() <= 100
+        && isNonNegativeNumber(data.totalPrice)
+        && data.date is string
+        && data.date.size() > 0
+        && (data.get('commissionTimingStatus', 'verified') == 'needs_owner_review'
+          ? validNeedsOwnerReviewSale(data)
+          : hasMatchingCommissionCounterAfter(documentId, 'sale'))
+        && (data.totalPrice > 0
+          || ('transactionType' in data
+            && data.transactionType in ['هدية', 'تعويض', 'تصفية', 'إتلاف', 'عينات_مجانية']));
     }
 
-    match /settings/{settingId} {
-      allow read, write: if true;
+    function validSaleReversal(documentId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return isVerifiedOwner()
+        && resource.data.id == documentId
+        && request.resource.data.id == documentId
+        && resource.data.get('isReversed', false) != true
+        && request.resource.data.isReversed == true
+        && request.resource.data.reversalReason is string
+        && request.resource.data.reversalReason.size() > 0
+        && request.resource.data.reversalReason.size() <= 500
+        && request.resource.data.reversedBy is string
+        && request.resource.data.reversedAt is string
+        && changed.hasOnly(['isReversed', 'reversalReason', 'reversedBy', 'reversedAt', 'inventoryRestored', 'auditTrail',
+          'commissionDayKey', 'commissionSprayBottleCount', 'commissionCounterGeneration', 'commissionCounterAction'])
+        && (resource.data.get('commissionTimingStatus', 'verified') == 'needs_owner_review'
+          ? !('commissionDayKey' in request.resource.data)
+            && !('commissionSprayBottleCount' in request.resource.data)
+            && !('commissionCounterGeneration' in request.resource.data)
+            && !('commissionCounterAction' in request.resource.data)
+          : hasMatchingCommissionCounterAfter(documentId, 'reversal'))
+        && (!('inventoryRestored' in request.resource.data) || request.resource.data.inventoryRestored is bool)
+        && (!('auditTrail' in request.resource.data) || request.resource.data.auditTrail is list);
     }
 
-    match /expenses/{expenseId} {
-      allow read, write: if true;
+    function validProduct(documentId) {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll(['id', 'name', 'stock_grams'])
+        && (data.id is string || data.id is number)
+        && data.name is string
+        && data.name.size() > 0
+        && isNonNegativeNumber(data.stock_grams);
     }
 
-    match /withdrawals/{withdrawalId} {
-      allow read, write: if true;
+    function validExpense(documentId) {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll(['id', 'title', 'amount', 'category', 'date'])
+        && data.id is string
+        && data.id == documentId
+        && data.title is string
+        && data.title.size() > 0
+        && isNonNegativeNumber(data.amount)
+        && data.category is string
+        && data.category.size() > 0
+        && data.date is string
+        && data.date.size() > 0;
     }
 
-    match /audit_logs/{logId} {
-      allow read, write: if true;
+    function validBottleSize(documentId) {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll(['id', 'sizeMl', 'essenceGrams', 'normalPrice', 'specialPrice'])
+        && data.id is string
+        && data.id == documentId
+        && isPositiveNumber(data.sizeMl)
+        && isNonNegativeNumber(data.essenceGrams)
+        && isNonNegativeNumber(data.normalPrice)
+        && isNonNegativeNumber(data.specialPrice);
     }
 
-    match /app_users/{userId} {
-      allow read, write: if true;
+    function validStoreSettings(documentId) {
+      let data = request.resource.data;
+      return documentId == 'store'
+        && data is map
+        && data.keys().hasAll(['storeName', 'currency'])
+        && data.storeName is string
+        && data.currency is string;
     }
 
-    match /daily_closures/{closureId} {
-      allow read, write: if true;
+    function validRoleAssignment(documentId) {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll(['email', 'role', 'active', 'updatedAt', 'updatedBy'])
+        && data.keys().hasOnly(['email', 'role', 'active', 'updatedAt', 'updatedBy'])
+        && data.email is string
+        && data.email == documentId
+        && data.email == data.email.lower()
+        && data.email.matches('^[^@/]+@[^@/]+[.][^@/]+$')
+        && data.role in ['INVENTORY_VIEWER', 'STORE_MANAGER']
+        && data.active is bool
+        && data.updatedAt is string
+        && data.updatedBy == request.auth.token.email.lower();
     }
 
-    match /commission_policies/{id} {
-      allow read, write: if true;
+    function validCustomer(documentId) {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll(['id', 'name'])
+        && data.id is string
+        && data.id == documentId
+        && data.name is string
+        && !data.name.lower().matches('.*<script.*');
     }
 
-    match /commission_audit_logs/{id} {
-      allow read, write: if true;
+    // Current application paths: owner access only, plus narrow schema checks on financial writes.
+    match /sales/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create: if isVerifiedOwner() && validSale(documentId);
+      allow update: if validSaleReversal(documentId);
+      allow delete: if false;
+    }
+    match /products/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update: if isVerifiedOwner() && validProduct(documentId);
+      allow delete: if isVerifiedOwner();
+    }
+    match /customers/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update: if isVerifiedOwner() && validCustomer(documentId);
+      allow delete: if isVerifiedOwner();
+    }
+    match /customer_requests/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /staff_attendance/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /bottleSizes/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update: if isVerifiedOwner() && validBottleSize(documentId);
+      allow delete: if isVerifiedOwner();
+    }
+    match /production_batches/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /stock_checks/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /purchase_requests/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /replenishment_orders/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /fragrance_database/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /saved_mixes/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /connected_devices/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /owner_broadcasts/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /staff_entitlements/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /staff_advances/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /staff_settlements/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /staff_incentives/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /staff_deductions/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /vaults/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /settings/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update: if isVerifiedOwner() && validStoreSettings(documentId);
+      allow delete: if false;
+    }
+    match /expenses/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update: if isVerifiedOwner() && validExpense(documentId);
+      allow delete: if isVerifiedOwner();
+    }
+    match /withdrawals/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /audit_logs/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /app_users/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /role_assignments/{email} {
+      allow get: if isVerifiedOwner()
+        || (request.auth != null
+          && request.auth.token.email is string
+          && request.auth.token.email_verified == true
+          && request.auth.token.firebase.sign_in_provider == 'google.com'
+          && request.auth.token.email.lower() == email);
+      allow list: if isVerifiedOwner();
+      allow create, update: if isVerifiedOwner() && validRoleAssignment(email);
+      allow delete: if false;
+    }
+    match /access_requests/{email} {
+      allow get: if isVerifiedOwner()
+        || (request.auth != null
+          && request.auth.token.email is string
+          && request.auth.token.email_verified == true
+          && request.auth.token.firebase.sign_in_provider == 'google.com'
+          && request.auth.token.email.lower() == email);
+      allow list: if isVerifiedOwner();
+      allow create: if request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.resource.data.keys().hasAll(['email', 'requesterUid', 'displayName', 'requestedAt', 'status'])
+        && request.resource.data.keys().hasOnly(['email', 'requesterUid', 'displayName', 'requestedAt', 'status'])
+        && request.resource.data.email == email
+        && request.resource.data.email == request.auth.token.email.lower()
+        && request.resource.data.requesterUid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() <= 120
+        && request.resource.data.requestedAt is string
+        && !hasActiveOperationalGrant();
+      allow update: if isVerifiedOwner()
+        || (isVerifiedGoogleEmail(email)
+          && !hasActiveOperationalGrant()
+          && request.resource.data.email == request.auth.token.email.lower()
+          && request.resource.data.requesterUid == request.auth.uid
+          && resource.data.status == 'dismissed'
+          && request.resource.data.status == 'pending'
+          && request.resource.data.keys().hasAll(['email', 'requesterUid', 'displayName', 'requestedAt', 'status'])
+          && request.resource.data.keys().hasOnly(['email', 'requesterUid', 'displayName', 'requestedAt', 'status']));
+      allow delete: if false;
+    }
+    match /daily_closures/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /commission_day_counters/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create: if validCommissionCounter(documentId)
+        && request.resource.data.generation == 0
+        && !('lastAppliedSaleId' in request.resource.data)
+        && !('lastAppliedAction' in request.resource.data);
+      allow update: if validCommissionCounterUpdate(documentId);
+      allow delete: if false;
+    }
+    match /commission_policies/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /commission_audit_logs/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /test/{documentId} { allow read, write: if isVerifiedOwner(); }
+
+    // Tarek reads only explicitly separated operational projections; broad cost data remains owner-only.
+    // Client-side employee writes remain denied; the local Worker is not a production authorization path.
+    match /product_operations/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /product_costs/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /tarek_operational_costs/{documentId} {
+      allow read: if canReadOperationalCosts();
+      allow create, update: if isVerifiedOwner() && validTarekProductCost(request.resource.data);
+      allow delete: if isVerifiedOwner();
+    }
+    match /tarek_operational_costs_meta/{documentId} {
+      allow read, write: if isVerifiedOwner();
+    }
+    match /tarek_saved_mixes/{documentId} {
+      allow get: if canReadOperationalSales() && validTarekSavedMix(resource.data, documentId);
+      // Firestore list rules must be provable from query filters; all owner writes still require the full safe schema.
+      allow list: if canReadOperationalSales()
+        && resource.data.schemaVersion == 1
+        && resource.data.isOwnerApproved == true;
+      allow create, update: if isVerifiedOwner() && validTarekSavedMix(request.resource.data, documentId);
+      allow delete: if isVerifiedOwner();
+    }
+    match /mix_operations/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /mix_costs/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /sale_operations/{documentId} {
+      allow read: if canReadOperationalSales();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /sale_costs/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /sale_financials/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /operational_settings/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /cost_catalog/{documentId} {
+      allow read: if isVerifiedOwner();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /financial_admin/{documentId} { allow read, write: if isVerifiedOwner(); }
+    match /tarek_products/{documentId} {
+      allow read: if canReadOperationalStock();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /tarek_sale_products/{documentId} {
+      allow read: if canReadTarekSaleCatalog();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /tarek_sale_bottle_sizes/{documentId} {
+      allow read: if canReadTarekSaleCatalog();
+      allow create, update, delete: if isVerifiedOwner();
+    }
+    match /sale_quotes/{documentId} {
+      allow read, write: if false;
     }
 
-    // Diagnostics & Connection Check
-    match /test/{docId} {
-      allow read, write: if true;
-    }
-
-    // Catch-all Default Deny for unlisted collections
+    // No catch-all grant: every unlisted and nested path is denied.
     match /{document=**} {
       allow read, write: if false;
     }

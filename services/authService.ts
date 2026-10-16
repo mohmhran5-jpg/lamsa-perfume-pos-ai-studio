@@ -1,5 +1,13 @@
-import { AppUser, UserPermissions, View } from '../types';
+import { AppUser, TAREK_OPERATIONAL_PERMISSIONS, UserPermissions, View } from '../types';
 import { loadDataSync, persistDataDurable } from './persistenceService';
+import { auth } from './firebase';
+import {
+  canAccessSeparatedCostData,
+  canAccessSeparatedOperationalCostData,
+  isAuthorizedOwnerProfile,
+  isAuthorizedTarekProfile,
+  isVerifiedOwnerIdentity,
+} from './authPolicy';
 
 export interface RejectedAccessLog {
   id: string;
@@ -42,131 +50,54 @@ export function logRejectedAccessAttempt(
   return newLog;
 }
 
-const OWNER_ONLY_PERMISSIONS = new Set<keyof UserPermissions>([
-  'canEditProductCost', 'canViewCosts', 'canViewProfits', 'canViewCostAndProfit',
-  'canViewProfitAndCosts', 'canViewExecutiveDashboard', 'canViewVaults',
-  'canRequestWithdrawal', 'canApproveWithdrawal', 'canInjectCapital',
-  'canTransferBetweenVaults', 'canWithdrawOwnerProfit', 'canEditBudget',
-  'canEditSalaries', 'canEditCommissions', 'canViewExpenses', 'canManageSettings',
-  'canManageUsers', 'canViewAuditLog', 'canViewAuditLogs', 'canAccessOperationsSystem',
-  'canEditSettingsAndBudgets', 'canExportData', 'canDeleteInvoices',
-]);
+export function hasVerifiedOwnerSession(): boolean {
+  return isVerifiedOwnerIdentity(auth.currentUser);
+}
 
 /**
  * Checks if user possesses a specific granular permission
  */
 export function hasPermission(user: AppUser | null, permission: keyof UserPermissions): boolean {
-  if (!user || !user.isActive) return false;
-  if (user.role === 'OWNER') return true; // Full control for owner
-  if (OWNER_ONLY_PERMISSIONS.has(permission)) return false;
-  return !!user.permissions[permission];
+  if (isAuthorizedOwnerProfile(user, auth.currentUser)) return true;
+  if (!isAuthorizedTarekProfile(user, auth.currentUser)) return false;
+  return TAREK_OPERATIONAL_PERMISSIONS[permission] === true;
 }
 
 /**
  * Checks whether the current user is permitted to view profit figures & margins
  */
 export function canViewProfits(user: AppUser | null): boolean {
-  if (!user || !user.isActive) return false;
-  if (user.role === 'OWNER') return true;
-  return hasPermission(user, 'canViewProfits');
+  return isAuthorizedOwnerProfile(user, auth.currentUser);
 }
 
 /**
  * Checks whether the current user is permitted to view raw costs & purchase prices
  */
 export function canViewCosts(user: AppUser | null): boolean {
-  if (!user || !user.isActive) return false;
-  if (user.role === 'OWNER') return true;
-  return hasPermission(user, 'canViewCosts');
+  return canAccessSeparatedCostData(user, auth.currentUser);
+}
+
+/** Cost documents are owner-only; Tarek receives sale results without cost fields. */
+export function canViewOperationalCosts(user: AppUser | null): boolean {
+  return canAccessSeparatedOperationalCostData(user, auth.currentUser)
+    && (isAuthorizedOwnerProfile(user, auth.currentUser)
+      || TAREK_OPERATIONAL_PERMISSIONS.canViewOperationalCosts === true);
 }
 
 /**
  * Checks whether the current user is permitted to view financial vaults & cash allocations
  */
 export function canViewVaults(user: AppUser | null): boolean {
-  if (!user || !user.isActive) return false;
-  if (user.role === 'OWNER') return true;
-  return hasPermission(user, 'canViewVaults') && hasPermission(user, 'canApproveWithdrawal');
+  return isAuthorizedOwnerProfile(user, auth.currentUser);
 }
 
 /**
  * Checks whether the current user is permitted to access a specific app view.
  */
 export function canAccessView(user: AppUser | null, view: View | string): boolean {
-  if (!user || !user.isActive) {
-    return view === View.POS;
-  }
-
-  // Owner always has 100% unconditional access to all views
-  if (user.role === 'OWNER') {
-    return true;
-  }
-
-  const p = user.permissions;
-
-  switch (view) {
-    case View.POS:
-      return Boolean(p?.canRecordSale);
-
-    case View.CUSTOMERS_LOYALTY:
-      return Boolean(p?.canRecordSale);
-
-    case View.STAFF_ENTITLEMENTS:
-      return Boolean(p?.canRequestWithdrawal || p?.canApproveWithdrawal || p?.canRecordSale || user?.role === 'STORE_MANAGER');
-
-    case View.TAREK_WORKSPACE:
-      return Boolean((user?.role as string) === 'OWNER' || (user?.role as string) === 'STORE_MANAGER' || user?.role === 'SALES_REP' || p?.canAccessSalesActivation);
-
-    case View.ANALYZER:
-      return Boolean(p?.canViewStock || p?.canRecordSale);
-
-    case View.DASHBOARD:
-      return hasPermission(user, 'canViewExecutiveDashboard');
-
-    case View.REPORTS:
-      return Boolean(p?.canRecordSale || p?.canViewStock);
-
-    case View.DAY_OPERATIONS:
-    case 'DAY_OPERATIONS_ACTION':
-      return Boolean(p?.canOpenDay || p?.canCloseDay);
-
-    case View.INVENTORY:
-      return Boolean(p?.canViewStock);
-
-    case View.INVENTORY_INTELLIGENCE:
-      return Boolean(p?.canViewStock || p?.canRecordShortage || p?.canStockCheck || p?.canCreatePurchaseRequest);
-
-    case View.FORMULATION_ENGINE:
-      return Boolean((p?.canEditProductCost && p?.canViewCosts) || p?.canRecordSale);
-
-    case View.FINANCIAL_VAULTS:
-      return Boolean(p?.canViewVaults && p?.canApproveWithdrawal);
-
-    case View.EXPENSES:
-      return hasPermission(user, 'canViewExpenses') || hasPermission(user, 'canEditBudget');
-
-    case View.OPERATIONS_SYSTEM:
-      return Boolean(hasPermission(user, 'canAccessOperationsSystem') || user?.role === 'STORE_MANAGER');
-
-    case View.SETTINGS:
-      return hasPermission(user, 'canManageSettings');
-
-    case View.USERS_MANAGEMENT:
-      return hasPermission(user, 'canManageUsers');
-
-    case View.AUDIT_LOGS:
-      return hasPermission(user, 'canViewAuditLog');
-
-    case View.STORE_MANAGER:
-      return hasPermission(user, 'canExportData');
-
-    case View.MARKETING:
-      return Boolean(hasPermission(user, 'canViewExecutiveDashboard') || p?.canManageCustomers);
-
-    default:
-      // Rule 9: Default Deny for any unlisted or newly added view
-      return false;
-  }
+  if (isAuthorizedOwnerProfile(user, auth.currentUser)) return true;
+  if (!isAuthorizedTarekProfile(user, auth.currentUser)) return false;
+  return view === View.TAREK_WORKSPACE;
 }
 
 /**
@@ -216,61 +147,17 @@ export async function verifyPassword(
   hash?: string,
   user?: AppUser
 ): Promise<boolean> {
-  const norm = normalizePasswordInput(input);
-  if (!norm) return false;
-
-  const targetHash = hash || user?.passwordHash;
-  if (!targetHash) {
-    // If no hash set, check initial bootstrap defaults
-    if (user?.role === 'OWNER') return norm === '5188';
-    if (user?.role === 'STORE_MANAGER') return norm === '12345';
-    return false;
-  }
-
-  // If user still has the bootstrap default PIN and hasn't customized it:
-  if (targetHash === '5188') {
-    return norm === '5188';
-  }
-  if (targetHash === '12345') {
-    return norm === '12345' || norm === '1234';
-  }
-
-  // Check direct match or SHA-256 cryptographic hash match
-  if (targetHash === norm) return true;
-  const hashedInput = await hashPassword(norm);
-  return hashedInput === targetHash;
+  // Local PINs and profile hashes are not identity credentials in phase 1.
+  void input;
+  void hash;
+  void user;
+  return false;
 }
 
 const SESSION_USER_KEY = 'lamsa_current_user_v2';
 
 /**
  * Persists the active session user in localStorage
- */
-export function saveSessionUser(user: AppUser): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
-    }
-  } catch (e) {
-    console.warn('Failed to save session user:', e);
-  }
-}
-
-/**
- * Retrieves the currently persisted user from localStorage
- */
-export function getSessionUser(): AppUser | null {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(SESSION_USER_KEY);
-      if (stored) return JSON.parse(stored);
-    }
-  } catch {}
-  return null;
-}
-
-/**
- * Clears the persisted session user from localStorage
  */
 export function clearSessionUser(): void {
   try {
@@ -280,22 +167,29 @@ export function clearSessionUser(): void {
   } catch {}
 }
 
+/** Legacy compatibility: local storage can never create or restore an authenticated user. */
+export function saveSessionUser(_user: AppUser | null): void {
+  clearSessionUser();
+}
+
+/** Legacy local role snapshots are deliberately ignored even if tampered with. */
+export function getSessionUser(): AppUser | null {
+  clearSessionUser();
+  return null;
+}
+
 /**
  * Checks if user has permission to record sales with historical / backdated timestamps
  */
 export function canRecordBackdatedSales(user: AppUser | null): boolean {
-  if (!user || !user.isActive) return false;
-  if (user.role === 'OWNER') return true;
-  return Boolean(user.permissions?.canRecordBackdatedSales);
+  return isAuthorizedOwnerProfile(user, auth.currentUser)
+    || (isAuthorizedTarekProfile(user, auth.currentUser)
+      && TAREK_OPERATIONAL_PERMISSIONS.canRecordBackdatedSales === true);
 }
 
 /**
  * Checks if user is permitted to view real-time connected devices & alert radar
  */
 export function canViewDeviceAlerts(user: AppUser | null): boolean {
-  if (!user || !user.isActive) return false;
-  if (user.role === 'OWNER') return true;
-  return Boolean(user.permissions?.canViewDeviceAlerts);
+  return isAuthorizedOwnerProfile(user, auth.currentUser);
 }
-
-

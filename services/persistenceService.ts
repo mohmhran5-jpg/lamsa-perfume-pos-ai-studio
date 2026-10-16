@@ -151,6 +151,14 @@ export function persistDataDurable<T>(storageKey: string, data: T): void {
   pendingPersistTimers.set(storageKey, timer);
 }
 
+/** Cancel a debounced write without deleting its already-persisted cache value. */
+export function cancelPendingPersist(storageKey: string): void {
+  const timer = pendingPersistTimers.get(storageKey);
+  if (timer) clearTimeout(timer);
+  pendingPersistTimers.delete(storageKey);
+  pendingPersistPayloads.delete(storageKey);
+}
+
 /**
  * Reads data synchronously from localStorage with fallback.
  */
@@ -175,11 +183,12 @@ export function loadDataSync<T>(storageKey: string, fallback: T): T {
 export async function hydrateFromIndexedDBIfNeeded<T>(
   storageKey: string,
   onRestored: (restoredData: T) => void,
-  tombstoneCategory?: keyof DeletedTombstones
+  tombstoneCategory?: keyof DeletedTombstones,
+  isStillAuthorized: () => boolean = () => true
 ): Promise<void> {
   try {
     const idbValue = await idbGet<T>(storageKey);
-    if (idbValue === null || idbValue === undefined) return;
+    if (idbValue === null || idbValue === undefined || !isStillAuthorized()) return;
 
     const tombstones = tombstoneCategory
       ? new Set(getDeletedTombstones()[tombstoneCategory].map((x) => String(x)))
@@ -195,7 +204,9 @@ export async function hydrateFromIndexedDBIfNeeded<T>(
     const rawLocal = localStorage.getItem(storageKey);
     if (!rawLocal) {
       const cleaned = filterTombstones(idbValue);
+      if (!isStillAuthorized()) return;
       localStorage.setItem(storageKey, JSON.stringify(cleaned));
+      if (!isStillAuthorized()) return;
       onRestored(cleaned);
       return;
     }
@@ -205,7 +216,7 @@ export async function hydrateFromIndexedDBIfNeeded<T>(
       const parsedLocal = JSON.parse(rawLocal);
       if (Array.isArray(parsedLocal) && parsedLocal.length === 0 && idbValue.length > 0) {
         const cleaned = filterTombstones(idbValue);
-        if (Array.isArray(cleaned) && cleaned.length > 0) {
+        if (Array.isArray(cleaned) && cleaned.length > 0 && isStillAuthorized()) {
           onRestored(cleaned);
         }
       }

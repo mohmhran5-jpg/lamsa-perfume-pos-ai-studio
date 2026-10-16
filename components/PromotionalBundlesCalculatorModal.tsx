@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { Product, BottleSize, StoreSettings, DEFAULT_BOTTLE_SIZES } from '../types';
 import { X, Sparkles, Gift, Percent, Tag, ShoppingBag, Check, Calculator, Plus, Trash2, Printer } from 'lucide-react';
 import { soundAlertService } from '../services/soundAlertService';
+import { calculatePromotionTotals } from '../services/promotionPolicy';
+import { TAREK_SALE_PRESET_OFFERS } from '../services/tarekSalePresets';
 
 export interface PromotionalBundleOffer {
   id: string;
@@ -14,48 +16,34 @@ export interface PromotionalBundleOffer {
   discountValue: number;
 }
 
-const PRESET_BUNDLE_OFFERS: PromotionalBundleOffer[] = [
-  {
-    id: 'duo-50ml',
-    name: 'عرض الثنائية الأنيقة (2× 50مل)',
+const PRESET_BUNDLE_PRESENTATION: Record<string, Pick<PromotionalBundleOffer, 'description' | 'badge' | 'badgeColor'>> = {
+  'duo-50ml': {
     description: 'شراء زجاجتين سعة 50 مل مع خصم 10% وتوفير مباشر للعميل',
     badge: 'الأكثر طلباً 🔥',
     badgeColor: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30',
-    presetItems: [{ bottleSizeMl: 50, quantity: 2 }],
-    discountType: 'percent',
-    discountValue: 10,
   },
-  {
-    id: 'trio-royal',
-    name: 'باقة الثلاثية الملكية (3× 50مل)',
+  'trio-royal': {
     description: 'شراء 3 زجاجات 50 مل مع خصم 15% وفك هدايا فاخرة',
     badge: 'باقة التوفير الملكي 👑',
     badgeColor: 'bg-purple-500/15 text-purple-800 dark:text-purple-300 border-purple-500/30',
-    presetItems: [{ bottleSizeMl: 50, quantity: 3 }],
-    discountType: 'percent',
-    discountValue: 15,
   },
-  {
-    id: 'diamond-100ml',
-    name: 'العرض الماسي المباشر (2× 100مل)',
+  'diamond-100ml': {
     description: 'خصم 20% كامل على المجموعات العطرية الكبرى لعملاء VIP',
     badge: 'خصم VIP الماسي 💎',
     badgeColor: 'bg-sky-500/15 text-sky-800 dark:text-sky-300 border-sky-500/30',
-    presetItems: [{ bottleSizeMl: 100, quantity: 2 }],
-    discountType: 'percent',
-    discountValue: 20,
   },
-  {
-    id: 'duo-30ml',
-    name: 'عرض الدوام المزدوج (2× 30مل)',
+  'duo-30ml': {
     description: 'خصم 50 ج.م مباشر عند شراء عبوتين حجم 30 مل',
     badge: 'توفير يومي ☀️',
     badgeColor: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30',
-    presetItems: [{ bottleSizeMl: 30, quantity: 2 }],
-    discountType: 'fixed',
-    discountValue: 50,
   },
-];
+};
+
+const PRESET_BUNDLE_OFFERS: PromotionalBundleOffer[] = TAREK_SALE_PRESET_OFFERS.map((offer) => ({
+  ...offer,
+  ...PRESET_BUNDLE_PRESENTATION[offer.id],
+  presetItems: [{ bottleSizeMl: offer.sizeMl, quantity: offer.quantity }],
+}));
 
 export interface CustomBundleItem {
   productId: number | string;
@@ -70,6 +58,7 @@ interface PromotionalBundlesCalculatorModalProps {
   bottleSizes?: BottleSize[];
   settings?: StoreSettings;
   onApplyBundleOfferToCart: (bundleData: {
+    promotionId?: string;
     offerName: string;
     items: Array<{ product: Product; bottle: BottleSize; quantity: number }>;
     originalTotal: number;
@@ -145,15 +134,11 @@ export const PromotionalBundlesCalculatorModal: React.FC<PromotionalBundlesCalcu
         });
       });
 
-      let savedAmount = 0;
-      if (activePreset.discountType === 'percent') {
-        savedAmount = Math.round((originalTotal * activePreset.discountValue) / 100);
-      } else {
-        savedAmount = Math.min(originalTotal, activePreset.discountValue);
-      }
-
-      const finalTotal = Math.max(0, originalTotal - savedAmount);
-      const savingsPercent = originalTotal > 0 ? Math.round((savedAmount / originalTotal) * 100) : 0;
+      const { savedAmount, finalTotal, savingsPercent } = calculatePromotionTotals(
+        originalTotal,
+        activePreset.discountType,
+        activePreset.discountValue,
+      );
 
       return {
         originalTotal,
@@ -192,15 +177,11 @@ export const PromotionalBundlesCalculatorModal: React.FC<PromotionalBundlesCalcu
         });
       });
 
-      let savedAmount = 0;
-      if (customDiscountType === 'percent') {
-        savedAmount = Math.round((originalTotal * customDiscountValue) / 100);
-      } else {
-        savedAmount = Math.min(originalTotal, customDiscountValue);
-      }
-
-      const finalTotal = Math.max(0, originalTotal - savedAmount);
-      const savingsPercent = originalTotal > 0 ? Math.round((savedAmount / originalTotal) * 100) : 0;
+      const { savedAmount, finalTotal, savingsPercent } = calculatePromotionTotals(
+        originalTotal,
+        customDiscountType,
+        customDiscountValue,
+      );
 
       const title = customOfferTitle.trim() || `عرض العطور المتنوعة (خصم ${savedAmount} ${currency})`;
 
@@ -254,6 +235,7 @@ export const PromotionalBundlesCalculatorModal: React.FC<PromotionalBundlesCalcu
 
     soundAlertService.playSaleChime();
     onApplyBundleOfferToCart({
+      ...(activeTabMode === 'presets' ? { promotionId: activePreset.id } : {}),
       offerName: calculationResults.offerName,
       items: calculationResults.itemsToCart,
       originalTotal: calculationResults.originalTotal,

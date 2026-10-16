@@ -189,6 +189,8 @@ export interface BottleSize {
 
 export interface SaleItem {
   id: string;
+  /** Optional fixed-promotion reference; the server recalculates its discount. */
+  promotionId?: string;
   compositionType?: 'single' | 'mix' | string; // 'عطر فردي' | 'ميكس'
   isMix?: boolean; // True when bottle contains 2+ perfume components as a single bottle unit
   mixComponents?: MixComponent[]; // مكونات تركيبة الميكس داخل نفس الزجاجة الواحدة
@@ -197,6 +199,7 @@ export interface SaleItem {
   productName: string;
   productType: PerfumeType;
   bottleSize: number; // ml
+  bottleSizeId?: string; // مرجع الحجم المعتمد لإعادة التحقق الخادمي من السعر والتكلفة
   essenceGrams: number; // إجمالي جرامات الزيت داخل الزجاجة الواحدة
   cost: number; // التكلفة الفعلية للزجاجة الواحدة (شاملة زجاجة واحدة + مجموع تكلفة المكونات)
   sellingPrice: number; // سعر البيع النهائي للزجاجة الواحدة
@@ -224,6 +227,7 @@ export interface Sale {
   exceptionApprovedBy?: string;
   exceptionReason?: string;
   discount?: number;
+  promotionId?: string; // Server-verified fixed promotion ID; custom offers have no trusted ID.
   loyaltyPointsRedeemed?: number; // عدد نقاط الولاء المستبدلة في الفاتورة
   loyaltyDiscountAmount?: number; // قيمة الخصم النقدي الناتج عن استبدال النقاط (ج.م)
   loyaltyPointsEarned?: number; // النقاط المكتسبة من هذه الفاتورة
@@ -233,6 +237,7 @@ export interface Sale {
   packagingCostEgp?: number; // تكلفة التغليف الفاخر المسجلة
   isBasicBagReplacedByLuxury?: boolean; // تسجيل استبدال الكيس الأساسي (1 ج) بالكيس الفاخر
   promotionalSavings?: {
+    promotionId?: string;
     offerName: string;
     originalTotal: number;
     finalTotal: number;
@@ -245,6 +250,19 @@ export interface Sale {
   source?: 'المتجر' | 'نشاط ميداني' | 'واتساب' | 'توصيل';
   commissionAmount?: number;
   totalCommission?: number; // Alias for commissionAmount
+  /** Internal daily commission counter audit fields; never included in Tarek's operational projection. */
+  commissionDayKey?: string;
+  commissionSprayBottleCount?: number;
+  commissionCounterGeneration?: number;
+  commissionCounterAction?: 'sale' | 'reversal';
+  /** Server-offset timing evidence; unresolved entries stay out of automatic commission totals. */
+  commissionTimingStatus?: 'verified' | 'needs_owner_review' | 'owner_reconciled';
+  commissionEventTime?: string;
+  commissionCandidateDayKey?: string;
+  commissionReviewReason?: 'missing-time-sample' | 'stale-time-sample' | 'device-clock-drift' | 'invalid-event-time' | 'event-clock-drift' | 'counter-not-ready' | 'counter-stale';
+  commissionClockDriftMs?: number;
+  /** Firestore serverTimestamp written at acceptance; never substitutes for the original sale date. */
+  serverAcceptedAt?: string | { seconds: number; nanoseconds: number };
   timestamp?: string; // Alias for date
   // Non-deletion & Offline transaction tracking
   transactionId?: string;
@@ -4355,6 +4373,7 @@ export interface UserPermissions {
   // Administrative Confidentiality & Trade Secrets (أسرار الإدارة والخصوصية)
   canViewProfits: boolean; // رؤية هوامش وصافي الأرباح
   canViewCosts: boolean; // رؤية تكاليف الخامات وأسعار الجملة
+  canViewOperationalCosts?: boolean; // تكاليف شراء/تشغيل لازمة للبيع فقط، دون أرباح أو عمولات
   canViewExpenses: boolean; // رؤية سجل المصروفات والرواتب
   canViewReports: boolean; // رؤية التقارير المحاسبية التنفيذية
   canManageSettings: boolean; // التحكم بإعدادات النظام والتسعير
@@ -4422,6 +4441,7 @@ export const OWNER_FULL_PERMISSIONS: UserPermissions = {
   canExportData: true,
   canViewProfits: true,
   canViewCosts: true,
+  canViewOperationalCosts: true,
   canViewExpenses: true,
   canViewReports: true,
   canManageSettings: true,
@@ -4443,7 +4463,7 @@ export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canEditSaleBeforeClose: true,
   canCancelSale: true, // With audit log reason
   canReturnSale: true,
-  canApplyDiscount: false, // غير مسموح بالبيع بأقل من السعر المقترح
+  canApplyDiscount: true, // مسموح ضمن حارس المساهمة القائم (10 ج بعد التكلفة والعمولة) ويعاد فرضه خادمياً
   canOverridePrice: false, // غير مسموح بالبيع بأقل من السعر المقترح المعتمد
   canManageCustomers: true, // Full CRM, loyalty & WhatsApp follow-up
   canViewStock: true,
@@ -4471,10 +4491,11 @@ export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canExportData: false, // STRICTLY FORBIDDEN (النسخ الاحتياطي الشامل وقاعدة البيانات)
   canViewProfits: false, // STRICTLY FORBIDDEN (أسرار الأرباح الصافية للمالك)
   canViewCosts: false, // STRICTLY FORBIDDEN (أسرار التكلفة وسعر الجملة)
+  canViewOperationalCosts: true, // قراءة تكلفة الجرام التشغيلية فقط؛ لا أرباح أو هوامش أو عمولات أو ميزانيات
   canViewExpenses: false, // STRICTLY FORBIDDEN (رواتب الإدارة والمصاريف الحساسة)
-  canViewReports: true, // Empowered to access Sales & Invoices Ledger (with Cost/Profit columns hidden)
+  canViewReports: false, // تقارير المالك/البيانات القديمة قد تكشف التكلفة والعمولة؛ لا تكفي إخفاءات الواجهة
   canManageSettings: false, // STRICTLY FORBIDDEN (إعدادات النظام الحساسة)
-  canAccessOperationsSystem: true, // Empowered to follow daily sales target & commission tiers
+  canAccessOperationsSystem: false, // قد يكشف أهداف الميزانية وشرائح العمولات
   canRecordBackdatedSales: true, // إتاحة تسجيل فواتير الدفتر الورقي بتاريخ البيع الفعلي
   canEditBackdatedSales: false, // تعديل الفواتير السابقة خاضع للإدارة
   canDeleteSales: false, // حذف الفواتير خاضع للإدارة
@@ -4564,14 +4585,14 @@ export const INVENTORY_KEEPER_PERMISSIONS: UserPermissions = {
   canAccessOperationsSystem: false,
 };
 
-// Default bootstrap users with direct 5188 (Owner) and 12345 (Tarek) support
+// Local profile defaults only; Firebase Authentication is the sole sign-in authority.
 export const DEFAULT_USERS: AppUser[] = [
   {
     id: 'user-mohamed',
     username: 'mohamed',
     displayName: 'د. محمد (المالك)',
     role: 'OWNER',
-    passwordHash: '5188',
+    passwordHash: '',
     requiresPasswordChange: false,
     isActive: true,
     createdAt: new Date().toISOString(),
@@ -4582,7 +4603,7 @@ export const DEFAULT_USERS: AppUser[] = [
     username: 'tarek',
     displayName: 'طارق (مسؤول ومدير المبيعات)',
     role: 'STORE_MANAGER',
-    passwordHash: '12345',
+    passwordHash: '',
     requiresPasswordChange: false,
     isActive: true,
     createdAt: new Date().toISOString(),

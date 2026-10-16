@@ -1,0 +1,6 @@
+node_modules/
+.dev.vars
+.dev.vars.*
+.test-private-key.json
+.wrangler/
+.firebase/

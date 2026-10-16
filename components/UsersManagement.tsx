@@ -10,7 +10,8 @@ import {
   AuditLogRecord,
   View
 } from '../types';
-import { hashPassword } from '../services/authService';
+import { hasVerifiedOwnerSession, hashPassword } from '../services/authService';
+import EmailAccessManager from './EmailAccessManager';
 import {
   Users,
   UserPlus,
@@ -56,7 +57,6 @@ interface UsersManagementProps {
   currentUser: AppUser | null;
   onSaveUser: (user: AppUser) => void;
   onAddAuditLog: (log: AuditLogRecord) => void;
-  onPreviewUserPermissions?: (user: AppUser | null) => void;
 }
 
 const PERMISSION_GROUPS = [
@@ -146,9 +146,8 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
   currentUser,
   onSaveUser,
   onAddAuditLog,
-  onPreviewUserPermissions,
 }) => {
-  const isOwner = currentUser?.role === 'OWNER' || currentUser?.displayName?.includes('محمد');
+  const isOwner = hasVerifiedOwnerSession();
 
   // Control Center Active Tab (15 Sections as specified)
   const [controlTab, setControlTab] = useState<
@@ -182,7 +181,6 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
   const [showPassword, setShowPassword] = useState(false);
 
   // Cashier Interface Live Preview Modal State
-  const [showTarekPreviewModal, setShowTarekPreviewModal] = useState(false);
 
   // Success Toast State
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -208,7 +206,7 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
     setFormDisplayName('');
     setFormUsername('');
     setFormRole('CASHIER');
-    setFormPassword('12345');
+    setFormPassword('');
     setFormPermissions({ ...CASHIER_STANDARD_PERMISSIONS });
   };
 
@@ -315,22 +313,6 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
         <div className="flex items-center gap-2 flex-wrap relative z-10">
           <button
             type="button"
-            onClick={() => {
-              const tarek = users.find((u) => u.username === 'tarek' || u.role === 'STORE_MANAGER') || users[1] || users[0];
-              if (onPreviewUserPermissions) {
-                onPreviewUserPermissions(tarek);
-              } else {
-                setShowTarekPreviewModal(true);
-              }
-            }}
-            className="px-3.5 py-2 rounded-xl text-xs font-black bg-amber-500 text-slate-950 hover:bg-amber-400 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
-          >
-            <Eye size={15} />
-            <span>معاينة حية لواجهة طارق (الكاشير)</span>
-          </button>
-
-          <button
-            type="button"
             onClick={handleStartCreateNew}
             className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
           >
@@ -339,6 +321,8 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
           </button>
         </div>
       </div>
+
+      {isOwner && <EmailAccessManager onAddAuditLog={onAddAuditLog} />}
 
       {/* Control Center 15 Sections Sub-tabs */}
       <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 overflow-x-auto scrollbar-none">
@@ -520,7 +504,7 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
                       type={showPassword ? 'text' : 'password'}
                       value={formPassword}
                       onChange={(e) => setFormPassword(e.target.value)}
-                      placeholder={selectedUser ? 'تخطي للحفاظ على الحالية' : '12345'}
+                      placeholder={selectedUser ? 'تخطي للحفاظ على الحالية' : 'اختياري؛ لا يستخدم لتسجيل الدخول'}
                       className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-white/20 bg-slate-50 dark:bg-black/40 text-slate-900 dark:text-white font-mono"
                     />
                     <button
@@ -661,68 +645,6 @@ export const UsersManagement: React.FC<UsersManagementProps> = ({
       {/* ======================================================== */}
       {/* TAREK INTERFACE LIVE PREVIEW MODAL                       */}
       {/* ======================================================== */}
-      {showTarekPreviewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="relative w-full max-w-3xl rounded-3xl bg-white dark:bg-[#1D1D1F] border border-amber-400 p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-                  <Eye size={20} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                    معاينة تجربة واجهة الموظف طارق (الكاشير والعمليات)
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    هكذا تظهر الشاشة لطارق مع تطبيق كافة القيود وحجب التكاليف وأرباح المتجر الكلية
-                  </p>
-                </div>
-              </div>
-              <button type="button" onClick={() => setShowTarekPreviewModal(null as any)} className="p-1 text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Mock View of Tarek's Screen */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-black/40 border border-amber-300 space-y-3 text-xs">
-              <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 font-bold text-emerald-900 dark:text-emerald-200 flex justify-between">
-                <span>عمولتك اليوم حتى اللحظة:</span>
-                <strong className="font-mono text-sm">+25 ج.م (شريحة 5% - متبقي 2 عبوة للـ 7%)</strong>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div className="p-2.5 rounded-xl bg-white dark:bg-white/5 border border-slate-200 font-bold">
-                  سعر البيع المعتمد: <strong className="font-mono text-slate-900 dark:text-white">150 ج.م</strong>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-white/5 border border-slate-200 text-slate-400 font-bold italic">
-                  التكلفة وهامش ربح المحل: <strong className="font-mono text-rose-600">[🔒 محجوب بحسب الصلاحيات]</strong>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-white dark:bg-white/5 border border-slate-200 space-y-1">
-                <span className="font-bold block text-slate-800 dark:text-slate-200">الأزرار المتاحة لطارق بجدول الفواتير:</span>
-                <div className="flex gap-2 flex-wrap pt-1">
-                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold">تفاصيل ✓</span>
-                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold">طباعة ✓</span>
-                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold">نسخ كمسودة جديدة ✓</span>
-                  <span className="px-2 py-1 rounded bg-rose-100 text-rose-700 font-bold line-through">حذف (🔒 محظور)</span>
-                  <span className="px-2 py-1 rounded bg-amber-100 text-amber-800 font-bold">طلب إلغاء لـ د. محمد ⚡</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowTarekPreviewModal(false)}
-                className="px-5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shadow-md cursor-pointer"
-              >
-                إغلاق المعاينة
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

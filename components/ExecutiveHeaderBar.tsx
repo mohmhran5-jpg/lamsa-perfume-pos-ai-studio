@@ -7,21 +7,14 @@ import {
   Product, 
   DailyClosure, 
   View, 
-  DEFAULT_USERS, 
-  OWNER_FULL_PERMISSIONS, 
-  TAREK_OPERATIONAL_PERMISSIONS, 
   resolveActiveAppTheme, 
-  isActualPaidOperationalExpense, 
-  isLiveProductionSale, 
-  calculateDailyAccountingSeparation 
+  isActualPaidOperationalExpense,
 } from '../types';
 import { AppleNotificationItem } from './AppleTopNotificationBanner';
 import SmartFragranceSearchModal from './SmartFragranceSearchModal';
 import { 
   Crown, 
-  ArrowLeftRight, 
   Lock, 
-  KeyRound, 
   X, 
   CheckCircle2, 
   FileText, 
@@ -29,9 +22,6 @@ import {
   Bell, 
   Copy, 
   Check, 
-  Eye, 
-  EyeOff, 
-  Delete, 
   ShoppingBag, 
   Wallet, 
   AlertCircle, 
@@ -56,7 +46,20 @@ import {
   Target,
   TrendingUp
 } from 'lucide-react';
-import { verifyPassword, normalizePasswordInput, canAccessView } from '../services/authService';
+import { canAccessView } from '../services/authService';
+import type { DashboardDataSourceHealthMap } from '../services/dashboardDataTypes';
+
+const headerLocalDateKey = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const headerRecordDateKey = (value: string): string => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? headerLocalDateKey(parsed) : '';
+};
+
+const finiteHeaderNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
 
 export type TickerNotificationKind = 'error' | 'success' | 'info';
 
@@ -99,14 +102,15 @@ export const getTickerNotificationTheme = (type: TickerNotificationKind) => {
 
 interface ExecutiveHeaderBarProps {
   currentUser: AppUser | null;
-  users: AppUser[];
-  onSwitchUser: (user: AppUser) => void;
   onOpenAuthModal: () => void;
   onOpenDayOperations: () => void;
   onLockScreen?: () => void;
   sales?: Sale[];
   expenses?: Expense[];
   settings?: StoreSettings;
+  confirmedSettings?: Partial<StoreSettings> | null;
+  dataSourceHealth?: DashboardDataSourceHealthMap;
+  hasPendingLocalSales?: boolean;
   products?: Product[];
   currentClosure?: DailyClosure | null;
   topNotifications?: AppleNotificationItem[];
@@ -117,21 +121,22 @@ interface ExecutiveHeaderBarProps {
   onOpenThemeStudio?: () => void;
   onOpenLiveAlertsRadar?: () => void;
   onOpenPWAInstall?: () => void;
-  connectedDevicesCount?: number;
+  connectedDevicesCount?: number | null;
   onOpenConnectedDevices?: () => void;
   onUpdateSettings?: React.Dispatch<React.SetStateAction<StoreSettings>>;
 }
 
 export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(({
   currentUser,
-  users,
-  onSwitchUser,
   onOpenAuthModal,
   onOpenDayOperations,
   onLockScreen,
   sales = [],
   expenses = [],
   settings,
+  confirmedSettings = null,
+  dataSourceHealth,
+  hasPendingLocalSales = false,
   products = [],
   currentClosure,
   topNotifications = [],
@@ -142,25 +147,12 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   onOpenThemeStudio,
   onOpenLiveAlertsRadar,
   onOpenPWAInstall,
-  connectedDevicesCount = 1,
+  connectedDevicesCount = null,
   onOpenConnectedDevices,
   onUpdateSettings,
 }) => {
-  const isOwner = currentUser?.role === 'OWNER' || currentUser?.username === 'mohamed' || currentUser?.id === 'owner_mohamed';
-  const tarekUser = useMemo(() => {
-    const found = users.find(u => u.username === 'tarek' || u.id === 'sales_tarek' || u.role === 'STORE_MANAGER');
-    return found
-      ? { ...DEFAULT_USERS[1], ...found, role: 'STORE_MANAGER' as const, isActive: true, permissions: TAREK_OPERATIONAL_PERMISSIONS }
-      : DEFAULT_USERS[1];
-  }, [users]);
-  const ownerUser = useMemo(() => {
-    const found = users.find(u => u.role === 'OWNER' || u.username === 'mohamed' || u.id === 'owner_mohamed');
-    return found
-      ? { ...DEFAULT_USERS[0], ...found, role: 'OWNER' as const, isActive: true, permissions: OWNER_FULL_PERMISSIONS }
-      : DEFAULT_USERS[0];
-  }, [users]);
+  const isOwner = currentUser?.role === 'OWNER';
 
-  const pinInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const toolsMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -168,19 +160,71 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   const [isProfilePopoverOpen, setIsProfilePopoverOpen] = useState(false);
   const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
-  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [showPinText, setShowPinText] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
 
   // Daily Report Modal
   const [showDailyReportModal, setShowDailyReportModal] = useState(false);
   const [copiedReport, setCopiedReport] = useState(false);
 
-  const currency = settings?.currency || 'ج.م';
-  const storeName = settings?.storeName || 'لمسة عطر';
-  const logoUrl = settings?.logoUrl || 'https://l.top4top.io/p_31142jfec0.png';
+  const currency = confirmedSettings?.currency || '—';
+  const storeName = confirmedSettings?.storeName || 'اسم المتجر غير مؤكد';
+  const logoUrl = confirmedSettings?.logoUrl?.trim() || null;
+
+  const headerNonTestSales = sales.filter((sale) =>
+    !sale.isReversed && !sale.isTestData && sale.dataClassification !== 'TEST' && sale.dataClassification !== 'DOC_EXAMPLE'
+  );
+  const headerProductionSales = headerNonTestSales.filter((sale) => sale.dataClassification === 'PRODUCTION');
+  const headerNonTestExpenses = expenses.filter((expense) =>
+    !expense.isTestData && expense.dataClassification !== 'TEST' && expense.dataClassification !== 'DOC_EXAMPLE'
+  );
+  const headerSettingsComplete = Boolean(confirmedSettings)
+    && typeof confirmedSettings?.currency === 'string'
+    && confirmedSettings.currency.trim().length > 0
+    && finiteHeaderNumber(confirmedSettings?.monthlyFixedBudget)
+    && Number(confirmedSettings?.monthlyFixedBudget) >= 0
+    && finiteHeaderNumber(confirmedSettings?.monthlyWorkDays)
+    && Number(confirmedSettings?.monthlyWorkDays) > 0
+    && finiteHeaderNumber(confirmedSettings?.dailyTargetProfit)
+    && Number(confirmedSettings?.dailyTargetProfit) > 0
+    && finiteHeaderNumber(confirmedSettings?.priceEssenceNormal)
+    && Number(confirmedSettings?.priceEssenceNormal) >= 0
+    && finiteHeaderNumber(confirmedSettings?.priceEssenceNiche)
+    && Number(confirmedSettings?.priceEssenceNiche) >= 0
+    && finiteHeaderNumber(confirmedSettings?.priceEssenceSpecial)
+    && Number(confirmedSettings?.priceEssenceSpecial) >= 0
+    && finiteHeaderNumber(confirmedSettings?.lowStockThresholdGrams)
+    && Number(confirmedSettings?.lowStockThresholdGrams) >= 0;
+  const headerSalesComplete = headerNonTestSales.every((sale) =>
+    sale.dataClassification === 'PRODUCTION'
+    && finiteHeaderNumber(sale.totalPrice)
+    && finiteHeaderNumber(sale.totalCost)
+    && finiteHeaderNumber(sale.totalProfit)
+    && finiteHeaderNumber(sale.commissionAmount ?? sale.totalCommission)
+    && typeof sale.date === 'string'
+    && Boolean(headerRecordDateKey(sale.date))
+    && ['نقدي', 'بطاقة', 'محفظة إلكترونية', 'تحويل بنكي'].includes(String(sale.paymentMethod))
+    && Array.isArray(sale.items)
+    && sale.items.every((item) => finiteHeaderNumber(item.quantity) && item.quantity > 0 && finiteHeaderNumber(item.essenceGrams) && finiteHeaderNumber(item.sellingPrice))
+  );
+  const headerExpensesComplete = headerNonTestExpenses.every((expense) =>
+    expense.dataClassification === 'PRODUCTION'
+    && finiteHeaderNumber(expense.amount)
+    && typeof expense.date === 'string'
+    && Boolean(headerRecordDateKey(expense.date))
+  );
+  const headerProductsComplete = products.every((product) =>
+    finiteHeaderNumber(product.stock_grams)
+    && product.stock_grams >= 0
+    && ['عادي', 'نيش', 'مسك', 'عود'].includes(String(product.type))
+  );
+  const headerRequiredSources = ['sales', 'products', 'expenses', 'settings'] as const;
+  const headerSourcesLive = Boolean(dataSourceHealth)
+    && headerRequiredSources.every((key) => dataSourceHealth?.[key]?.state === 'live');
+  const financialDataReady = headerSourcesLive
+    && headerSettingsComplete
+    && headerSalesComplete
+    && headerExpensesComplete
+    && headerProductsComplete
+    && !hasPendingLocalSales;
 
   // Close menus when clicking outside (mouse and touch gestures)
   useEffect(() => {
@@ -200,142 +244,94 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     };
   }, []);
 
-  // Compute today's financial & operational metrics
+  // Compute today's report from server-confirmed, explicitly classified records only.
+  const todayKeyForMemo = headerLocalDateKey(new Date());
   const todayReportData = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const dateArabic = new Date().toLocaleDateString('ar-EG', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-    const timeArabic = new Date().toLocaleTimeString('ar-EG', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    const todaysSales = sales.filter(s => s.date && s.date.startsWith(todayStr) && isLiveProductionSale(s));
-    const todaysExpenses = expenses.filter(
-      e => e.date && e.date.startsWith(todayStr) && isActualPaidOperationalExpense(e)
+    const todayStr = todayKeyForMemo;
+    const now = new Date();
+    const dateArabic = now.toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const timeArabic = now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const todaysSales = headerProductionSales.filter((sale) => headerRecordDateKey(sale.date) === todayStr);
+    const todaysExpenses = headerNonTestExpenses.filter((expense) =>
+      expense.dataClassification === 'PRODUCTION'
+      && headerRecordDateKey(expense.date) === todayStr
+      && isActualPaidOperationalExpense(expense)
     );
 
-    const totalSalesRevenue = todaysSales.reduce((sum, s) => sum + (s.totalPrice || 0), 0);
-    const totalRawMaterialCost = todaysSales.reduce((sum, s) => sum + (s.totalCost || 0), 0);
-    const totalCommissions = todaysSales.reduce(
-      (sum, s) => sum + (s.commissionAmount ?? Math.round((s.totalPrice || 0) * 0.05)),
-      0
-    );
-
-    const cashSales = todaysSales
-      .filter(s => !s.paymentMethod || s.paymentMethod === 'نقدي')
-      .reduce((sum, s) => sum + (s.totalPrice || 0), 0);
-    const cardSales = todaysSales
-      .filter(s => s.paymentMethod === 'بطاقة')
-      .reduce((sum, s) => sum + (s.totalPrice || 0), 0);
-    const walletSales = todaysSales
-      .filter(s => s.paymentMethod === 'محفظة إلكترونية' || s.paymentMethod === 'تحويل بنكي')
-      .reduce((sum, s) => sum + (s.totalPrice || 0), 0);
-
-    const directTodayExpenses = todaysExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-    const dailyFixedShare = 600;
-
-    const dailyAccounting = calculateDailyAccountingSeparation({
-      netSales: totalSalesRevenue,
-      productCost: totalRawMaterialCost,
-      commissions: totalCommissions,
-      plannedDailyAllocation: dailyFixedShare,
-      actualCashExpensesPaidToday: directTodayExpenses,
-    });
-
-    const grossOperatingProfit = dailyAccounting.contribution;
-    const netFinalProfit = todaysSales.length > 0 ? dailyAccounting.dailyResultVsBudget : 0;
+    const totalSalesRevenue = todaysSales.reduce((sum, sale) => sum + sale.totalPrice, 0);
+    const totalRawMaterialCost = todaysSales.reduce((sum, sale) => sum + sale.totalCost, 0);
+    const totalCommissions = todaysSales.reduce((sum, sale) => sum + Number(sale.commissionAmount ?? sale.totalCommission), 0);
+    const cashSales = todaysSales.filter((sale) => sale.paymentMethod === 'نقدي').reduce((sum, sale) => sum + sale.totalPrice, 0);
+    const cardSales = todaysSales.filter((sale) => sale.paymentMethod === 'بطاقة').reduce((sum, sale) => sum + sale.totalPrice, 0);
+    const walletSales = todaysSales.filter((sale) => sale.paymentMethod === 'محفظة إلكترونية' || sale.paymentMethod === 'تحويل بنكي')
+      .reduce((sum, sale) => sum + sale.totalPrice, 0);
+    const directTodayExpenses = todaysExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const monthlyBudget = Number(confirmedSettings?.monthlyFixedBudget ?? 0);
+    const monthlyWorkDays = Number(confirmedSettings?.monthlyWorkDays ?? 0);
+    const dailyFixedShare = monthlyWorkDays > 0 ? monthlyBudget / monthlyWorkDays : 0;
+    const grossOperatingProfit = totalSalesRevenue - totalRawMaterialCost - totalCommissions;
+    const netFinalProfit = grossOperatingProfit - dailyFixedShare;
 
     let totalBottles = 0;
     let totalGrams = 0;
     const productCountMap = new Map<string, { qty: number; revenue: number }>();
+    todaysSales.forEach((sale) => sale.items.forEach((item) => {
+      const quantity = Number(item.quantity);
+      totalBottles += quantity;
+      totalGrams += Number(item.essenceGrams) * quantity;
+      const productName = item.productName || 'منتج غير مسمى في السجل';
+      const previous = productCountMap.get(productName) || { qty: 0, revenue: 0 };
+      productCountMap.set(productName, { qty: previous.qty + quantity, revenue: previous.revenue + item.sellingPrice * quantity });
+    }));
 
-    todaysSales.forEach(s => {
-      (s.items || []).forEach(it => {
-        const q = it.quantity || 1;
-        totalBottles += q;
-        totalGrams += (it.essenceGrams || 0) * q;
-        const prev = productCountMap.get(it.productName) || { qty: 0, revenue: 0 };
-        productCountMap.set(it.productName, {
-          qty: prev.qty + q,
-          revenue: prev.revenue + (it.sellingPrice || 0) * q
-        });
-      });
-    });
+    const topPerfumes = Array.from(productCountMap.entries()).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 5);
+    const stockThreshold = Number(confirmedSettings?.lowStockThresholdGrams);
+    const lowStockProducts = finiteHeaderNumber(stockThreshold)
+      ? products.filter((product) => product.stock_grams < stockThreshold)
+      : [];
 
-    const topPerfumes = Array.from(productCountMap.entries())
-      .sort((a, b) => b[1].revenue - a[1].revenue)
-      .slice(0, 5);
-
-    const lowStockProducts = products.filter(p => p.stock_grams <= (p.min_threshold_grams ?? 30));
-
-    const lines: string[] = [
-      `================================================================`,
-      `               تقرير الأداء المالي والتشغيلي اليومي               `,
-      `                     ${storeName}                     `,
-      `================================================================`,
-      `التاريخ       : ${dateArabic} (${todayStr})`,
-      `وقت التصدير   : ${timeArabic}`,
-      `المسؤول الحالي : ${currentUser?.displayName || 'الإدارة'}`,
-      `----------------------------------------------------------------`,
-      `أولاً: ملخص المبيعات وحركة الزبائن`,
-      `----------------------------------------------------------------`,
-      `• عدد الفواتير المصدرة اليوم : ${todaysSales.length} فاتورة`,
-      `• إجمالي العبوات المباعة     : ${totalBottles} عبوة عطرية`,
-      `• إجمالي الزيوت المستهلكة    : ${totalGrams} جرام`,
-      `• إجمالي إيرادات المبيعات    : ${totalSalesRevenue.toLocaleString('ar-EG')} ${currency}`,
-      `  - مبيعات نقدية (كاش)      : ${cashSales.toLocaleString('ar-EG')} ${currency}`,
-      `  - مبيعات بطاقة بنكية       : ${cardSales.toLocaleString('ar-EG')} ${currency}`,
-      `  - محافظ إلكترونية/تحويل    : ${walletSales.toLocaleString('ar-EG')} ${currency}`,
-      `----------------------------------------------------------------`,
-      `ثانياً: التحليل المالي والأرباح التشغيلية`,
-      `----------------------------------------------------------------`,
-      `• تكلفة المواد الخام المستهلكة : ${Math.round(totalRawMaterialCost).toLocaleString('ar-EG')} ${currency}`,
-      `• عمولات المبيعات المستحقة     : ${Math.round(totalCommissions).toLocaleString('ar-EG')} ${currency}`,
-      `• مجمل المساهمة التشغيلية       : ${Math.round(grossOperatingProfit).toLocaleString('ar-EG')} ${currency}`,
-      `• مصروفات تشغيلية نقدية اليوم   : ${directTodayExpenses.toLocaleString('ar-EG')} ${currency}`,
-      `• صافي النتيجة مقابل الهدف     : ${Math.round(netFinalProfit).toLocaleString('ar-EG')} ${currency}`,
-      `----------------------------------------------------------------`,
-      `ثالثاً: أكثر العطور مبيعاً اليوم`,
-      `----------------------------------------------------------------`,
-      ...(topPerfumes.length > 0
-        ? topPerfumes.map((p, idx) => ` ${idx + 1}. ${p[0]}: ${p[1].qty} عبوة (${p[1].revenue.toLocaleString('ar-EG')} ${currency})`)
-        : [' • لا توجد مبيعات مسجلة حتى الآن.']),
-      `----------------------------------------------------------------`,
-      `رابعاً: تنبيهات المخزون الحرج`,
-      `----------------------------------------------------------------`,
-      ...(lowStockProducts.length > 0
-        ? lowStockProducts.map(p => ` ⚠️ ${p.name}: المتبقي (${p.stock_grams} جم) - الحد الأدنى (${p.min_threshold_grams ?? 30} جم)`)
-        : [' • كافة الزيوت العطرية في مستويات آمنة.']),
-      `================================================================`,
-      `تم استخراج هذا التقرير آلياً من نظام إدارة المتجر الذكي.`
-    ];
+    const lines: string[] = !financialDataReady
+      ? ['لم يُنشأ هذا التقرير: لم تُؤكد جميع مصادر Firestore أو لم تكتمل الحقول المطلوبة.']
+      : [
+          `================================================================`,
+          `تقرير يومي من سجلات الخادم المؤكدة — ${storeName}`,
+          `التاريخ: ${dateArabic} (${todayStr}) · وقت الإعداد: ${timeArabic}`,
+          `المسؤول الحالي: ${currentUser?.displayName || 'غير محدد'}`,
+          `الأرقام تجمع سجلات الإنتاج المؤكدة ولا تمثل جردًا ميدانيًا أو تدقيقًا محاسبيًا.`,
+          `عدد الفواتير: ${todaysSales.length}`,
+          `عدد العبوات المسجل: ${totalBottles} · جرامات الزيت المسجلة: ${totalGrams}`,
+          `إيراد الفواتير: ${totalSalesRevenue.toLocaleString('ar-EG')} ${currency}`,
+          `مبيعات نقدية مسجلة: ${cashSales.toLocaleString('ar-EG')} ${currency}`,
+          `مبيعات بطاقة مسجلة: ${cardSales.toLocaleString('ar-EG')} ${currency}`,
+          `محفظة/تحويل مسجل: ${walletSales.toLocaleString('ar-EG')} ${currency}`,
+          `تكلفة مسجلة على الفواتير: ${totalRawMaterialCost.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} ${currency}`,
+          `عمولات مخزنة على الفواتير: ${totalCommissions.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} ${currency}`,
+          `مساهمة محسوبة من حقول الفواتير: ${grossOperatingProfit.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} ${currency}`,
+          `مصروفات تشغيلية مسجلة (لا تثبت الدفع): ${directTodayExpenses.toLocaleString('ar-EG')} ${currency}`,
+          `نتيجة حسابية بعد طرح الحصة اليومية المحسوبة من الموازنة الشهرية (${dailyFixedShare.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} ${currency}): ${netFinalProfit.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} ${currency}`,
+          `المنتجات الأعلى إيرادًا في فواتير اليوم (ترتيب حسب إيراد السجلات):`,
+          ...(topPerfumes.length > 0
+            ? topPerfumes.map((product, index) => `${index + 1}. ${product[0]}: ${product[1].qty} عبوة (${product[1].revenue.toLocaleString('ar-EG')} ${currency})`)
+            : ['لا توجد فواتير إنتاج مسجلة لهذا اليوم وفق اللقطة المؤكدة.']),
+          `منتجات في سجل النظام دون عتبة المخزون المحفوظة (${stockThreshold} جم):`,
+          ...(products.length === 0
+            ? ['لا توجد سجلات منتجات في لقطة الخادم المؤكدة.']
+            : lowStockProducts.length > 0
+            ? lowStockProducts.map((product) => `${product.name}: ${product.stock_grams} جم مسجلة`)
+            : ['لا توجد سجلات منتجات تحت العتبة المسجلة؛ هذا لا يثبت جردًا ميدانيًا.']),
+          `================================================================`,
+        ];
 
     return {
-      todayStr,
-      dateArabic,
-      timeArabic,
+      todayStr, dateArabic, timeArabic,
       todaysSalesCount: todaysSales.length,
-      totalSalesRevenue,
-      totalRawMaterialCost,
-      totalCommissions,
-      cashSales,
-      cardSales,
-      walletSales,
-      directTodayExpenses,
-      grossOperatingProfit,
-      netFinalProfit,
-      totalBottles,
-      totalGrams,
-      topPerfumes,
-      lowStockCount: lowStockProducts.length,
-      reportTextContent: lines.join('\n')
+      totalSalesRevenue, totalRawMaterialCost, totalCommissions,
+      cashSales, cardSales, walletSales, directTodayExpenses,
+      grossOperatingProfit, netFinalProfit, totalBottles, totalGrams,
+      topPerfumes, lowStockCount: lowStockProducts.length,
+      reportTextContent: lines.join('\n'),
     };
-  }, [sales, expenses, products, storeName, currentUser, currency]);
+  }, [headerProductionSales, headerNonTestExpenses, products, storeName, currentUser, currency, confirmedSettings, financialDataReady, todayKeyForMemo]);
 
   // Export Daily Report (.TXT)
   const handleDownloadTxtReport = () => {
@@ -361,133 +357,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         'تم النسخ'
       );
     }
-  };
-
-  // Quick switch from Owner to Tarek
-  const handleQuickSwitchToTarek = () => {
-    setIsProfilePopoverOpen(false);
-    if (tarekUser) {
-      onSwitchUser({ ...tarekUser, requiresPasswordChange: false });
-    } else {
-      onOpenAuthModal();
-    }
-  };
-
-  // Open Owner switch modal
-  const handleSwitchToOwnerClick = () => {
-    setIsProfilePopoverOpen(false);
-    setPasswordInput('');
-    setPasswordError(null);
-    setShowPinText(false);
-    setShowPasswordPrompt(true);
-  };
-
-  const executeOwnerUnlock = () => {
-    if (!ownerUser) return;
-    onSwitchUser({
-      ...ownerUser,
-      requiresPasswordChange: false,
-      lastLoginAt: new Date().toISOString()
-    });
-    setShowPasswordPrompt(false);
-    setPasswordInput('');
-    setPasswordError(null);
-  };
-
-  const handleInputChange = async (rawVal: string) => {
-    setPasswordInput(rawVal);
-    setPasswordError(null);
-    const normalized = normalizePasswordInput(rawVal);
-    const digitsOnly = normalized.replace(/\D/g, '');
-    if (normalized === '5188' || digitsOnly === '5188') {
-      executeOwnerUnlock();
-    }
-  };
-
-  useEffect(() => {
-    if (!showPasswordPrompt) return;
-    const focusTimer = window.setTimeout(() => {
-      pinInputRef.current?.focus();
-    }, 40);
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowPasswordPrompt(false);
-        return;
-      }
-      const activeTag = document.activeElement?.tagName;
-      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
-
-      const normalizedKey = normalizePasswordInput(e.key);
-      if (/^[0-9]$/.test(normalizedKey)) {
-        e.preventDefault();
-        setPasswordInput((prev) => {
-          if (prev.length >= 8) return prev;
-          const next = prev + normalizedKey;
-          const normNext = normalizePasswordInput(next);
-          if (normNext === '5188' || normNext.replace(/\D/g, '') === '5188') {
-            window.setTimeout(() => executeOwnerUnlock(), 10);
-          }
-          return next;
-        });
-        setPasswordError(null);
-      } else if (e.key === 'Backspace') {
-        e.preventDefault();
-        setPasswordInput((prev) => prev.slice(0, -1));
-        setPasswordError(null);
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        handleVerifyOwnerPassword();
-      }
-    };
-
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  }, [showPasswordPrompt, ownerUser]);
-
-  const handleVerifyOwnerPassword = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!ownerUser) return;
-
-    const normalized = normalizePasswordInput(passwordInput);
-    if (!normalized) {
-      setPasswordError('يرجى إدخال رمز المرور الخاص بالإدارة');
-      return;
-    }
-
-    if (normalized === '5188') {
-      executeOwnerUnlock();
-      return;
-    }
-
-    setIsVerifying(true);
-    setPasswordError(null);
-
-    try {
-      const isValid = await verifyPassword(normalized, ownerUser.passwordHash, ownerUser);
-      if (isValid) {
-        executeOwnerUnlock();
-      } else {
-        setPasswordError('رمز المرور غير صحيح، يرجى المحاولة مرة أخرى');
-      }
-    } catch {
-      if (normalized === '5188') {
-        executeOwnerUnlock();
-      } else {
-        setPasswordError('رمز المرور غير صحيح');
-      }
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
-  const handleKeypadDigit = (digit: string) => {
-    if (passwordInput.length >= 8) return;
-    const next = passwordInput + digit;
-    handleInputChange(next);
   };
 
   // ----------------------------------------------------
@@ -534,16 +403,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
     };
   }, [liveNow]);
 
-  // Calculate sales in last 60 minutes for sales-driven ticker motivation
-  const recentHourSalesCount = useMemo(() => {
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
-    return sales.filter(s => {
-      if (!isLiveProductionSale(s)) return false;
-      const saleTime = new Date(s.timestamp || s.createdAt || 0).getTime();
-      return saleTime >= oneHourAgo;
-    }).length;
-  }, [sales]);
-
   // ----------------------------------------------------
   // DYNAMIC ANIMATED TICKER TAPE MESSAGES CAROUSEL
   // ----------------------------------------------------
@@ -552,21 +411,22 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
   const [tickerMode, setTickerMode] = useState<'marquee' | 'slide'>('marquee');
 
   const tickerItems = useMemo(() => {
-    const targetGap = Math.max(0, (settings?.dailySalesTarget || 2000) - todayReportData.totalSalesRevenue);
+    const dailyTarget = Number(confirmedSettings?.dailyTargetProfit ?? 0);
+    const contributionVariance = todayReportData.grossOperatingProfit - dailyTarget;
     const salesCount = todayReportData.todaysSalesCount;
     const totalRev = todayReportData.totalSalesRevenue;
     const bottles = todayReportData.totalBottles;
-    // Estimated commission calculation (e.g. 5% tiered rate)
-    const estCommission = Math.round(totalRev * 0.05);
 
     const baseItems = [
       {
         id: 'daily_profit_summary',
         category: 'profitSummary',
-        badge: '📈 ملخص أرباح ومبيعات اليوم',
-        text: salesCount > 0 
-          ? `ملخص اليوم: ${salesCount} فاتورة بقيمة ${totalRev.toLocaleString('ar-EG')} ${currency} · صافي المساهمة الأرباح الحالية: +${Math.max(0, Math.round(todayReportData.netContribution || 0)).toLocaleString('ar-EG')} ${currency} 📊`
-          : `ملخص اليوم: لم تُسجل عمليات بيع بعد · التارجت المعتمد للوردية: ${(settings?.dailySalesTarget || 2000).toLocaleString('ar-EG')} ${currency} 🚀`,
+        badge: '📈 ملخص المساهمة والمبيعات اليوم',
+        text: !financialDataReady
+          ? 'ملخص المبيعات محجوب إلى أن تؤكد Firestore المصادر والحقول المطلوبة.'
+          : salesCount > 0
+          ? `وفق الفواتير المؤكدة: ${salesCount} فاتورة بإيراد ${totalRev.toLocaleString('ar-EG')} ${currency} ومساهمة محسوبة ${todayReportData.grossOperatingProfit.toLocaleString('ar-EG')} ${currency}.`
+          : 'لقطة Firestore المؤكدة لا تحتوي فواتير إنتاج لهذا اليوم.',
         cardStyle: 'bg-gradient-to-r from-emerald-100 via-teal-50 to-emerald-100 dark:from-emerald-950/70 dark:via-teal-950/50 dark:to-emerald-950/70 border-emerald-400 dark:border-emerald-600 shadow-xs',
         badgeBg: 'bg-gradient-to-r from-emerald-700 to-teal-700 text-white border border-emerald-600 font-black shadow-xs apple-soft-pulse-badge',
         iconColor: 'text-emerald-700 dark:text-emerald-300',
@@ -588,9 +448,11 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         id: 'sales_achievement',
         category: 'sales',
         badge: '🎯 موقف المبيعات اليوم',
-        text: salesCount > 0 
-          ? `تم تسجيل ${salesCount} فاتورة بقيمة ${totalRev.toLocaleString('ar-EG')} ${currency} حتى الآن! ${targetGap === 0 ? '🎉 تم تجاوز مستهدف اليوم بالكامل!' : `متبقي ${targetGap.toLocaleString('ar-EG')} ${currency} للوصول للتارجت.`}`
-          : `جاهزون لبدء المبيعات اليومية! المستهدف المعتمد للوردية: ${(settings?.dailySalesTarget || 2000).toLocaleString('ar-EG')} ${currency}`,
+        text: !financialDataReady
+          ? 'حالة المبيعات غير مؤكدة حاليًا؛ لا تُعرض أرقام أو مقارنة بمستهدف.'
+          : salesCount > 0
+          ? `تُظهر اللقطة المؤكدة ${salesCount} فاتورة بإيراد مسجل ${totalRev.toLocaleString('ar-EG')} ${currency}.`
+          : 'لا تظهر فواتير إنتاج لهذا اليوم في لقطة الخادم المؤكدة.',
         cardStyle: 'bg-gradient-to-r from-blue-50 via-indigo-50/80 to-blue-50 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-blue-950/40 border-blue-300/80 dark:border-blue-700/50',
         badgeBg: 'bg-blue-600 text-white border border-blue-500/80 font-black shadow-xs',
         iconColor: 'text-blue-600 dark:text-blue-400',
@@ -600,8 +462,10 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       {
         id: 'commission_earnings',
         category: 'commission',
-        badge: '💰 العمولة والأرباح اليومية',
-        text: `العمولة التقديرية الحالية لمبيعاتك اليوم: ${estCommission.toLocaleString('ar-EG')} ${currency} (بنسبة 5% متدرجة) · كل فاتورة تسجلها ترفع أرباحك ومستحقاتك!`,
+        badge: '💰 العمولات المسجلة اليوم',
+        text: financialDataReady
+          ? `مجموع العمولات المسجلة على فواتير اليوم: ${todayReportData.totalCommissions.toLocaleString('ar-EG')} ${currency}.`
+          : 'مؤشر العمولات محجوب حتى تأكيد حقول الفواتير من Firestore.',
         cardStyle: 'bg-gradient-to-r from-amber-50 via-yellow-50/90 to-amber-50 dark:from-amber-950/40 dark:via-yellow-950/30 dark:to-amber-950/40 border-amber-300/90 dark:border-amber-700/50',
         badgeBg: 'bg-amber-500 text-amber-950 border border-amber-400/80 font-black shadow-xs',
         iconColor: 'text-amber-700 dark:text-amber-300',
@@ -612,7 +476,9 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         id: 'bottles_summary',
         category: 'inventory',
         badge: '🧴 إجمالي العبوات اليوم',
-        text: `تم تجهيز وتغليف ${bottles} عبوة عطرية اليوم. حرصك على إتقان النسبة ونظافة العبوة يرسخ اسم «لمسة عطر».`,
+        text: financialDataReady
+          ? `عدد العبوات المسجل في بنود فواتير اليوم: ${bottles}.`
+          : 'عدد العبوات غير متاح قبل تأكيد الفواتير واكتمال حقولها.',
         cardStyle: 'bg-gradient-to-r from-sky-50 via-cyan-50/80 to-sky-50 dark:from-sky-950/40 dark:via-cyan-950/30 dark:to-sky-950/40 border-sky-300/80 dark:border-sky-700/50',
         badgeBg: 'bg-sky-600 text-white border border-sky-500/80 font-black shadow-xs',
         iconColor: 'text-sky-600 dark:text-sky-400',
@@ -622,10 +488,10 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       {
         id: 'breakeven_gap',
         category: 'sales',
-        badge: '📊 حد التعادل والتارجت',
-        text: targetGap === 0
-          ? '🎉 بطل! تم تحقيق حد التعادل وتجاوز تارجت اليوم وتغطية التكاليف وبدء ربح صافٍ لمتجر لمسة عطر!'
-          : `نقطة التعادل المستهدفة للوردية: ${(settings?.dailySalesTarget || 2000).toLocaleString('ar-EG')} ${currency} · باقي ${targetGap.toLocaleString('ar-EG')} ${currency} للوصول للتعادل وتخطي التكاليف.`,
+        badge: '📊 مقارنة بالمستهدف المسجل',
+        text: !financialDataReady
+          ? 'المقارنة بالمستهدف غير متاحة حتى اكتمال التحقق.'
+          : `المساهمة المحسوبة ${todayReportData.grossOperatingProfit.toLocaleString('ar-EG')} ${currency} مقابل المستهدف اليومي المسجل ${dailyTarget.toLocaleString('ar-EG')} ${currency}; الفرق (المساهمة ناقص المستهدف) ${contributionVariance.toLocaleString('ar-EG')} ${currency}.`,
         cardStyle: 'bg-gradient-to-r from-teal-50 via-emerald-50/80 to-teal-50 dark:from-teal-950/40 dark:via-emerald-950/30 dark:to-teal-950/40 border-teal-300/80 dark:border-teal-700/50',
         badgeBg: 'bg-teal-700 text-white border border-teal-600/80 font-black shadow-xs',
         iconColor: 'text-teal-700 dark:text-teal-300',
@@ -647,7 +513,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         id: 'inventory_alert',
         category: 'inventory',
         badge: '🚨 تنبيه هام للمخزون',
-        text: 'تفقد المخزون: تأكد من كفاية زيوت العطور الفاخرة والعبوات الأكثر طلباً قبل ساعات الذروة لتفادي أي نفاذ مفاجئ.',
+        text: 'تذكير عام: راجع أرصدة المنتجات المسجلة والعتبة المحفوظة؛ الأرقام البرمجية لا تثبت وجودًا فعليًا على الرف.',
         cardStyle: 'bg-gradient-to-r from-rose-50 via-red-50/90 to-rose-50 dark:from-rose-950/50 dark:via-red-950/40 dark:to-rose-950/50 border-rose-300/90 dark:border-rose-700/60 shadow-2xs',
         badgeBg: 'bg-rose-600 text-white border border-rose-500 font-black shadow-xs animate-pulse',
         iconColor: 'text-rose-600 dark:text-rose-400',
@@ -658,7 +524,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         id: 'sales_boost_ideas',
         category: 'tips',
         badge: '💡 أفكار وتنشيط المبيعات',
-        text: 'فكرة بيعية ذكية: تجربة العطر على معصم العميل واقتراح إضافة عطر جيب أو عطور زيتية رفيعة يرفع متوسط الفاتورة بنسبة 30%!',
+        text: 'اقتراح عام غير مبني على قياس أداء: إتاحة تجربة العطر قد تساعد العميل على اختيار الرائحة المناسبة؛ لا توجد هنا نسبة أثر مؤكدة.',
         cardStyle: 'bg-gradient-to-r from-fuchsia-50 via-pink-50/80 to-fuchsia-50 dark:from-fuchsia-950/40 dark:via-pink-950/30 dark:to-fuchsia-950/40 border-fuchsia-300/80 dark:border-fuchsia-700/50',
         badgeBg: 'bg-fuchsia-600 text-white border border-fuchsia-500/80 font-black shadow-xs',
         iconColor: 'text-fuchsia-600 dark:text-fuchsia-400',
@@ -669,7 +535,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
         id: 'store_cleanliness',
         category: 'cleanliness',
         badge: '✨ تنظيم ونظافة المتجر',
-        text: 'ترتيب وتنظيم المتجر: تلميع واجهات الزجاج، مسح عبوات العرض، وتبخير جو المتجر بلمسة بخور فاخرة تجذب الزوار وتعزز الشعور الملكي.',
+        text: 'تذكير عام: راجع قائمة العمل الداخلية لتنظيم ونظافة المتجر.',
         cardStyle: 'bg-gradient-to-r from-indigo-50 via-slate-50/80 to-indigo-50 dark:from-indigo-950/40 dark:via-slate-900/30 dark:to-indigo-950/40 border-indigo-300/80 dark:border-indigo-700/50',
         badgeBg: 'bg-indigo-600 text-white border border-indigo-500/80 font-black shadow-xs',
         iconColor: 'text-indigo-600 dark:text-indigo-400',
@@ -679,8 +545,8 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       {
         id: 'store_royal_welcome',
         category: 'welcome',
-        badge: '👑 متجر لمسة عطر',
-        text: `أهلاً بك في نظام التشغيل المالي والبيعي الفاخر لمتجر «${storeName}» · أثرٌ يبقى وذكرى تدوم ✨ استقبالك الحار للعملاء هو السر الحقيقي للنجاح.`,
+        badge: `👑 متجر ${storeName}`,
+        text: `أهلاً بك في نظام التشغيل لمتجر «${storeName}».`,
         cardStyle: 'bg-gradient-to-r from-amber-100/90 via-yellow-50 to-amber-100/90 dark:from-amber-950/60 dark:via-yellow-950/40 dark:to-amber-950/60 border-amber-400/90 dark:border-amber-600/70 shadow-2xs',
         badgeBg: 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white border border-amber-500 font-black shadow-xs',
         iconColor: 'text-amber-700 dark:text-amber-300',
@@ -689,36 +555,8 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       }
     ];
 
-    // Sales-Driven Ticker Behavior: If sales in last hour are quiet (< 2 sales), inject high-priority motivational sales tips
-    if (recentHourSalesCount < 2) {
-      baseItems.push(
-        {
-          id: 'low_sales_motivation_1',
-          category: 'tips',
-          badge: '🔥 تنشيط المبيعات الآن',
-          text: 'المبيعات هادئة في الساعة الأخيرة؟ نصيحة ذكية: رش عينات العطور الجديدة للعملاء عند المدخل واعرض حزم الهدايا الزيتية الفاخرة لتنشيط الحركة!',
-          cardStyle: 'bg-gradient-to-r from-orange-100 via-amber-50 to-orange-100 dark:from-orange-950/60 dark:via-amber-950/40 dark:to-orange-950/60 border-orange-400 dark:border-orange-600 shadow-2xs',
-          badgeBg: 'bg-gradient-to-r from-orange-600 to-amber-600 text-white border border-orange-500 font-black shadow-xs animate-pulse',
-          iconColor: 'text-orange-600 dark:text-orange-400',
-          textColor: 'text-orange-950 dark:text-orange-100 font-extrabold',
-          icon: Flame
-        },
-        {
-          id: 'low_sales_motivation_2',
-          category: 'tips',
-          badge: '💡 رفع متوسط الفاتورة',
-          text: 'اقتراح ذكي لتوليد مبيعات فورا: اعرض تجربة زيت عطر المسك أو العود الفاخر مجاناً واقترح إضافة عطر جيب صغير يضاعف قيمة الفاتورة!',
-          cardStyle: 'bg-gradient-to-r from-pink-100 via-rose-50 to-pink-100 dark:from-pink-950/60 dark:via-rose-950/40 dark:to-pink-950/60 border-pink-400 dark:border-pink-600 shadow-2xs',
-          badgeBg: 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border border-pink-500 font-black shadow-xs',
-          iconColor: 'text-pink-600 dark:text-pink-400',
-          textColor: 'text-pink-950 dark:text-pink-100 font-extrabold',
-          icon: Sparkles
-        }
-      );
-    }
-
     return baseItems;
-  }, [todayReportData, settings, currency, storeName, recentHourSalesCount]);
+  }, [todayReportData, settings, confirmedSettings, financialDataReady, currency, storeName]);
 
   const filteredTickerItems = useMemo(() => {
     const topics = settings?.newsTickerTopics || {};
@@ -782,11 +620,20 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
 
   // Single quiet current status headline for Dynamic Island
   const currentStatusHeadline = useMemo(() => {
-    if (currentClosure?.status !== 'مفتوح') {
+    if (!financialDataReady) {
+      return { text: 'حالة المؤشرات غير مؤكدة؛ لم تُعرض أرقام من نسخة مخبأة أو محلية.', type: 'info' as const };
+    }
+    if (!currentClosure) {
       return {
-        text: 'يوم التشغيل مغلق — اضغط على زر الوردية لتسجيل عهدة البداية',
-        type: 'error' as const,
+        text: 'لا يوجد سجل وردية مصنف كإنتاج لهذا اليوم في لقطة Firestore المؤكدة.',
+        type: 'info' as const,
       };
+    }
+    if (currentClosure.status === 'مغلق') {
+      return { text: 'سجل Firestore المؤكد يصف وردية اليوم بأنها مغلقة.', type: 'info' as const };
+    }
+    if (currentClosure.status !== 'مفتوح') {
+      return { text: 'يوجد سجل وردية، لكن حالته المسجلة غير معروفة؛ لم أستنتج أنها مفتوحة أو مغلقة.', type: 'info' as const };
     }
     if (todayReportData.todaysSalesCount > 0) {
       return {
@@ -795,24 +642,24 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       };
     }
     return {
-      text: 'الوردية نشطة وجاهزة لتسجيل المبيعات اليومية',
+      text: 'سجل Firestore يؤكد أن الوردية مفتوحة؛ لا توجد فواتير إنتاج مسجلة اليوم في اللقطة المؤكدة.',
       type: 'info' as const,
     };
-  }, [currentClosure?.status, todayReportData.todaysSalesCount, todayReportData.totalSalesRevenue, currency]);
+  }, [financialDataReady, currentClosure, todayReportData.todaysSalesCount, todayReportData.totalSalesRevenue, currency]);
 
   // Main accessible views list for the Segmented Navigation Dock
   const navItems = useMemo(() => {
     return ([
-      { id: View.POS, label: 'الكاشير', icon: ShoppingBag, badge: todayReportData.todaysSalesCount > 0 ? `${todayReportData.todaysSalesCount}` : null },
+      { id: View.POS, label: 'الكاشير', icon: ShoppingBag, badge: financialDataReady && todayReportData.todaysSalesCount > 0 ? `${todayReportData.todaysSalesCount}` : null },
       { id: View.DASHBOARD, label: 'لوحة القيادة', icon: Sparkles, badge: null },
-      { id: View.INVENTORY, label: 'المخزون الخام', icon: Layers, badge: products.length > 0 ? `${products.length}` : null },
+      { id: View.INVENTORY, label: 'المخزون الخام', icon: Layers, badge: dataSourceHealth?.products.state === 'live' && products.length > 0 ? `${products.length}` : null },
       { id: View.REPORTS, label: 'سجل الفواتير', icon: Clock, badge: null },
       { id: View.CUSTOMERS_LOYALTY, label: 'العملاء والولاء', icon: Crown, badge: null },
       { id: View.FORMULATION_ENGINE, label: 'محرك التركيب', icon: Sliders, badge: null },
       { id: View.EXPENSES, label: 'المصاريف', icon: Wallet, badge: null },
       { id: View.SETTINGS, label: 'الإعدادات والتحكم', icon: Sliders, badge: null },
     ] as const).filter(item => canAccessView(currentUser, item.id));
-  }, [currentUser, todayReportData.todaysSalesCount, products.length]);
+  }, [currentUser, todayReportData.todaysSalesCount, products.length, financialDataReady, dataSourceHealth]);
 
   return (
     <>
@@ -835,14 +682,16 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white border border-black/[0.07] shadow-apple-xs flex items-center justify-center p-1.5 shrink-0 select-none hover:scale-105 transition-transform"
                 title={storeName}
               >
-                <img
-                  src={logoUrl}
-                  alt={storeName}
-                  onError={(e) => {
-                    (e.target as HTMLElement).style.display = 'none';
-                  }}
-                  className="w-full h-full object-contain rounded-full"
-                />
+                {logoUrl ? (
+                  <img
+                    src={logoUrl}
+                    alt={storeName}
+                    onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                    className="w-full h-full object-contain rounded-full"
+                  />
+                ) : (
+                  <Store size={20} className="text-slate-500" aria-label="لا يوجد شعار مسجل" />
+                )}
               </div>
 
               {/* Signature Profile Capsule Pill */}
@@ -897,40 +746,10 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                       </div>
                     </div>
 
-                    {/* Switch Account Quick Action */}
-                    <div className="space-y-1.5">
-                      <span className="text-[10px] font-bold text-[#86868B] px-1 block">تبديل المستخدم السريع:</span>
-                      {isOwner ? (
-                        <button
-                          type="button"
-                          onClick={handleQuickSwitchToTarek}
-                          className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-blue-50/80 border border-black/[0.05] hover:border-blue-200 flex items-center justify-between text-xs font-bold text-[#1D1D1F] transition-all cursor-pointer"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded-full bg-blue-100 text-[#0071E3] flex items-center justify-center text-xs font-black">ط</span>
-                            <div className="text-right">
-                              <span className="block font-bold">حساب طارق</span>
-                              <span className="text-[9.5px] text-[#86868B]">كاشير ومبيعات مباشر</span>
-                            </div>
-                          </div>
-                          <ArrowLeftRight size={13} className="text-[#0071E3]" />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleSwitchToOwnerClick}
-                          className="w-full p-2.5 rounded-2xl bg-[#1D1D1F] hover:bg-black text-white border border-[#C49746]/30 flex items-center justify-between text-xs font-bold transition-all cursor-pointer shadow-apple-xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Crown size={15} className="text-[#C49746] fill-[#C49746]" />
-                            <div className="text-right">
-                              <span className="block text-amber-300 font-bold">دخول الإدارة العامة</span>
-                              <span className="text-[9.5px] text-zinc-400">رمز المرور السري</span>
-                            </div>
-                          </div>
-                          <Lock size={13} className="text-[#C49746]" />
-                        </button>
-                      )}
+                    {/* No local role switching in phase 1 */}
+                    <div className="rounded-2xl bg-emerald-50 border border-emerald-200/70 px-3 py-2.5 text-[10px] leading-relaxed text-emerald-900">
+                      <span className="block font-black">الجلسة الحالية موثّقة عبر Firebase Authentication</span>
+                      <span className="block mt-0.5">دخول الموظفين أو محاكاة دور طارق غير مفعّل في هذه المرحلة.</span>
                     </div>
 
                     {/* Quick Controls Grid */}
@@ -975,7 +794,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                         className="w-full py-2 rounded-xl text-rose-600 hover:bg-rose-50 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <LogOut size={13} />
-                        <span>إدارة المستخدمين وتسجيل الخروج</span>
+                        <span>إدارة جلسة Google وتسجيل الخروج</span>
                       </button>
                     </div>
                   </div>
@@ -1005,7 +824,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               >
                 <ShoppingBag size={15} className={currentView === View.POS ? 'text-white shrink-0' : 'text-[#0071E3] shrink-0'} strokeWidth={2} />
                 <span className="hidden xs:inline">الكاشير</span>
-                {todayReportData.todaysSalesCount > 0 && (
+                {financialDataReady && todayReportData.todaysSalesCount > 0 && (
                   <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[9.5px] font-mono font-black flex items-center justify-center ${currentView === View.POS ? 'bg-white text-[#0071E3]' : 'bg-[#0071E3] text-white shadow-2xs'}`}>
                     {todayReportData.todaysSalesCount}
                   </span>
@@ -1137,8 +956,8 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                             <Radio size={14} />
                           </div>
                           <div className="text-right">
-                            <span className="block">الأجهزة المتصلة ({connectedDevicesCount})</span>
-                            <span className="text-[9.5px] text-[#86868B]">تزامن فوري بين الشاشات</span>
+                            <span className="block">أجهزة ذات نبضة حديثة ({connectedDevicesCount === null ? 'غير مؤكّد' : connectedDevicesCount})</span>
+                            <span className="text-[9.5px] text-[#86868B]">آخر نبضة وحالة تأكيد Firestore</span>
                           </div>
                         </button>
                       )}
@@ -1147,19 +966,21 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                       {isOwner && (
                         <button
                           type="button"
+                          disabled={!financialDataReady}
                           onClick={() => {
                             setIsToolsMenuOpen(false);
                             if (onOpenDailyReportAutomation) onOpenDailyReportAutomation();
                             else setShowDailyReportModal(true);
                           }}
-                          className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                          title={financialDataReady ? 'تقرير من لقطات خادمية مؤكدة' : 'التقرير محجوب حتى تأكيد مصادر البيانات'}
+                          className="w-full px-3 py-2 rounded-2xl hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed text-[#1D1D1F] hover:text-blue-900 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
                         >
                           <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
                             <FileText size={14} />
                           </div>
                           <div className="text-right">
                             <span className="block">تصدير تقرير اليوم (.TXT)</span>
-                            <span className="text-[9.5px] text-[#86868B]">ملخص المبيعات والأرباح</span>
+                            <span className="text-[9.5px] text-[#86868B]">ملخص المبيعات والمساهمة المحسوبة</span>
                           </div>
                         </button>
                       )}
@@ -1222,11 +1043,17 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               title="فتح وإغلاق اليوم والدرج"
             >
               <Store size={13} className="text-emerald-600 shrink-0" />
-              <span className={`w-2 h-2 rounded-full shrink-0 ${currentClosure?.status === 'مفتوح' ? 'bg-[#34C759] animate-pulse' : 'bg-rose-500'}`} />
+              <span className={`w-2 h-2 rounded-full shrink-0 ${!financialDataReady ? 'bg-slate-400' : currentClosure?.status === 'مفتوح' ? 'bg-[#34C759] animate-pulse' : currentClosure?.status === 'مغلق' ? 'bg-rose-500' : 'bg-amber-500'}`} />
               <span className="truncate text-[11px] sm:text-xs">
-                {currentClosure?.status === 'مفتوح'
-                  ? 'فرع لمسة عطر الرئيسي · الوردية مفتوحة'
-                  : 'فرع لمسة عطر الرئيسي · الوردية مغلقة'}
+                {!financialDataReady
+                  ? `${storeName} · حالة الوردية غير مؤكدة`
+                  : !currentClosure
+                  ? `${storeName} · لا يوجد سجل وردية لليوم`
+                  : currentClosure.status === 'مفتوح'
+                  ? `${storeName} · سجل Firestore يؤكد فتح الوردية`
+                  : currentClosure.status === 'مغلق'
+                  ? `${storeName} · سجل Firestore يؤكد إغلاق الوردية`
+                  : `${storeName} · حالة سجل الوردية غير معروفة`}
               </span>
               <ChevronDown size={12} className="text-[#86868B] shrink-0" />
             </button>
@@ -1358,7 +1185,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
       {/* ======================================================== */}
       {/* DAILY REPORT EXPORT MODAL (.TXT)                         */}
       {/* ======================================================== */}
-      {showDailyReportModal && (
+      {showDailyReportModal && financialDataReady && (
         <div className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="apple-glass rounded-[28px] p-5 sm:p-6 w-full max-w-lg border border-black/[0.1] shadow-apple-lg space-y-4 bg-white/95 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] shrink-0">
@@ -1369,7 +1196,7 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 <div>
                   <h3 className="font-black text-sm sm:text-base text-[#1D1D1F]">تصدير تقرير الأداء اليومي المنظم</h3>
                   <span className="text-[11px] text-[#86868B]">
-                    ملخص المبيعات والمصروفات والأرباح الصافية ليوم {todayReportData.todayStr}
+                    ملخص حقول الفواتير والمصروفات المسجلة ليوم {todayReportData.todayStr} — ليس تدقيقًا محاسبيًا
                   </span>
                 </div>
               </div>
@@ -1396,20 +1223,20 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
               <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/60 text-right">
                 <span className="text-[10px] font-bold text-[#9A6E23] flex items-center gap-1">
                   <Wallet size={11} />
-                  المصروفات والتكلفة
+                  تكلفة الفواتير + مصروفات مسجلة
                 </span>
                 <span className="text-sm sm:text-base font-black font-mono text-[#1D1D1F] block mt-1">
-                  {Math.round(todayReportData.totalRawMaterialCost + todayReportData.directTodayExpenses).toLocaleString('ar-EG')} {currency}
+                  {(todayReportData.totalRawMaterialCost + todayReportData.directTodayExpenses).toLocaleString('ar-EG', { maximumFractionDigits: 2 })} {currency}
                 </span>
               </div>
 
               <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200/60 text-right">
                 <span className="text-[10px] font-bold text-[#248A3D] flex items-center gap-1">
                   <Crown size={11} />
-                  المساهمة المحققة
+                  المساهمة المحسوبة
                 </span>
                 <span className="text-sm sm:text-base font-black font-mono text-[#248A3D] block mt-1">
-                  {Math.round(todayReportData.grossOperatingProfit).toLocaleString('ar-EG')} {currency}
+                  {todayReportData.grossOperatingProfit.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} {currency}
                 </span>
               </div>
             </div>
@@ -1437,107 +1264,6 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
                 <span>تحميل ملف نصي (.TXT)</span>
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* OWNER PIN VERIFICATION KEYPAD MODAL                      */}
-      {/* ======================================================== */}
-      {showPasswordPrompt && (
-        <div className="fixed inset-0 z-[130] bg-black/50 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="apple-glass rounded-[28px] p-6 w-full max-w-sm border border-black/[0.1] shadow-apple-lg space-y-4 bg-white/95">
-            <div className="flex items-center justify-between pb-3 border-b border-black/[0.06]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-2xl bg-[#1D1D1F] text-[#C49746] flex items-center justify-center shadow-xs">
-                  <Crown size={18} className="fill-[#C49746]" />
-                </div>
-                <div>
-                  <h4 className="font-black text-sm text-[#1D1D1F]">دخول الإدارة العامة (د. محمد)</h4>
-                  <span className="text-[11px] text-[#86868B]">أدخل رمز المرور السري الخاص بالإدارة</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPasswordPrompt(false)}
-                className="w-8 h-8 rounded-full bg-black/[0.05] hover:bg-black/[0.1] flex items-center justify-center text-[#86868B] cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleVerifyOwnerPassword} className="space-y-3.5">
-              <div>
-                <div className="relative" dir="ltr" data-keep-numerals="true">
-                  <input
-                    ref={pinInputRef}
-                    type={showPinText ? 'text' : 'password'}
-                    inputMode="numeric"
-                    autoFocus
-                    value={passwordInput}
-                    onChange={(e) => handleInputChange(e.target.value)}
-                    placeholder="••••"
-                    className="w-full h-12 px-10 rounded-2xl bg-[#F5F5F7] border border-black/[0.1] focus:border-[#0071E3] focus:bg-white text-center font-mono text-xl font-black tracking-[0.35em] text-[#1D1D1F] outline-none transition-all placeholder:tracking-widest placeholder:text-gray-400"
-                  />
-                  <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#86868B] pointer-events-none" />
-                  <button
-                    type="button"
-                    onClick={() => setShowPinText(!showPinText)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#86868B] hover:text-[#1D1D1F] cursor-pointer"
-                    title={showPinText ? 'إخفاء الرمز' : 'إظهار الرمز'}
-                  >
-                    {showPinText ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-                {passwordError && (
-                  <p className="text-[11px] text-[#FF3B30] font-bold mt-1.5 text-center">{passwordError}</p>
-                )}
-              </div>
-
-              <div dir="ltr" data-keep-numerals="true" className="grid grid-cols-3 gap-2 select-none">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => {
-                  const isClear = k === 'C';
-                  const isBack = k === '⌫';
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => {
-                        if (isClear) {
-                          setPasswordInput('');
-                          setPasswordError(null);
-                        } else if (isBack) {
-                          setPasswordInput(prev => prev.slice(0, -1));
-                          setPasswordError(null);
-                        } else {
-                          handleKeypadDigit(k);
-                        }
-                      }}
-                      className={`h-11 rounded-xl font-mono font-bold text-base transition-all flex items-center justify-center cursor-pointer active:scale-95 ${
-                        isClear
-                          ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-sans font-black'
-                          : isBack
-                          ? 'bg-black/[0.05] hover:bg-black/[0.1] text-[#1D1D1F]'
-                          : 'bg-[#F5F5F7] hover:bg-black/[0.08] text-[#1D1D1F] shadow-2xs border border-black/[0.04]'
-                      }`}
-                    >
-                      {isClear ? 'مسح' : isBack ? <Delete size={17} /> : k}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="pt-1">
-                <button
-                  type="submit"
-                  disabled={isVerifying || !passwordInput.trim()}
-                  className="apple-btn w-full py-3 rounded-2xl bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-40 text-white text-xs font-black shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <CheckCircle2 size={15} />
-                  <span>{isVerifying ? 'جاري التحقق...' : 'تأكيد الدخول كإدارة عامة'}</span>
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

@@ -19,8 +19,8 @@ import {
   StaffMemberEntitlementSummary,
   isLiveProductionSale,
   isTestOrExampleRecord
-} from '../types';
-import { loadDataSync, persistDataDurable } from './persistenceService';
+} from '../types.ts';
+import { loadDataSync, persistDataDurable } from './persistenceService.ts';
 
 // Default Commission Policy
 export const DEFAULT_COMMISSION_POLICY: CommissionPolicy = {
@@ -268,6 +268,8 @@ export function calculateExactDailyCommission(
   const bottleDetails: BottleCommissionDetail[] = [];
 
   for (const sale of daySales) {
+    // Timing-uncertain sales remain visible as sales but cannot create an automatic commission entitlement.
+    if (sale.commissionTimingStatus === 'needs_owner_review') continue;
     // Exclude reversed, cancelled, or non-live production sales
     if (sale.isReversed || !isLiveProductionSale(sale)) {
       continue;

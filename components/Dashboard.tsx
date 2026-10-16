@@ -12,19 +12,18 @@ import {
   AppUser,
   CalculationBreakdown,
   CustomCustomerRecord,
-  calculateCustomerLoyaltyPoints,
   DashboardKpiCardId,
   DashboardSectionId,
   resolveDashboardLayoutConfig,
   isActualPaidOperationalExpense,
-  isLiveProductionSale,
-  isLiveProductionWithdrawal,
   getApprovedOilGramCost,
   ConnectedDeviceRecord
 } from '../types';
+import type { DashboardDataSourceHealthMap, DashboardDataSourceKey } from '../services/dashboardDataTypes';
 import { canViewProfits, canViewCosts, canViewVaults, canAccessView } from '../services/authService';
 import CalculationBreakdownModal from './CalculationBreakdownModal';
-import { getStoreSmartInsight, StoreAIInsight } from '../services/geminiService';
+import DevicePresenceRadar from './DevicePresenceRadar';
+import type { StoreAIInsight } from '../services/geminiService';
 import { 
   TrendingUp, 
   Target, 
@@ -45,6 +44,7 @@ import {
   Scale,
   Zap,
   Building,
+  Store,
   Users,
   Compass,
   ArrowRight,
@@ -72,9 +72,39 @@ import {
   ArrowDown,
   EyeOff,
   Radio,
-  Smartphone,
-  Laptop
 } from 'lucide-react';
+
+const localDateKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const recordDateKey = (value: string): string => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? localDateKey(parsed) : '';
+};
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const formatMetricNumber = (value: number): string =>
+  value.toLocaleString('ar-EG', { maximumFractionDigits: 2 });
+
+const formatConservativePercent = (value: number): string =>
+  `${(Math.floor(value * 10) / 10).toLocaleString('ar-EG', { maximumFractionDigits: 1 })}%`;
+
+const formatRecordedSaleTime = (sale: Sale): string => {
+  if (sale.isBackdated) return 'وقت البيع غير مسجل';
+  const rawTimestamp = sale.serverTimestamp || sale.timestamp || sale.date;
+  if (typeof rawTimestamp !== 'string' || !/(?:T|\s)\d{2}:\d{2}/.test(rawTimestamp)) return 'الوقت غير مسجل';
+  const parsed = new Date(rawTimestamp);
+  return Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    : 'الوقت غير مسجل';
+};
 
 interface DashboardProps {
   sales: Sale[];
@@ -87,6 +117,13 @@ interface DashboardProps {
   currentUser?: AppUser | null;
   customCustomers?: CustomCustomerRecord[];
   connectedDevices?: ConnectedDeviceRecord[];
+  deviceFeedStatus?: 'connecting' | 'live' | 'cached' | 'error';
+  deviceFeedLastServerUpdate?: number | null;
+  dataSourceHealth?: DashboardDataSourceHealthMap;
+  confirmedSettings?: Partial<StoreSettings> | null;
+  dataQualityNotes?: string[];
+  hasPendingLocalSales?: boolean;
+  isCloudConnected?: boolean;
   onOpenConnectedDevices?: () => void;
   onNavigate?: (view: View) => void;
   onOpenDayOperations?: () => void;
@@ -103,12 +140,17 @@ const Dashboard: React.FC<DashboardProps> = ({
   withdrawals = [],
   currentClosure,
   currentUser,
-  customCustomers = [],
   connectedDevices = [],
+  deviceFeedStatus = 'connecting',
+  deviceFeedLastServerUpdate = null,
+  dataSourceHealth,
+  confirmedSettings = null,
+  dataQualityNotes = [],
+  hasPendingLocalSales = false,
+  isCloudConnected = false,
   onOpenConnectedDevices,
   onNavigate,
   onOpenDayOperations,
-  onOpenLoyaltySettings,
   onUpdateSettings
 }) => {
   const [time, setTime] = useState(new Date());
@@ -119,6 +161,92 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const isOwner = !currentUser || currentUser.role === 'OWNER';
   const dashboardLayout = useMemo(() => resolveDashboardLayoutConfig(settings), [settings]);
+
+  const nonTestSales = sales.filter((sale) =>
+    !sale.isReversed && !sale.isTestData && sale.dataClassification !== 'TEST' && sale.dataClassification !== 'DOC_EXAMPLE'
+  );
+  const productionSales = nonTestSales.filter((sale) => sale.dataClassification === 'PRODUCTION');
+  const nonTestExpenses = expenses.filter((expense) =>
+    !expense.isTestData && expense.dataClassification !== 'TEST' && expense.dataClassification !== 'DOC_EXAMPLE'
+  );
+  const productionExpenses = nonTestExpenses.filter((expense) => expense.dataClassification === 'PRODUCTION');
+  const hasUnclassifiedSales = nonTestSales.some((sale) => sale.dataClassification !== 'PRODUCTION');
+  const hasUnclassifiedExpenses = nonTestExpenses.some((expense) => expense.dataClassification !== 'PRODUCTION');
+  const salesFieldsComplete = productionSales.every((sale) =>
+    isFiniteNumber(sale.totalPrice)
+    && isFiniteNumber(sale.totalCost)
+    && isFiniteNumber(sale.totalProfit)
+    && isFiniteNumber(sale.commissionAmount ?? sale.totalCommission)
+    && ['نقدي', 'بطاقة', 'محفظة إلكترونية', 'تحويل بنكي'].includes(String(sale.paymentMethod))
+    && typeof sale.date === 'string'
+    && Boolean(recordDateKey(sale.date))
+    && Array.isArray(sale.items)
+    && sale.items.every((item) =>
+      isFiniteNumber(item.quantity)
+      && item.quantity > 0
+      && isFiniteNumber(item.essenceGrams)
+      && isFiniteNumber(item.sellingPrice)
+    )
+  );
+  const expensesFieldsComplete = productionExpenses.every((expense) =>
+    isFiniteNumber(expense.amount)
+    && typeof expense.date === 'string'
+    && Boolean(recordDateKey(expense.date))
+  );
+  const productsFieldsComplete = products.every((product) =>
+    isFiniteNumber(product.stock_grams)
+    && product.stock_grams >= 0
+    && ['عادي', 'نيش', 'مسك', 'عود'].includes(String(product.type))
+  );
+  const vaultFieldsComplete = vaults.every((vault) => isFiniteNumber(vault.currentBalance));
+  const financeSettingsComplete = Boolean(confirmedSettings)
+      && typeof confirmedSettings?.currency === 'string'
+      && confirmedSettings.currency.trim().length > 0
+    && isFiniteNumber(confirmedSettings?.monthlyFixedBudget)
+    && Number(confirmedSettings?.monthlyFixedBudget) >= 0
+    && isFiniteNumber(confirmedSettings?.monthlyWorkDays)
+    && Number(confirmedSettings?.monthlyWorkDays) > 0
+    && isFiniteNumber(confirmedSettings?.dailyTargetProfit)
+    && Number(confirmedSettings?.dailyTargetProfit) > 0
+    && isFiniteNumber(confirmedSettings?.priceEssenceNormal)
+    && Number(confirmedSettings?.priceEssenceNormal) >= 0
+    && isFiniteNumber(confirmedSettings?.priceEssenceNiche)
+    && Number(confirmedSettings?.priceEssenceNiche) >= 0
+    && isFiniteNumber(confirmedSettings?.priceEssenceSpecial)
+    && Number(confirmedSettings?.priceEssenceSpecial) >= 0
+    && isFiniteNumber(confirmedSettings?.lowStockThresholdGrams)
+    && Number(confirmedSettings?.lowStockThresholdGrams) >= 0;
+  const nonTestWithdrawals = withdrawals.filter((withdrawal) =>
+    !withdrawal.isTestData && withdrawal.dataClassification !== 'TEST' && withdrawal.dataClassification !== 'DOC_EXAMPLE'
+  );
+  const hasUnclassifiedWithdrawals = nonTestWithdrawals.some((withdrawal) => withdrawal.dataClassification !== 'PRODUCTION');
+  const dashboardRequiredSources = ['sales', 'products', 'expenses', 'settings', 'vaults', 'withdrawals', 'closures'] as const;
+  const allDashboardSourcesLive = Boolean(dataSourceHealth)
+    && dashboardRequiredSources.every((key) => dataSourceHealth?.[key]?.state === 'live');
+  const dashboardDataIssues = [
+    ...dataQualityNotes,
+    ...(hasUnclassifiedSales ? ['توجد فواتير غير مصنّفة إنتاجًا؛ لن تدخل في المؤشرات.'] : []),
+    ...(hasUnclassifiedExpenses ? ['توجد مصروفات غير مصنّفة إنتاجًا؛ لن تدخل في المؤشرات.'] : []),
+    ...(!salesFieldsComplete ? ['بعض حقول الفواتير اللازمة للحساب غير متاحة.'] : []),
+    ...(!expensesFieldsComplete ? ['بعض حقول المصروفات المسجلة غير مكتملة.'] : []),
+    ...(!productsFieldsComplete ? ['بعض أرصدة المنتجات غير صالحة أو فئة العطر غير معروفة؛ لا يمكن تأكيد حساب قيمة المخزون.'] : []),
+    ...(!vaultFieldsComplete ? ['بعض أرصدة الخزائن المسجلة غير متاحة.'] : []),
+    ...(!['restock', 'owner_profit'].every((id) => vaults.some((vault) => vault.id === id)) ? ['سجلات خزائن إعادة التوريد أو رصيد المالك غير مكتملة.'] : []),
+    ...(hasUnclassifiedWithdrawals ? ['توجد سحوبات غير مصنّفة إنتاجًا؛ لن تدخل في المؤشر.'] : []),
+    ...(!financeSettingsComplete ? ['إعدادات العملة أو الميزانية أو التكلفة أو المستهدف غير مكتملة في سجل الإعدادات المؤكد.'] : []),
+    ...(hasPendingLocalSales ? ['توجد فواتير محفوظة محليًا لم يؤكد Firestore مزامنتها.'] : []),
+  ];
+  const dashboardMetricsReady = allDashboardSourcesLive
+    && financeSettingsComplete
+    && salesFieldsComplete
+    && expensesFieldsComplete
+    && productsFieldsComplete
+    && vaultFieldsComplete
+    && ['restock', 'owner_profit'].every((id) => vaults.some((vault) => vault.id === id))
+    && !hasUnclassifiedSales
+    && !hasUnclassifiedExpenses
+    && !hasUnclassifiedWithdrawals
+    && !hasPendingLocalSales;
 
   const getSectionOrderClass = (sectionId: DashboardSectionId): string => {
     const order = dashboardLayout.sections.find((s) => s.id === sectionId)?.order || 1;
@@ -207,174 +335,141 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Filter today's live production sales only (Test Data ≠ Production Data)
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const currentMonthStr = new Date().toISOString().slice(0, 7);
-
+  // Only explicit production records from the confirmed Firestore snapshots feed these calculations.
+  const todayStr = localDateKey(new Date());
+  const currentMonthStr = todayStr.slice(0, 7);
   const todaysSales = useMemo(
-    () => sales.filter((s) => s.date.startsWith(todayStr) && isLiveProductionSale(s)),
-    [sales, todayStr]
+    () => productionSales.filter((sale) => recordDateKey(sale.date) === todayStr),
+    [productionSales, todayStr]
   );
   const totalRevenue = useMemo(() => todaysSales.reduce((acc, sale) => acc + sale.totalPrice, 0), [todaysSales]);
   const totalCost = useMemo(() => todaysSales.reduce((acc, sale) => acc + sale.totalCost, 0), [todaysSales]);
 
-  // Approved Operational Rules:
-  // الموازنة الثابتة الشهرية = 15,000 جنيه | أساس التخطيط = 25 يوماً | المخصص التخطيطي اليومي = 600 جنيه
-  const fixedMonthlyBudget = settings.monthlyFixedBudget || 15000;
-  const workDays = settings.monthlyWorkDays || 25;
-  const dailyOperatingCost = fixedMonthlyBudget / workDays; // 600 EGP per day (المخصص التخطيطي اليومي - ليس مصروفاً نقدياً يومياً)
+  const fixedMonthlyBudget = Number(confirmedSettings?.monthlyFixedBudget ?? 0);
+  const workDays = Number(confirmedSettings?.monthlyWorkDays ?? 0);
 
-  // المساهمة = صافي المبيعات ← تكلفة المنتجات المباعة ← العمولة المتغيرة (المساهمة لا تعني الربح)
+  // Commission values are read from each recorded sale; no percentage is invented when absent.
   const todaysCommission = useMemo(() => {
-    return todaysSales.reduce(
-      (acc, sale) => acc + (sale.commissionAmount ?? Math.round((sale.totalPrice || 0) * 0.05)),
-      0
-    );
+    return todaysSales.reduce((acc, sale) => acc + Number(sale.commissionAmount ?? sale.totalCommission), 0);
   }, [todaysSales]);
 
   const netContributionToday = totalRevenue - totalCost - todaysCommission;
-  const grossProfit = netContributionToday;
-  // نتيجة التشغيل وفق الموازنة = المساهمة ← المخصص الثابت للفترة (تظهر فقط عند وجود بيانات مبيعات فعلية مسجلة)
-  const netProfitAfterDailyExpenses = todaysSales.length > 0 ? netContributionToday - dailyOperatingCost : 0;
+  const dailyBudgetShare = workDays > 0 ? fixedMonthlyBudget / workDays : null;
+  const contributionAfterDailyBudgetShare = dailyBudgetShare === null
+    ? null
+    : netContributionToday - dailyBudgetShare;
 
-  // Operational Targets:
-  // الهدف الأولي للمساهمة اليومية = 600 جنيه
-  // الهدف التطويري = 1,000 جنيه
-  const targetPhase1 = 600;
-  const targetPhase2 = 1000;
-
+  // The sole daily target is the value explicitly stored in the confirmed settings document.
+  const targetPhase1 = Number(confirmedSettings?.dailyTargetProfit ?? 0);
   const isBreakEvenCovered = todaysSales.length > 0 && netContributionToday >= targetPhase1;
-  const isTargetAchieved = todaysSales.length > 0 && netContributionToday >= targetPhase2;
-  const progressPhase1 = todaysSales.length > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase1) * 100), 100) : 0;
-  const progressPhase2 = todaysSales.length > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase2) * 100), 100) : 0;
+  const isTargetAchieved = isBreakEvenCovered;
+  const progressPhase1 = targetPhase1 > 0 ? Math.min(Math.max(0, (netContributionToday / targetPhase1) * 100), 100) : 0;
 
-  // Remaining money to initial contribution target (correctly reflects 600 EGP when 0 sales or remaining gap)
   const remainingToBreakEven = Math.max(0, targetPhase1 - netContributionToday);
-  const hasRealProfit = todaysSales.length > 0 && netContributionToday >= targetPhase1;
+  const hasPositiveContribution = todaysSales.length > 0 && netContributionToday > 0;
 
   // Essence consumed today
   const todaysEssenceGrams = useMemo(() => {
     return todaysSales.reduce((sum, s) => {
-      return sum + s.items.reduce((itemSum, item) => itemSum + item.essenceGrams, 0);
+      return sum + s.items.reduce((itemSum, item) => itemSum + item.essenceGrams * item.quantity, 0);
     }, 0);
   }, [todaysSales]);
 
   // Today's total bottles count & average bill
   const todaysBottlesCount = useMemo(() => {
     return todaysSales.reduce((sum, s) => {
-      return sum + s.items.reduce((itemSum, it) => itemSum + (it.quantity || 1), 0);
+      return sum + s.items.reduce((itemSum, it) => itemSum + Number(it.quantity), 0);
     }, 0);
   }, [todaysSales]);
 
-  const averageBill = useMemo(() => {
-    if (todaysSales.length === 0) return 0;
-    return Math.round(totalRevenue / todaysSales.length);
+  const averageBill = useMemo<number | null>(() => {
+    if (todaysSales.length === 0) return null;
+    return totalRevenue / todaysSales.length;
   }, [totalRevenue, todaysSales.length]);
 
-  // Monthly aggregated metrics (§6: المساهمة الشهرية = صافي المبيعات ← تكلفة المنتجات المباعة ← العمولة المتغيرة)
+  // Monthly aggregates use the same explicit production classification as the daily report.
   const monthSales = useMemo(
-    () => sales.filter((s) => s.date.startsWith(currentMonthStr) && isLiveProductionSale(s)),
-    [sales, currentMonthStr]
+    () => productionSales.filter((sale) => recordDateKey(sale.date).startsWith(currentMonthStr)),
+    [productionSales, currentMonthStr]
   );
   const monthRevenue = useMemo(() => monthSales.reduce((acc, s) => acc + s.totalPrice, 0), [monthSales]);
   const monthCost = useMemo(() => monthSales.reduce((acc, s) => acc + s.totalCost, 0), [monthSales]);
   const monthCommissions = useMemo(() => {
-    return monthSales.reduce(
-      (acc, s) => acc + (s.commissionAmount ?? Math.round((s.totalPrice || 0) * 0.05)),
-      0
-    );
+    return monthSales.reduce((acc, sale) => acc + Number(sale.commissionAmount ?? sale.totalCommission), 0);
   }, [monthSales]);
   const monthNetContribution = useMemo(() => {
     return monthRevenue - monthCost - monthCommissions;
   }, [monthRevenue, monthCost, monthCommissions]);
 
-  const monthTargetContribution = workDays * targetPhase2; // 25 * 1000 = 25,000 EGP
-  const monthTargetBreakEven = fixedMonthlyBudget; // 15,000 EGP
+  const monthTargetContribution = workDays * targetPhase1;
 
-  // Monthly Budget 15,000 metrics (only actual paid expenses, excluding planned monthly budget allocations and test data)
+  // This is the sum of explicitly classified, recorded operational expenses; it is not proof of payment.
   const monthExpenses = useMemo(
-    () => expenses.filter((e) => e.date.startsWith(currentMonthStr) && isActualPaidOperationalExpense(e)),
-    [expenses, currentMonthStr]
+    () => productionExpenses.filter((expense) =>
+      recordDateKey(expense.date).startsWith(currentMonthStr) && isActualPaidOperationalExpense(expense)
+    ),
+    [productionExpenses, currentMonthStr]
   );
-  const budgetActuallyPaid = useMemo(() => monthExpenses.reduce((acc, e) => acc + e.amount, 0), [monthExpenses]);
-  const budgetAllocatedSoFar = monthSales.length > 0 ? Math.min(fixedMonthlyBudget, Math.max(0, monthNetContribution)) : 0;
-  const budgetRemaining = Math.max(0, fixedMonthlyBudget - budgetActuallyPaid);
+  const monthRecordedExpensesTotal = useMemo(() => monthExpenses.reduce((acc, e) => acc + e.amount, 0), [monthExpenses]);
+  const budgetContributionCoverage = monthSales.length > 0 ? Math.min(fixedMonthlyBudget, Math.max(0, monthNetContribution)) : 0;
+  const budgetRemainingAfterRecordedExpenses = fixedMonthlyBudget - monthRecordedExpensesTotal;
 
-  // Accumulated Deficit to date — computed strictly from actual recorded operational days in the month (no default/example figures)
+  // Gap against the target on dates that have recorded production sales (not a full workday deficit).
   const activeOperationalDaysCount = useMemo(() => {
-    return new Set(monthSales.map((s) => s.date.slice(0, 10))).size;
+    return new Set(monthSales.map((sale) => recordDateKey(sale.date))).size;
   }, [monthSales]);
   const elapsedWorkDays = Math.min(workDays, activeOperationalDaysCount);
   const requiredTargetToDate = elapsedWorkDays * targetPhase1;
   const accumulatedDeficit = monthSales.length > 0 ? Math.max(0, requiredTargetToDate - monthNetContribution) : 0;
 
-  // Reserved Stock Cost (Restock Vault + Raw Inventory value)
-  const restockVaultBalance = vaults.find(v => v.id === 'restock')?.currentBalance || 0;
+  // Book value from confirmed system balances; it is not a physical stocktake.
+  const restockVaultBalance = vaults.find((vault) => vault.id === 'restock')?.currentBalance ?? 0;
   const rawStockValue = useMemo(() => {
     return products.reduce((sum, p) => {
-      const rate = getApprovedOilGramCost(p.type, settings);
+      const rate = getApprovedOilGramCost(p.type, confirmedSettings || {});
       return sum + (p.stock_grams * rate);
     }, 0);
-  }, [products, settings]);
+  }, [products, confirmedSettings]);
   const totalReservedStockCost = restockVaultBalance + rawStockValue;
-
-  // Accrued Commissions & Expenses
-  const accruedCommissions = vaults.find(v => v.id === 'commissions')?.currentBalance || 0;
-  const accruedExpenses = budgetRemaining;
 
   // Cash in Drawer vs Electronic
   const todaysCashSales = useMemo(() => {
     return todaysSales
-      .filter(s => !s.paymentMethod || s.paymentMethod === 'نقدي')
+      .filter(s => s.paymentMethod === 'نقدي')
       .reduce((sum, s) => sum + s.totalPrice, 0);
   }, [todaysSales]);
 
   const todaysElectronicSales = useMemo(() => {
     return todaysSales
-      .filter(s => s.paymentMethod && s.paymentMethod !== 'نقدي')
+      .filter(s => s.paymentMethod === 'بطاقة' || s.paymentMethod === 'محفظة إلكترونية' || s.paymentMethod === 'تحويل بنكي')
       .reduce((sum, s) => sum + s.totalPrice, 0);
   }, [todaysSales]);
 
-  // Strictly actual opening cash balance + actual cash sales - actual cash expenses (NO default 200 EGP from examples!)
-  const todaysCashExpensesPaid = useMemo(() => {
-    return expenses
-      .filter((e) => e.date === todayStr && isActualPaidOperationalExpense(e))
-      .reduce((sum, e) => sum + e.amount, 0);
-  }, [expenses, todayStr]);
+  // Cash in drawer is shown only when a physical count was explicitly recorded in today's confirmed closure.
+  const actualCashInDrawer = isFiniteNumber(currentClosure?.actualCashInDrawer)
+    ? currentClosure.actualCashInDrawer
+    : undefined;
 
-  const actualCashInDrawer =
-    currentClosure?.actualCashInDrawer ??
-    Math.max(0, (currentClosure?.openingCashBalance ?? 0) + todaysCashSales - todaysCashExpensesPaid);
-
-  // Distributable Profit (الحد الآمن القابل للتوزيع للمالك — يظهر فقط من البيانات الفعلية المسجلة)
+  // Only a recorded owner-profit vault balance is a distributable balance; no modeled fallback.
   const ownerProfitVault = vaults.find((v) => v.id === 'owner_profit');
-  const distributableProfit =
-    ownerProfitVault?.currentBalance !== undefined && ownerProfitVault.currentBalance > 0
-      ? ownerProfitVault.currentBalance
-      : monthSales.length > 0
-      ? Math.max(0, monthNetContribution - fixedMonthlyBudget)
-      : 0;
+  const distributableProfit = ownerProfitVault?.currentBalance ?? 0;
 
-  // Total Withdrawals (actual live production withdrawals only)
-  const totalWithdrawals = useMemo(() => {
-    return withdrawals
-      .filter((w) => isLiveProductionWithdrawal(w) && w.type !== 'capital_deposit')
-      .reduce((sum, w) => sum + w.amount, 0);
-  }, [withdrawals]);
-
-  const lowStock = useMemo(() => products.filter((p) => p.stock_grams < 100), [products]);
+  const stockAlertThreshold = Number(confirmedSettings?.lowStockThresholdGrams);
+  const lowStock = useMemo(() => products.filter((p) => p.stock_grams < stockAlertThreshold), [products, stockAlertThreshold]);
 
   // Active Warnings & Alerts List
   const activeAlerts = useMemo(() => {
     const list: { title: string; type: 'danger' | 'warning' | 'info'; actionView?: View }[] = [];
     if (lowStock.length > 0) {
-      list.push({ title: `${lowStock.length} عطور أوشكت على النفاد وتحتاج طلب شراء`, type: 'danger', actionView: View.INVENTORY });
+      list.push({ title: `${lowStock.length} سجل منتج دون عتبة المخزون المسجلة (${stockAlertThreshold} جم).`, type: 'warning', actionView: View.INVENTORY });
     }
     if (accumulatedDeficit > 0) {
-      list.push({ title: `يوجد عجز تراكمي بقيمة ${accumulatedDeficit.toFixed(0)} ج.م عن تارجت الشهر`, type: 'warning', actionView: View.OPERATIONS_SYSTEM });
+      list.push({ title: `فجوة حسابية عن مستهدف المساهمة التراكمي: ${accumulatedDeficit.toLocaleString('ar-EG')} ${confirmedSettings?.currency}.`, type: 'warning', actionView: View.OPERATIONS_SYSTEM });
     }
-    if (!currentClosure || currentClosure.status === 'مغلق') {
-      list.push({ title: 'يوم التشغيل مغلق حالياً - يجب فتح الوردية لبدء المبيعات', type: 'info' });
+    if (!currentClosure) {
+      list.push({ title: 'لا يوجد سجل إغلاق/وردية مؤكد لليوم في Firestore.', type: 'info' });
+    } else if (currentClosure.status === 'مغلق') {
+      list.push({ title: 'سجل Firestore المؤكد يصف وردية اليوم بأنها مغلقة.', type: 'info' });
     }
     return list;
   }, [lowStock.length, accumulatedDeficit, currentClosure]);
@@ -382,16 +477,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Transparent calculation breakdown modal openers
   const openDistributableProfitBreakdown = () => {
     setCalculationModal({
-      title: 'الربح القابل للتوزيع للمالك',
-      description: 'صافي الفائض المالي الحر بعد تغطية تكلفة المنتجات، العمولات، وموازنة الـ 15,000 ج.م.',
-      finalValue: Math.max(0, distributableProfit),
-      unit: settings.currency,
+      title: 'رصيد خزينة المالك المسجل',
+      description: 'رصيد دفتر الخزائن كما ورد من Firestore؛ ليس تدقيقًا لصافي الربح أو مبلغًا معتمدًا للتوزيع.',
+      finalValue: distributableProfit,
+      unit: confirmedSettings?.currency || '—',
       steps: [
-        { label: 'إجمالي مبيعات الشهر', formula: 'المبيعات المعتمدة', value: monthRevenue, sign: '+' },
-        { label: 'تكلفة خامات البضاعة المباعة', formula: 'استرداد رأس مال الزيوت والزجاجات', value: -monthCost, sign: '-' },
-        { label: 'عمولات المبيعات (5%)', formula: 'العمولات المستحقة لطاقم العمل', value: -monthCommissions, sign: '-' },
-        { label: 'الموازنة التشغيلية الثابتة', formula: 'الإيجار والرواتب والفواتير والهالك (15,000 ج)', value: -fixedMonthlyBudget, sign: '-' },
-        { label: 'الربح الصافي القابل للتوزيع', formula: 'المتاح للمالك للسحب أو الاستثمار', value: Math.max(0, distributableProfit), sign: '=' }
+        { label: 'رصيد خزينة المالك', formula: 'currentBalance كما ورد من سجل الخزينة المؤكد', value: distributableProfit, sign: '=' }
       ]
     });
   };
@@ -399,80 +490,99 @@ const Dashboard: React.FC<DashboardProps> = ({
   const openNetContributionBreakdown = () => {
     setCalculationModal({
       title: 'المساهمة الصافية لليوم',
-      description: 'إيراد المبيعات بعد استبعاد تكلفة الزيوت والزجاجات وعمولة البائع.',
+      description: 'حساب مشتق من السعر والتكلفة والعمولة المسجلة في فواتير الإنتاج المؤكدة؛ لا يمثل تدقيقًا محاسبيًا.',
       finalValue: netContributionToday,
-      unit: settings.currency,
+      unit: confirmedSettings?.currency || '—',
       steps: [
         { label: 'مبيعات اليوم', formula: `${todaysSales.length} فاتورة مسجلة`, value: totalRevenue, sign: '+' },
-        { label: 'تكلفة خامات العبوات المباعة', formula: `${todaysEssenceGrams} جم زيت + زجاجات`, value: -totalCost, sign: '-' },
-        { label: 'عمولة البائع المستحقة (5%)', formula: '5% على العطور البخاخ (الرول 0%)', value: -todaysCommission, sign: '-' },
-        { label: 'المساهمة الصافية الحالية', formula: 'المبلغ الموجه لتغطية الـ 600ج ثم الأرباح', value: netContributionToday, sign: '=' }
+        { label: 'التكلفة المسجلة على الفواتير', formula: 'totalCost من سجلات الإنتاج', value: -totalCost, sign: '-' },
+        { label: 'عمولات اليوم المسجلة على الفواتير', formula: 'حقول العمولات المحفوظة', value: -todaysCommission, sign: '-' },
+        { label: 'المساهمة المحسوبة من حقول الفواتير', formula: 'الإيراد − التكلفة − العمولات المسجلة', value: netContributionToday, sign: '=' }
+      ]
+    });
+  };
+
+  const openDailyBudgetShareBreakdown = () => {
+    if (dailyBudgetShare === null || contributionAfterDailyBudgetShare === null) return;
+    setCalculationModal({
+      title: 'نتيجة حسابية بعد حصة الموازنة اليومية',
+      description: 'عملية طرح من بيانات مؤكدة؛ لا تمثل صافي ربح أو خسارة فعلية ولا مصروفًا يوميًا مدفوعًا.',
+      finalValue: contributionAfterDailyBudgetShare,
+      unit: confirmedSettings?.currency || '—',
+      steps: [
+        { label: 'المساهمة المحسوبة من فواتير اليوم', formula: 'الإيراد − التكلفة − العمولات المسجلة', value: netContributionToday, sign: '+' },
+        { label: 'حصة الموازنة اليومية المحسوبة', formula: 'الموازنة الشهرية المسجلة ÷ أيام العمل المسجلة', value: -dailyBudgetShare, sign: '-' },
+        { label: 'النتيجة الحسابية', formula: 'لا تثبت صافي ربح أو مصروفًا نقديًا', value: contributionAfterDailyBudgetShare, sign: '=' }
       ]
     });
   };
 
   const openBudgetBreakdown = () => {
     setCalculationModal({
-      title: 'موازنة الـ 15,000 ج.م المعتمدة',
-      description: 'توزيع المصاريف الثابتة على 25 يوم عمل = 600 ج.م/يوم لنقطة التعادل.',
+      title: 'الموازنة الشهرية المحفوظة',
+      description: 'قيم الميزانية وأيام العمل والهدف كما وردت في إعدادات Firestore المؤكدة.',
       finalValue: fixedMonthlyBudget,
-      unit: settings.currency,
+      unit: confirmedSettings?.currency || '—',
       steps: [
-        { label: 'مخصص الإيجار الشهري', formula: 'إيجار المحل المعتمد', value: 1200, sign: '+' },
-        { label: 'مخصص الإدارة والتشغيل المعتمد', formula: 'مخصصات الإدارة والتشغيل الشهرية المحمية بالنظام', value: 11500, sign: '+' },
-        { label: 'فواتير ومرافق ونظافة ونقل', formula: 'كهرباء 800 + نت 300 + تشغيل 600 + مرافق 300', value: 2000, sign: '+' },
-        { label: 'احتياطي الهالك والتالف والفاقد', formula: 'مخصص أمان شهري', value: 300, sign: '+' },
-        { label: 'إجمالي الموازنة الشهرية', formula: 'نقطة التعادل (25 يوم × 600 ج)', value: 15000, sign: '=' }
+        { label: 'إجمالي الموازنة الشهرية', formula: 'monthlyFixedBudget من إعدادات Firestore', value: fixedMonthlyBudget, sign: '=' },
+        { label: 'أيام العمل الشهرية المسجلة', formula: 'monthlyWorkDays من إعدادات Firestore', value: workDays, sign: '=' },
+        { label: 'المستهدف اليومي المسجل', formula: 'dailyTargetProfit من إعدادات Firestore', value: targetPhase1, sign: '=' }
       ]
     });
   };
 
   const openDeficitBreakdown = () => {
     setCalculationModal({
-      title: 'العجز المتراكم حتى اليوم',
-      description: 'الفارق بين المستهدف التراكمي المطلوب حتى تاريخ اليوم وبين المساهمة المحققة فعلياً.',
+      title: 'فجوة مستهدف المساهمة حتى اليوم',
+      description: 'فارق حسابي بين أيام لها فواتير إنتاج مسجلة × المستهدف اليومي المحفوظ، وبين المساهمة المحسوبة من سجلات الشهر؛ لا يثبت خسارة محاسبية.',
       finalValue: accumulatedDeficit,
-      unit: settings.currency,
+      unit: confirmedSettings?.currency || '—',
       steps: [
-        { label: 'المستهدف التراكمي المطلوب', formula: `${elapsedWorkDays} أيام عمل × 600 ج.م`, value: requiredTargetToDate, sign: '+' },
-        { label: 'المساهمة الصافية المحققة فعلياً', formula: 'مجموع المساهمة لجميع مبيعات الشهر', value: -monthNetContribution, sign: '-' },
-        { label: 'العجز المتراكم المطلوب تعويضه', formula: 'فارق المساهمة الواجب تغطيته بالأيام القادمة', value: accumulatedDeficit, sign: '=' }
+        { label: 'المستهدف التراكمي المحسوب', formula: `${elapsedWorkDays} أيام لها فواتير إنتاج × المستهدف اليومي المسجل`, value: requiredTargetToDate, sign: '+' },
+        { label: 'المساهمة المحسوبة من سجلات الشهر', formula: 'إيراد − تكلفة − عمولات مسجلة', value: -monthNetContribution, sign: '-' },
+        { label: 'فجوة المستهدف التراكمي المحسوبة', formula: 'لا تمثل عجزًا نقديًا أو خسارة محاسبية', value: accumulatedDeficit, sign: '=' }
       ]
     });
   };
 
   const openReservedStockBreakdown = () => {
     setCalculationModal({
-      title: 'تكلفة المخزون ورأس المال المحجوز',
-      description: 'رصيد قسم استرداد المخزون مضافاً إليه القيمة الدفترية للزيوت الخام بالمحل.',
+      title: 'القيمة الدفترية للمخزون المسجل',
+      description: 'رصيد محفظة إعادة التوريد المسجل مضافًا إلى تقدير تكلفة الرصيد المخزني المسجل؛ ليس جردًا ميدانيًا.',
       finalValue: totalReservedStockCost,
-      unit: settings.currency,
+      unit: confirmedSettings?.currency || '—',
       steps: [
-        { label: 'رصيد محفظة إعادة شراء المخزون', formula: 'أموال بضاعة تم بيعها ومحجوزة للشراء', value: restockVaultBalance, sign: '+' },
-        { label: 'قيمة الزيوت الخام المتوفرة بالرفوف', formula: 'جرامات المخزون الفعلي بسعر التكلفة', value: rawStockValue, sign: '+' },
-        { label: 'إجمالي رأس مال المخزون المحفوظ', formula: 'أموال مخصصة للمخزون ليست أرباحاً', value: totalReservedStockCost, sign: '=' }
+        { label: 'رصيد محفظة إعادة التوريد', formula: 'currentBalance من سجل الخزينة', value: restockVaultBalance, sign: '+' },
+        { label: 'تكلفة المخزون بحسب السجلات', formula: 'جرامات مسجلة × تكلفة الجرام المحفوظة', value: rawStockValue, sign: '+' },
+        { label: 'المجموع الدفتري المحسوب', formula: 'لا يثبت كمية فعلية على الرف', value: totalReservedStockCost, sign: '=' }
       ]
     });
   };
 
   const openCashBreakdown = () => {
     setCalculationModal({
-      title: 'توزيع النقدية والمدفوعات الإلكترونية',
-      description: 'مطابقة السيولة النقدية في الدرج ومبيعات المحافظ الإلكترونية والبطاقات البنكية.',
+      title: 'مبيعات اليوم حسب طريقة الدفع المسجلة',
+      description: 'هذه مجموعات من الفواتير ولا تطابق جرد الدرج المسجل في إغلاق اليوم.',
       finalValue: totalRevenue,
-      unit: settings.currency,
+      unit: confirmedSettings?.currency || '—',
       steps: [
-        { label: 'النقدية المحصلة بالدرج (كاش)', formula: 'المبيعات النقدية المقبوضة فعلياً', value: todaysCashSales, sign: '+' },
-        { label: 'مدفوعات إلكترونية / بطاقات', formula: 'محافظ إلكترونية وتحويلات بنكية', value: todaysElectronicSales, sign: '+' },
-        { label: 'إجمالي مبيعات اليوم', formula: 'مجموع كافة طرق الدفع', value: totalRevenue, sign: '=' }
+        { label: 'فواتير مصنفة نقدًا', formula: 'paymentMethod = نقدي', value: todaysCashSales, sign: '+' },
+        { label: 'فواتير إلكترونية/بطاقة/تحويل', formula: 'طرق الدفع المسجلة في الفاتورة', value: todaysElectronicSales, sign: '+' },
+        { label: 'إجمالي مبيعات اليوم', formula: 'مجموع طرق الدفع المسجلة في الفواتير', value: totalRevenue, sign: '=' }
       ]
     });
   };
 
-  // Average bottles needed to cover remaining daily expense based on approved bottle mix (avg ~42 EGP net contribution)
-  const averageNetContributionPerBottle = 42;
-  const bottlesRemainingToBreakEven = Math.max(0, Math.ceil((targetPhase1 - netContributionToday) / averageNetContributionPerBottle));
-  const bottlesRemainingToFullTarget = Math.max(0, Math.ceil((targetPhase2 - netContributionToday) / averageNetContributionPerBottle));
+  const openCashDrawerBreakdown = () => {
+    if (actualCashInDrawer === undefined) return;
+    setCalculationModal({
+      title: 'جرد درج اليوم المسجل',
+      description: 'القيمة كما وردت في سجل إغلاق اليوم المؤكد؛ لا تُجمع مع مبيعات الفواتير ولا تثبت مطابقتها لها.',
+      finalValue: actualCashInDrawer,
+      unit: confirmedSettings?.currency || '—',
+      steps: [{ label: 'actualCashInDrawer', formula: 'القيمة المسجلة في سجل الإغلاق', value: actualCashInDrawer, sign: '=' }]
+    });
+  };
 
   // Date and Time details in Arabic
   const arabicDayName = useMemo(() => {
@@ -503,139 +613,135 @@ const Dashboard: React.FC<DashboardProps> = ({
       return {
         salute: 'صباح الخير والبركة ☀️',
         periodText: 'فترة الصباح والافتتاح',
-        subtext: 'بداية نشاط يوم جديد؛ وقت التجهيز والتعطير وإطلاق مبيعات الصباح.'
+        subtext: 'تذكير عام: يمكن مراجعة الفواتير المسجلة قبل اتخاذ قرار تشغيلي.'
       };
     } else if (hours >= 12 && hours < 17) {
       return {
         salute: 'طاب يومك بكل خير ⛅',
         periodText: 'فترة الظهيرة وما بعد الظهر',
-        subtext: 'ذروة حركة النهار؛ وقت التركيز على العطور العملية والرشوش الهادئة.'
+        subtext: 'تذكير عام: يمكن مراجعة بيانات الفواتير المسجلة قبل اتخاذ قرار تشغيلي.'
       };
     } else if (hours >= 17 && hours < 22) {
       return {
         salute: 'مساء العطور الفاخرة والأنوار 🌙',
-        periodText: 'فترة المساء والذروة البيعية',
-        subtext: 'أفضل أوقات البيع وتحقيق التارجت؛ قدم العطور الشرقية والنيش ذات الهامش الأعلى.'
+        periodText: 'فترة المساء',
+        subtext: 'تذكير عام: راجع المخزون والفواتير المؤكدة قبل التخطيط للمبيعات.'
       };
     } else {
       return {
         salute: 'أهلاً بك في لمسة عطر ✨',
         periodText: 'الفترة الليلية الهادئة',
-        subtext: 'مراجعة ختام اليوم وتأكيد إغلاق الصناديق وتسليم الوردية.'
+        subtext: 'تذكير عام: تأكد من تسجيل البيانات اللازمة قبل إغلاق الوردية.'
       };
     }
   }, [time]);
 
   // Trigger AI Smart Insight
   const refreshAiAdvisor = async () => {
+    if (!dashboardMetricsReady) {
+      setAiInsight(null);
+      return;
+    }
     setLoadingAi(true);
     try {
-      const insight = await getStoreSmartInsight({
-        todaySalesCount: todaysSales.length,
-        todayRevenue: totalRevenue,
-        netContribution: netContributionToday,
-        targetBreakEven: targetPhase1,
-        targetFull: targetPhase2,
-        lowStockCount: lowStock.length,
-        dayName: arabicDayName,
-        timeOfDay: dynamicGreeting.periodText
-      });
-      setAiInsight(insight);
-    } catch (e) {
-      console.error(e);
+      const remaining = Math.max(0, targetPhase1 - netContributionToday);
+      setAiInsight(todaysSales.length === 0
+        ? {
+            statusTitle: 'لا توجد فواتير إنتاج لليوم في لقطة الخادم المؤكدة.',
+            statusBadge: 'لا توجد مبيعات مسجلة',
+            alertType: 'warning',
+            mainMessage: 'لا يمكن تقييم المساهمة اليومية أو توقع مبيعات مستقبلية دون فواتير إنتاج مؤكدة.',
+            actionAdvice: [],
+            tacticalPrompt: 'لا تعرض هذه اللوحة تقديرًا لعدد العبوات اللازمة؛ هامش كل منتج يختلف.',
+          }
+        : netContributionToday < targetPhase1
+        ? {
+            statusTitle: 'المساهمة المسجلة أقل من المستهدف اليومي المحفوظ.',
+            statusBadge: 'دون المستهدف المسجل',
+            alertType: 'warning',
+            mainMessage: `المساهمة المحسوبة من الفواتير المؤكدة ${netContributionToday.toLocaleString('ar-EG')} ${confirmedSettings?.currency}; المتبقي حسابيًا للوصول إلى المستهدف المحفوظ ${remaining.toLocaleString('ar-EG')} ${confirmedSettings?.currency}. هذه ليست نتيجة تدقيق محاسبي.`,
+            actionAdvice: [],
+            tacticalPrompt: 'لا يمكن استنتاج عدد مبيعات إضافية أو أرباح مستقبلية من البيانات الحالية.',
+          }
+        : {
+            statusTitle: 'المساهمة المحسوبة بلغت المستهدف اليومي المحفوظ.',
+            statusBadge: 'بلغ المستهدف المسجل',
+            alertType: 'success',
+            mainMessage: `المساهمة المحسوبة من الفواتير المؤكدة ${netContributionToday.toLocaleString('ar-EG')} ${confirmedSettings?.currency}، والمستهدف المحفوظ ${targetPhase1.toLocaleString('ar-EG')} ${confirmedSettings?.currency}. لا يعني ذلك تدقيقًا لصافي الربح أو رصيد النقدية.`,
+            actionAdvice: [],
+            tacticalPrompt: 'هذا ملخص حسابي للسجلات المؤكدة وليس توقعًا للأداء المستقبلي.',
+          });
     } finally {
       setLoadingAi(false);
     }
   };
 
   useEffect(() => {
-    refreshAiAdvisor();
-  }, [todaysSales.length, totalRevenue]);
-
-  // Live Loyalty & Profit-Guard Summary for Main Dashboard
-  const loyaltyDashboardSummary = useMemo(() => {
-    const customerMap = new Map<string, { orders: number; spent: number; bonus: number; redeemed: number }>();
-    customCustomers.forEach(c => {
-      const k = (c.phone || '').replace(/\s+/g, '') || c.name.trim().toLowerCase();
-      if (k) {
-        customerMap.set(k, {
-          orders: 0,
-          spent: 0,
-          bonus: Number(c.bonusPoints) || 0,
-          redeemed: Number(c.redeemedPoints) || 0,
-        });
-      }
-    });
-
-    sales.filter(s => !s.isReversed).forEach(s => {
-      const phone = (s.customerPhone || '').replace(/\s+/g, '');
-      const name = (s.customerName || '').trim();
-      if (!phone && (!name || name === 'عميل نقدي')) return;
-      const k = phone || name.toLowerCase();
-      const existing = customerMap.get(k) || { orders: 0, spent: 0, bonus: 0, redeemed: 0 };
-      existing.orders += 1;
-      existing.spent += Number(s.totalPrice) || 0;
-      customerMap.set(k, existing);
-    });
-
-    let totalActivePoints = 0;
-    let totalPointsCashValue = 0;
-    customerMap.forEach(val => {
-      const calc = calculateCustomerLoyaltyPoints({
-        ordersCount: val.orders,
-        totalSpent: val.spent,
-        bonusPoints: val.bonus,
-        redeemedPoints: val.redeemed,
-        settings,
-      });
-      totalActivePoints += calc.netAvailablePoints || 0;
-      totalPointsCashValue += calc.pointsCashValue || 0;
-    });
-
-    const loyaltyEnabled = settings.loyaltyEnabled !== false;
-    const loyaltyAutoAI = settings.loyaltyAutoAI !== false;
-    const loyaltyProtectBreakEven = settings.loyaltyProtectBreakEven !== false;
-    const baseMaxDiscountPct = settings.loyaltyMaxBillDiscountPercent || 15;
-    const effectiveMaxDiscountPct =
-      loyaltyProtectBreakEven && !hasRealProfit
-        ? Math.min(8, baseMaxDiscountPct)
-        : loyaltyAutoAI && isTargetAchieved
-        ? Math.min(20, baseMaxDiscountPct + 3)
-        : baseMaxDiscountPct;
-
-    return {
-      registeredCustomersCount: customerMap.size,
-      totalActivePoints,
-      totalPointsCashValue,
-      loyaltyEnabled,
-      loyaltyAutoAI,
-      loyaltyProtectBreakEven,
-      effectiveMaxDiscountPct,
-      earnStepEgp: settings.loyaltyEarnStepEgp || 10,
-      cashPerPointEgp: settings.loyaltyCashPerPointEgp || 0.6,
-      minSafeMarginEgp: settings.loyaltyMinSafeMarginEgp ?? 25,
-    };
-  }, [customCustomers, sales, settings, hasRealProfit, isTargetAchieved]);
-
-  const handleQuickToggleLoyalty = () => {
-    if (!onUpdateSettings) return;
-    onUpdateSettings({
-      ...settings,
-      loyaltyEnabled: settings.loyaltyEnabled === false ? true : false,
-    });
-  };
-
-  const handleQuickToggleAutoAI = () => {
-    if (!onUpdateSettings) return;
-    onUpdateSettings({
-      ...settings,
-      loyaltyAutoAI: settings.loyaltyAutoAI === false ? true : false,
-    });
-  };
+    void refreshAiAdvisor();
+  }, [dashboardMetricsReady, todaysSales.length, totalRevenue, netContributionToday, targetPhase1, confirmedSettings?.currency]);
 
   return (
     <div className="px-3 sm:px-5 lg:px-6 pt-1 max-w-[1480px] mx-auto flex flex-col gap-4 pb-14 animate-in fade-in duration-200">
-      
+      {!dashboardMetricsReady ? (
+        <>
+          {isOwner && (
+            <DevicePresenceRadar
+              devices={connectedDevices}
+              feedStatus={deviceFeedStatus}
+              lastServerUpdate={deviceFeedLastServerUpdate}
+              isCloudConnected={isCloudConnected}
+              onOpen={onOpenConnectedDevices}
+            />
+          )}
+          <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:p-5 text-slate-800">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="text-amber-700 mt-0.5 shrink-0" size={20} />
+              <div className="min-w-0">
+                <h2 className="font-black text-base">مؤشرات لوحة التحكم محجوبة حتى اكتمال التحقق</h2>
+                <p className="mt-1 text-sm leading-6">
+                  لا نعرض أرقامًا محلية أو مخبأة على أنها مؤكدة. تُعرض المؤشرات فقط بعد تأكيد الخادم لجميع المصادر المطلوبة واكتمال الحقول الأساسية.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {(Object.entries(dataSourceHealth || {}) as [DashboardDataSourceKey, DashboardDataSourceHealthMap[DashboardDataSourceKey]][]).map(([key, source]) => {
+                const stateText: Record<string, string> = {
+                  connecting: 'جارٍ التحقق',
+                  live: 'لقطة خادمية مؤكدة',
+                  cached: 'مخبأة — غير معتمدة',
+                  pending: 'كتابة معلقة',
+                  error: 'تعذر تأكيد المصدر',
+                  missing: 'المستند غير موجود',
+                  restricted: 'غير متاح لهذا الحساب',
+                };
+                const names: Record<string, string> = {
+                  sales: 'المبيعات', products: 'المنتجات', expenses: 'المصروفات', settings: 'الإعدادات',
+                  vaults: 'الخزائن', withdrawals: 'السحوبات', closures: 'الإغلاقات', customers: 'العملاء',
+                };
+                return (
+                  <div key={key} className="rounded-xl border border-slate-200 bg-white p-3 text-xs">
+                    <div className="font-bold">{names[key] || key}</div>
+                    <div className={source.state === 'live' ? 'mt-1 text-emerald-700' : 'mt-1 text-amber-800'}>
+                      {stateText[source.state] || 'الحالة غير معروفة'}
+                    </div>
+                    {source.lastConfirmedAt && (
+                      <div className="mt-1 text-[10px] text-slate-500">
+                        آخر لقطة مؤكدة استلمها هذا الجهاز: {new Intl.DateTimeFormat('ar-EG', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(source.lastConfirmedAt))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {dashboardDataIssues.length > 0 && (
+              <ul className="mt-4 list-disc space-y-1 pr-5 text-xs leading-5 text-slate-700">
+                {Array.from(new Set(dashboardDataIssues)).map((issue) => <li key={issue}>{issue}</li>)}
+              </ul>
+            )}
+          </section>
+        </>
+      ) : (
+      <>
       {/* ======================================================== */}
       {/* 1. WAREDPOS × APPLE × WINDOWS 13 EXECUTIVE WELCOME BAR   */}
       {/* (Clean single-deck identity + quick actions, zero duplication) */}
@@ -644,14 +750,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="relative z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-3.5">
           <div className="flex items-center gap-3">
             <div className="relative shrink-0 w-11 h-11 sm:w-12 sm:h-12">
-              <img 
-                src={settings.logoUrl || "https://l.top4top.io/p_31142jfec0.png"} 
-                alt={settings.storeName || "لمسة عطر"} 
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
-                className="w-11 h-11 sm:w-12 sm:h-12 max-w-[48px] max-h-[48px] object-contain bg-white rounded-2xl p-1 shadow-2xs border border-slate-200/80 block" 
-              />
+              {confirmedSettings?.logoUrl ? (
+                <img
+                  src={confirmedSettings.logoUrl}
+                  alt={confirmedSettings.storeName?.trim() || 'شعار المتجر المسجل'}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  className="w-11 h-11 sm:w-12 sm:h-12 max-w-[48px] max-h-[48px] object-contain bg-white rounded-2xl p-1 shadow-2xs border border-slate-200/80 block"
+                />
+              ) : (
+                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-slate-100 border border-slate-200/80 flex items-center justify-center text-slate-500" aria-label="لا يوجد شعار مسجل">
+                  <Store size={20} />
+                </div>
+              )}
               <span className="absolute -bottom-1 -left-1 w-4 h-4 rounded-full bg-[#0F172A] text-amber-400 flex items-center justify-center border border-white">
                 <Sparkles size={9} />
               </span>
@@ -671,11 +781,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <span>
                     {isBreakEvenCovered
                       ? (netContributionToday > targetPhase1
-                          ? `منطقة الربح الصافي (+${Math.round(netContributionToday - targetPhase1)} ج)`
-                          : 'تم تحقيق نقطة التعادل بالكامل')
+                          ? `المساهمة أعلى من المستهدف المسجل بـ ${formatMetricNumber(netContributionToday - targetPhase1)} ${confirmedSettings?.currency}`
+                          : 'بلغت المساهمة المستهدف اليومي المسجل')
                       : (todaysSales.length === 0
-                          ? 'المستهدف 600 ج للتعادل'
-                          : `متبقي ${Math.max(1, Math.ceil(remainingToBreakEven))} ج للتعادل`)}
+                          ? 'لا توجد فواتير إنتاج مؤكدة لهذا اليوم'
+                          : `المتبقي حسابيًا للمستهدف ${formatMetricNumber(remainingToBreakEven)} ${confirmedSettings?.currency}`)}
                   </span>
                 </span>
 
@@ -685,18 +795,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                     type="button"
                     onClick={onOpenConnectedDevices}
                     className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[10px] font-black border bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 border-emerald-500/30 transition-all cursor-pointer shadow-2xs"
-                    title="انقر لعرض قائمة الأجهزة المتصلة في الوقت الفعلي والتزامن اللحظي"
+                    title="عرض الأجهزة التي أرسلت نبضة حضور حديثة وحالة تأكيد Firestore"
                   >
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                    <Radio size={11} className="text-emerald-600 animate-pulse" />
-                    <span>{connectedDevices.length} أجهزة متصلة بالوقت الفعلي</span>
+                    <span className={`h-1.5 w-1.5 rounded-full ${deviceFeedStatus === 'live' ? 'animate-ping bg-emerald-500' : 'bg-amber-500'}`} />
+                    <Radio size={11} className={deviceFeedStatus === 'live' ? 'text-emerald-600 animate-pulse' : 'text-amber-600'} />
+                    <span>{deviceFeedStatus === 'live' ? `${connectedDevices.length} جهاز ذو نبضة حديثة` : 'عدد الأجهزة غير مؤكد'}</span>
                   </button>
                 )}
               </div>
               <h1 className="text-lg sm:text-xl font-black tracking-tight text-[#0F172A] leading-tight">
-                متجر <span className="text-[#0067C0]">{settings.storeName || 'لمسة عطر'}</span>
+                متجر <span className="text-[#0067C0]">{confirmedSettings?.storeName?.trim() || 'اسم المتجر غير مؤكد'}</span>
                 <span className="text-xs font-bold text-[#9A6E23] mr-2 inline-block">
-                  — {settings.storeSlogan || 'أثر يبقى وذكرى تدوم'}
+                  — {confirmedSettings?.storeSlogan?.trim() || 'لا يوجد شعار مسجل'}
                 </span>
               </h1>
             </div>
@@ -773,8 +883,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
             {/* ======================================================== */}
-      {/* TAREK RAW MATERIAL COST ISOLATION & RESTOCK GUARD CARD   */}
-      {/* (صندوق حماية وعزل تكلفة الخامات المباعة لطارق لمنع السحب العشوائي) */}
+      {/* RECORDED COST OF GOODS SOLD — NOT CASH ON HAND */}
       {/* ======================================================== */}
       <div className="order-none rounded-[22px] p-4 sm:p-5 bg-gradient-to-r from-amber-950 via-slate-900 to-slate-950 text-white border-2 border-amber-500/40 shadow-xl space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
@@ -785,22 +894,22 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm sm:text-base font-black text-amber-300">
-                  🔒 المبلغ المفترض عزله بالدرج لحماية تكلفة خامات العطور (خاص بطارق والكاشير)
+                  تكلفة المنتجات المسجلة في فواتير اليوم
                 </h3>
                 <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-400/40 text-[10px] font-black">
-                  ممنوع السحب أو الصرف ⚠️
+                  حقل تكلفة مسجل
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                قيمة تكلفة استرداد الزيوت العطرية والزجاجات التي تم بيعها اليوم والتي يجب حجزها لإعادة التوريد وتأمين المخزون.
+                مجموع التكلفة المسجلة على فواتير الإنتاج المؤكدة اليوم؛ لا يثبت وجود نقدية في الدرج أو عزلها.
               </p>
             </div>
           </div>
 
           <div className="text-left bg-white/10 px-4 py-2.5 rounded-2xl border border-amber-400/30 shrink-0">
-            <span className="text-[10px] font-bold text-amber-200 block text-right sm:text-left">المبلغ المفترض عزله بالدرج اليوم:</span>
+            <span className="text-[10px] font-bold text-amber-200 block text-right sm:text-left">تكلفة الفواتير المسجلة اليوم:</span>
             <div className="text-2xl font-black font-mono text-amber-400 text-right sm:text-left">
-              {totalCost.toLocaleString("ar-EG")} <span className="text-xs font-bold text-white">{settings.currency}</span>
+              {totalCost.toLocaleString('ar-EG')} <span className="text-xs font-bold text-white">{confirmedSettings?.currency}</span>
             </div>
             <span className="text-[10px] text-slate-300 block text-right sm:text-left font-mono">
               عن بيع {todaysSales.length} فاتورة ({todaysEssenceGrams} جم زيت)
@@ -811,48 +920,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-2 text-xs text-amber-100 leading-relaxed">
           <ShieldAlert size={18} className="text-amber-400 shrink-0 mt-0.5" />
           <div>
-            <strong className="text-amber-300 font-bold block mb-0.5">تنبيه ذكي وواضح لطارق والكاشير:</strong>
+            <strong className="text-amber-300 font-bold block mb-0.5">حدود هذا المؤشر:</strong>
             <span>
-              يا طارق، مبلغ الـ <strong className="font-mono text-amber-300 text-sm px-1 font-black">{totalCost.toLocaleString("ar-EG")} {settings.currency}</strong> هو التكلفة المباشرة للزيوت العطرية والعبوات التي بيعت اليوم. **يُمنع بتاتاً سحب هذا المبلغ أو صرفه لأي بند مصروفات أو نثريات أو رواتب**، حيث يُعزل بالدرج ويُرحل لحساب توريد المخزون حتى لا يحدث عجز في المشتريات القادمة!
+              <strong className="font-mono text-amber-300 text-sm px-1 font-black">{totalCost.toLocaleString('ar-EG')} {confirmedSettings?.currency}</strong> قيمة محاسبية مشتقة من حقول الفواتير المؤكدة فقط؛ ليست رصيدًا نقديًا ولا إثباتًا بأن المبلغ عُزل أو رُحّل.
             </span>
           </div>
         </div>
       </div>
 
-      {/* Real-time Multi-Device Sync Executive Status Banner (خاص بالمالك د. محمد فقط) */}
       {isOwner && (
-        <div className="order-none rounded-2xl p-3 sm:p-3.5 bg-gradient-to-r from-emerald-500/[0.08] via-sky-500/[0.05] to-transparent border border-emerald-500/25 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
-              <Radio size={18} className="animate-pulse" />
-            </div>
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-black text-slate-900 dark:text-white">
-                  تزامن فوري بين الأجهزة (Multi-Device Real-Time Sync)
-                </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono font-black border border-emerald-500/30">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                  <span>{connectedDevices.length} أجهزة متصلة ونشطة في الوقت الفعلي</span>
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                تحديث فوري تلقائي لكافة الفواتير والمخزون وحركات الخزينة بين هاتف الكاشير ولابتوب المالك بدقة 100%.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 mr-auto sm:mr-0">
-            <button
-              type="button"
-              onClick={onOpenConnectedDevices}
-              className="apple-btn px-3 py-1.5 rounded-xl bg-white dark:bg-white/10 hover:bg-slate-50 text-slate-800 dark:text-white font-black text-xs border border-slate-200 dark:border-white/15 flex items-center gap-1.5 shadow-2xs cursor-pointer"
-            >
-              <Smartphone size={13} className="text-[#0071E3]" />
-              <span>رادار الأجهزة والمزامنة الفورية</span>
-            </button>
-          </div>
-        </div>
+        <DevicePresenceRadar
+          devices={connectedDevices}
+          feedStatus={deviceFeedStatus}
+          lastServerUpdate={deviceFeedLastServerUpdate}
+          isCloudConnected={isCloudConnected}
+          onOpen={onOpenConnectedDevices}
+        />
       )}
 
       {/* ======================================================== */}
@@ -860,27 +943,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* ======================================================== */}
       {isSectionVisible('ai_advisor_and_target') && (
       <div className={`${getSectionOrderClass('ai_advisor_and_target')} grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch`}>
-        {/* Right 7 Cols: Smart Operational AI Advisor */}
+        {/* Right 7 Cols: Deterministic confirmed-data summary */}
         <div className="lg:col-span-7 apple-bento-card rounded-[22px] p-4 sm:p-5 flex flex-col justify-between border border-slate-200/90 bg-white/95 shadow-2xs">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3.5 border-b border-black/[0.06]">
               <div className="flex items-center gap-2.5">
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold shadow-xs ${
-                  !hasRealProfit ? 'bg-rose-600 text-white' : 'bg-[#0071E3] text-white'
+                  !hasPositiveContribution ? 'bg-rose-600 text-white' : 'bg-[#0071E3] text-white'
                 }`}>
-                  {!hasRealProfit ? <ShieldAlert size={19} /> : <Sparkles size={19} />}
+                  {!hasPositiveContribution ? <ShieldAlert size={19} /> : <Sparkles size={19} />}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs sm:text-sm font-black text-[#1D1D1F]">
-                      مستشار الإدارة الذكي لتحفيز المبيعات والتارجت
+                      ملخص حسابي من البيانات المؤكدة
                     </span>
                     <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#0071E3]/10 text-[#0071E3]">
-                      مباشر
+                      محسوب من لقطات الخادم المؤكدة
                     </span>
                   </div>
                   <span className="text-[11px] text-[#86868B] block font-medium">
-                    قراءة تحليلية تربط المبيعات والمساهمة والتارجت اليومي (600 / 1,000 ج) وتحفيز إدارة المتجر
+                    مؤشرات حسابية من سجلات الإنتاج وإعدادات الهدف المحفوظة
                   </span>
                 </div>
               </div>
@@ -893,7 +976,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     ? 'bg-amber-100 text-amber-900'
                     : 'bg-emerald-100 text-emerald-800'
                 }`}>
-                  {aiInsight?.statusBadge || (!isBreakEvenCovered ? (todaysSales.length === 0 ? 'مرحلة بدء التشغيل' : 'تحت نقطة التعادل') : 'ربحية آمنة')}
+                  {aiInsight?.statusBadge || (todaysSales.length === 0 ? 'لا توجد فواتير إنتاج اليوم' : isBreakEvenCovered ? 'بلغ المستهدف المسجل' : 'دون المستهدف المسجل')}
                 </span>
 
                 <button
@@ -901,7 +984,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onClick={refreshAiAdvisor}
                   disabled={loadingAi}
                   className="apple-btn p-2 rounded-xl bg-white border border-black/[0.08] text-[#1D1D1F] hover:bg-black/[0.03] cursor-pointer"
-                  title="تحديث التحليل الذكي"
+                  title="إعادة حساب الملخص من اللقطات المؤكدة"
                 >
                   <RefreshCw size={14} className={loadingAi ? 'animate-spin text-[#0071E3]' : ''} />
                 </button>
@@ -913,18 +996,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <h3 className={`text-sm sm:text-base font-black ${
                   !isBreakEvenCovered ? 'text-rose-700' : 'text-emerald-800'
                 }`}>
-                  {aiInsight?.statusTitle || (!isBreakEvenCovered 
-                    ? '⚠️ تركيز الأولوية: تغطية تارجت المساهمة اليومي الثابت (600 ج.م)'
-                    : '🎉 أداء متوازن: تم تغطية التعادل والانتقال لتارجت النمو (1,000 ج.م)')}
+                    {aiInsight?.statusTitle || (todaysSales.length === 0
+                    ? 'لا توجد فواتير إنتاج مؤكدة لهذا اليوم.'
+                    : isBreakEvenCovered
+                    ? 'المساهمة المحسوبة بلغت المستهدف اليومي المحفوظ.'
+                    : 'المساهمة المحسوبة أقل من المستهدف اليومي المحفوظ.')}
                 </h3>
                 <p className="text-xs text-[#3A3A3C] leading-relaxed font-medium">
-                  {aiInsight?.mainMessage || (
-                    !isBreakEvenCovered 
-                      ? (todaysSales.length === 0
-                          ? `بداية يوم التشغيل (${arabicDayName}): يستهدف المتجر تحقيق 600 ج.م مساهمة صافية لتغطية مخصص المصاريف اليومية الثابتة. ابدأ بتسجيل مبيعات اليوم لتحقيق التارجت.`
-                          : `المتجر يحتاج إلى ${Math.max(1, Math.ceil(remainingToBreakEven))} ج.م مساهمة صافية إضافية لتغطية تكلفة تشغيل يوم ${arabicDayName} (حوالي ${Math.max(1, Math.ceil(remainingToBreakEven / 42))} عبوة من حجم 30 أو 50 مل). ركز على ترقية الأحجام والبيع التكميلي لتحقيق التارجت سريعاً.`)
-                      : `تم تأمين مصاريف اليوم بالكامل! الفائض المتحقق الآن (+${Math.max(0, netProfitAfterDailyExpenses).toFixed(0)} ج.م) يمثل ربحاً حقيقياً خالصاً، والتركيز الآن على بلوغ تارجت الـ 1,000 ج.م ومضاعفة عمولة المبيعات لـ 7%.`
-                  )}
+                  {aiInsight?.mainMessage || (todaysSales.length === 0
+                    ? 'لا يمكن استنتاج عجز أو ربح عند عدم وجود فواتير إنتاج مؤكدة.'
+                    : `المساهمة المحسوبة ${netContributionToday.toLocaleString('ar-EG')} ${confirmedSettings?.currency}; المستهدف المسجل ${targetPhase1.toLocaleString('ar-EG')} ${confirmedSettings?.currency}. لا يُعرض تقدير لعدد العبوات أو الربح المستقبلي.`)}
                 </p>
               </div>
 
@@ -949,7 +1030,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center gap-2 text-amber-900 font-semibold">
               <Flame size={15} className="text-amber-600 shrink-0" />
               <span className="text-[11px]">
-                {aiInsight?.tacticalPrompt || 'اقترح عبوة 30 مل (+46.5 ج مساهمة) أو 50 مل (+38.5 ج) أو 100 مل (+182.5 ج) لتسريع تحقيق التارجت.'}
+                {aiInsight?.tacticalPrompt || 'الاقتراحات التجارية غير محسوبة من بيانات الأداء ولا تُعرض هنا كحقائق.'}
               </span>
             </div>
             {activeAlerts.length > 0 && activeAlerts[0].actionView && onNavigate && (
@@ -988,12 +1069,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               </div>
 
-              <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black border shrink-0 ${
-                todaysBottlesCount > 10
-                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                  : 'bg-amber-100 text-amber-950 border-amber-300'
-              }`}>
-                {todaysBottlesCount > 10 ? '🔥 شريحة عمولة 7% مفعلة' : `شريحة 5% (${todaysBottlesCount}/10 عبوات)`}
+              <span className="px-2.5 py-1 rounded-xl text-[10px] font-black border shrink-0 bg-blue-100 text-blue-900 border-blue-300">
+                العمولة من حقول الفواتير المؤكدة
               </span>
             </div>
 
@@ -1002,10 +1079,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="p-2.5 rounded-2xl bg-white/95 border border-[#d8cce8] shadow-2xs">
                 <span className="text-[10px] text-[#2D2438] font-black block">مساهمة اليوم الصافية</span>
                 <span className="text-base sm:text-lg font-black font-mono text-emerald-800 mt-0.5 block">
-                  {Math.round(netContributionToday).toLocaleString('ar-EG')}
+                  {formatMetricNumber(netContributionToday)}
                 </span>
                 <span className="text-[10px] text-[#5C4D6E] font-mono font-bold">
-                  من تارجت {targetPhase1} {settings.currency}
+                  من المستهدف المسجل {targetPhase1.toLocaleString('ar-EG')} {confirmedSettings?.currency}
                 </span>
               </div>
 
@@ -1020,12 +1097,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
 
               <div className="p-2.5 rounded-2xl bg-white/95 border border-[#d8cce8] shadow-2xs">
-                <span className="text-[10px] text-[#2D2438] font-black block">عمولة وحافز المبيعات</span>
+                <span className="text-[10px] text-[#2D2438] font-black block">عمولات الفواتير</span>
                 <span className="text-base sm:text-lg font-black font-mono text-blue-800 mt-0.5 block">
-                  +{Math.round(todaysCommission)} {settings.currency}
+                  {formatMetricNumber(todaysCommission)} {confirmedSettings?.currency}
                 </span>
                 <span className="text-[10px] text-[#5C4D6E] font-bold">
-                  {todaysBottlesCount >= 10 ? 'شريحة 7% التشجيعية 🔥' : `شريحة 5% (${Math.max(0, 10 - todaysBottlesCount)} عبوات للـ 7%)`}
+                  اليوم: {formatMetricNumber(todaysCommission)} · الشهر: {formatMetricNumber(monthCommissions)} {confirmedSettings?.currency}
                 </span>
               </div>
             </div>
@@ -1034,30 +1111,28 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="p-3 rounded-2xl bg-white/95 border border-[#d8cce8] space-y-2 text-[11px] shadow-2xs">
               <div className="flex items-center justify-between">
                 <span className="text-[#0F172A] font-black">
-                  {!isBreakEvenCovered
-                    ? (todaysSales.length === 0
-                        ? `المستهدف لتغطية التعادل: 600 ${settings.currency}`
-                        : `متبقي لتغطية تارجت الـ 600 ج: ${Math.max(1, Math.ceil(remainingToBreakEven))} ${settings.currency}`)
-                    : `تم تغطية الـ 600 ج! متبقي لتارجت الـ 1,000 ج: ${Math.max(0, Math.round(targetPhase2 - netContributionToday))} ${settings.currency}`}
+                  {todaysSales.length === 0
+                    ? 'لا توجد فواتير إنتاج مؤكدة لهذا اليوم.'
+                    : isBreakEvenCovered
+                    ? `بلغت المساهمة المحسوبة المستهدف اليومي المسجل (${targetPhase1.toLocaleString('ar-EG')} ${confirmedSettings?.currency}).`
+                    : `المتبقي حسابيًا للوصول إلى المستهدف اليومي المسجل: ${formatMetricNumber(remainingToBreakEven)} ${confirmedSettings?.currency}.`}
                 </span>
                 <span className="font-mono font-black text-emerald-800">
-                  {Math.min(100, Math.round((netContributionToday / targetPhase1) * 100))}%
+                  {formatConservativePercent(progressPhase1)}
                 </span>
               </div>
               <div className="w-full h-2 rounded-full bg-purple-100/80 overflow-hidden border border-purple-200">
                 <div
                   className="h-full bg-gradient-to-r from-[#0067C0] via-emerald-600 to-amber-600 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, Math.round((netContributionToday / targetPhase1) * 100))}%` }}
+                  style={{ width: `${progressPhase1}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-[10px] text-[#4A3E56] pt-0.5">
                 <span className="font-bold text-[#2D2438]">
-                  {todaysBottlesCount < 10
-                    ? `💡 بيع ${10 - todaysBottlesCount} عبوات إضافية اليوم يرفع العمولة إلى 7% فوراً`
-                    : '🏆 ممتاز! كل عبوة إضافية اليوم تُحتسب بعمولة تشجيعية 7%'}
+                  العمولة المعروضة هي مجموع قيم الفواتير المحفوظة؛ لا يُستنتج معدل من عدد العبوات.
                 </span>
                 <span className="font-mono text-[#4A3E56] font-bold">
-                  الشهر: {Math.round(monthNetContribution).toLocaleString('ar-EG')} / {monthTargetBreakEven.toLocaleString('ar-EG')} ج
+                  مساهمة الشهر: {formatMetricNumber(monthNetContribution)} / هدف الإعدادات: {formatMetricNumber(monthTargetContribution)} {confirmedSettings?.currency}
                 </span>
               </div>
             </div>
@@ -1108,7 +1183,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[11px] text-[#86868B] font-medium hidden xl:inline">
-                    سلسلة التتبع: المبيعات ← التكلفة ← العمولات ← الموازنة = الربح المتاح
+                    سلسلة الحساب: المبيعات ← التكلفة ← العمولات ← حصة الموازنة = نتيجة حسابية
                   </span>
 
                   {isOwner && (
@@ -1207,10 +1282,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
                                 {totalRevenue.toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                {todaysSales.length} فواتير · {todaysBottlesCount} عبوة · متوسط {averageBill} ج
+                                {todaysSales.length} فواتير · {todaysBottlesCount} عبوة · متوسط {averageBill === null ? 'غير متاح' : `${averageBill.toLocaleString('ar-EG')} ${confirmedSettings?.currency}`}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
@@ -1224,14 +1299,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                         return (
                           <div
                             key={cardItem.id}
-                            onClick={openReservedStockBreakdown}
+                            onClick={openNetContributionBreakdown}
                             className="apple-glass-card rounded-2xl p-4 sm:p-5 border border-slate-200/90 bg-white/95 flex flex-col justify-between cursor-pointer hover:border-[#0067C0]/45 hover:shadow-md transition-all group"
                           >
                             <div>
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-slate-900 transition-colors">
-                                  تكلفة المبيعات (خام)
+                                  التكلفة المسجلة على فواتير اليوم
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
                                   <Scale size={16} />
@@ -1239,14 +1314,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
                                 {totalCost.toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                {todaysEssenceGrams} جم زيت مستهلك · تؤول لمحفظة المخزون
+                                {todaysEssenceGrams.toLocaleString('ar-EG')} جم محسوبة من بنود الفواتير
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-600 font-bold">
-                              <span>عرض رأس مال المخزون</span>
+                              <span>تفصيل تكلفة المبيعات والمساهمة</span>
                               <Info size={12} />
                             </div>
                           </div>
@@ -1263,18 +1338,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-[#0067C0] transition-colors">
-                                  المساهمة الصافية اليوم
+                                  المساهمة المحسوبة اليوم
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-[#0067C0]/10 text-[#0067C0] flex items-center justify-center">
                                   <TrendingUp size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0067C0] font-mono">
-                                +{netContributionToday.toFixed(0)}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                {netContributionToday.toLocaleString('ar-EG')}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                بعد خصم الخام وعمولة طارق ({todaysCommission.toFixed(0)} ج)
+                                الإيراد ناقص التكلفة والعمولات المخزنة ({todaysCommission.toLocaleString('ar-EG')} {confirmedSettings?.currency})
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
@@ -1288,81 +1363,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                         return (
                           <div
                             key={cardItem.id}
-                            onClick={openDistributableProfitBreakdown}
-                            className={`apple-glass-card rounded-2xl p-4 sm:p-5 border bg-white/95 flex flex-col justify-between cursor-pointer hover:shadow-md transition-all group ${
-                              todaysSales.length === 0
-                                ? 'border-slate-200/90 hover:border-[#0067C0]/45'
-                                : hasRealProfit
-                                ? 'border-emerald-300/80 hover:border-emerald-500'
-                                : 'border-rose-300/80 hover:border-rose-400'
-                            }`}
+                            onClick={contributionAfterDailyBudgetShare === null ? undefined : openDailyBudgetShareBreakdown}
+                            className="apple-glass-card rounded-2xl p-4 sm:p-5 border border-slate-200/90 bg-white/95 flex flex-col justify-between cursor-pointer hover:border-[#0067C0]/45 hover:shadow-md transition-all group"
                           >
                             <div>
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
-                                <span
-                                  className={`text-xs font-bold ${
-                                    todaysSales.length === 0
-                                      ? 'text-slate-600'
-                                      : hasRealProfit
-                                      ? 'text-emerald-800'
-                                      : 'text-rose-800'
-                                  }`}
-                                >
-                                  نتيجة التشغيل وفق الموازنة
-                                </span>
-                                <div
-                                  className={`w-8 h-8 rounded-xl flex items-center justify-center ${
-                                    todaysSales.length === 0
-                                      ? 'bg-slate-100 text-slate-700'
-                                      : hasRealProfit
-                                      ? 'bg-emerald-500/12 text-emerald-700'
-                                      : 'bg-rose-500/12 text-rose-700'
-                                  }`}
-                                >
-                                  {hasRealProfit ? <Zap size={16} /> : <Scale size={16} />}
-                                </div>
+                                <span className="text-xs font-bold text-slate-600 group-hover:text-[#0067C0]">نتيجة حسابية بعد الحصة اليومية</span>
+                                <div className="w-8 h-8 rounded-xl bg-[#0067C0]/10 text-[#0067C0] flex items-center justify-center"><Wallet size={16} /></div>
                               </div>
-                              {todaysSales.length === 0 ? (
-                                <>
-                                  <div className="text-sm sm:text-base font-black text-[#0F172A]">
-                                    لا توجد بيانات مبيعات فعلية مسجلة لهذا اليوم
-                                  </div>
-                                  <p className="text-[10px] text-slate-500 mt-1 font-bold">
-                                    المخصص التخطيطي اليومي (600 ج) ليس مصروفاً نقدياً ولا يسجل عجزاً قبل بدء المبيعات الفعلية
-                                  </p>
-                                </>
-                              ) : isBreakEvenCovered ? (
-                                <>
-                                  <div className="text-2xl sm:text-3xl font-black text-emerald-600 font-mono">
-                                    +{Math.max(0, netProfitAfterDailyExpenses).toFixed(0)}{' '}
-                                    <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
-                                  </div>
-                                  <p className="text-[10px] text-emerald-800 mt-1 font-bold">
-                                    المساهمة ({netContributionToday.toFixed(0)} ج) ← المخصص التخطيطي (600 ج)
-                                  </p>
-                                </>
-                              ) : (
-                                <>
-                                  <div className="text-xl sm:text-2xl font-black text-rose-700 font-mono">
-                                    -{Math.max(1, Math.ceil(remainingToBreakEven))} {settings.currency}
-                                  </div>
-                                  <p className="text-[10px] text-rose-900 mt-1 font-bold">
-                                    المساهمة ({netContributionToday.toFixed(0)} ج) ← المخصص التخطيطي (600 ج)
-                                  </p>
-                                </>
-                              )}
+                              <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
+                                {contributionAfterDailyBudgetShare === null ? 'غير متاح' : formatMetricNumber(contributionAfterDailyBudgetShare)} <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 mt-1 font-medium">المساهمة المسجلة ناقص حصة الميزانية المحسوبة؛ لا يثبت ربحًا أو خسارة فعلية.</p>
                             </div>
-                            <div
-                              className={`mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold ${
-                                todaysSales.length === 0
-                                  ? 'text-slate-600'
-                                  : isBreakEvenCovered
-                                  ? 'text-emerald-700'
-                                  : 'text-rose-700'
-                              }`}
-                            >
-                              <span>المساهمة ← المخصص الثابت للفترة</span>
+                            <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
+                              <span>عرض معادلة الحصة اليومية</span>
                               <Info size={12} />
                             </div>
                           </div>
@@ -1378,17 +1394,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <div>
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-bold text-slate-600">Target اليوم والتحقيق</span>
+                                <span className="text-xs font-bold text-slate-600">المستهدف اليومي المسجل</span>
                                 <div className="w-8 h-8 rounded-xl bg-[#C49746]/15 text-[#9A6E23] flex items-center justify-center">
                                   <Target size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
-                                {progressPhase1.toFixed(0)}%{' '}
-                                <span className="text-xs font-normal text-slate-400">(تعادل 600ج)</span>
+                                {formatMetricNumber(targetPhase1)}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                المستهدف الربحي الكامل: {targetPhase2} ج ({progressPhase2.toFixed(0)}%)
+                                المساهمة المحسوبة اليوم: {formatMetricNumber(netContributionToday)} {confirmedSettings?.currency}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#9A6E23] font-bold">
@@ -1409,20 +1425,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-rose-700 transition-colors">
-                                  العجز المتراكم للشهر
+                                  فجوة مستهدف المساهمة للشهر
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-700 flex items-center justify-center">
                                   <ShieldAlert size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
-                                {accumulatedDeficit > 0 ? `${accumulatedDeficit.toFixed(0)}` : '0'}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                {activeOperationalDaysCount === 0 ? 'غير متاح' : accumulatedDeficit.toLocaleString('ar-EG')}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                {accumulatedDeficit > 0
-                                  ? 'مطلوب تعويضه من مبيعات الأيام القادمة'
-                                  : 'لا يوجد عجز متراكم بحمد الله'}
+                                {activeOperationalDaysCount === 0
+                                  ? 'لا توجد أيام بفواتير إنتاج مؤكدة لحساب الفجوة.'
+                                  : accumulatedDeficit > 0
+                                  ? 'فارق حسابي عن الهدف المحفوظ؛ لا يثبت خسارة نقدية.'
+                                  : 'لا توجد فجوة عن الهدف التراكمي المحسوب.'}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-600 font-bold">
@@ -1443,22 +1461,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-[#0067C0] transition-colors">
-                                  موازنة الـ 15,000 ج
+                                  تغطية الموازنة بالمساهمة المحسوبة
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
                                   <Building size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
-                                {budgetAllocatedSoFar.toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">/ {fixedMonthlyBudget}</span>
+                                {budgetContributionCoverage.toLocaleString('ar-EG')}{' '}
+                                <span className="text-xs font-normal text-slate-400">/ {fixedMonthlyBudget.toLocaleString('ar-EG')}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                صُرف فعلياً: {budgetActuallyPaid} ج · متبقي للتغطية: {budgetRemaining} ج
+                                التغطية = مساهمة الفواتير غير السالبة حتى سقف الموازنة؛ ليست مصروفًا. مصروفات مسجلة (لا تثبت الدفع): {monthRecordedExpensesTotal.toLocaleString('ar-EG')} {confirmedSettings?.currency} · الموازنة ناقص المسجل: {budgetRemainingAfterRecordedExpenses.toLocaleString('ar-EG')} {confirmedSettings?.currency}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
-                              <span>عرض بنود الموازنة الـ 11</span>
+                              <span>عرض قيم الميزانية المحفوظة</span>
                               <Info size={12} />
                             </div>
                           </div>
@@ -1474,21 +1492,21 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <div>
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-bold text-slate-600">الربح المتاح للتوزيع</span>
+                                <span className="text-xs font-bold text-slate-600">رصيد خزينة المالك المسجل</span>
                                 <div className="w-8 h-8 rounded-xl bg-emerald-500/12 text-emerald-700 flex items-center justify-center">
                                   <Coins size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono">
-                                {Math.max(0, distributableProfit).toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                {distributableProfit.toLocaleString('ar-EG')}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-bold">
-                                صافي الفائض القابل للسحب للمالك
+                                رصيد دفتر الخزائن؛ ليس صافي ربح مدققًا
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-emerald-700 font-bold">
-                              <span>عرض سلسلة احتساب الربح المتاح</span>
+                              <span>عرض رصيد دفتر الخزائن</span>
                               <Info size={12} />
                             </div>
                           </div>
@@ -1498,29 +1516,31 @@ const Dashboard: React.FC<DashboardProps> = ({
                         return (
                           <div
                             key={cardItem.id}
-                            onClick={openCashBreakdown}
-                            className="apple-glass-card rounded-2xl p-4 sm:p-5 border border-slate-200/90 bg-white/95 flex flex-col justify-between cursor-pointer hover:border-[#0067C0]/45 hover:shadow-md transition-all group"
+                            onClick={actualCashInDrawer === undefined ? undefined : openCashDrawerBreakdown}
+                            className={`apple-glass-card rounded-2xl p-4 sm:p-5 border border-slate-200/90 bg-white/95 flex flex-col justify-between transition-all group ${actualCashInDrawer === undefined ? '' : 'cursor-pointer hover:border-[#0067C0]/45 hover:shadow-md'}`}
                           >
                             <div>
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-[#0067C0] transition-colors">
-                                  السيولة النقدية بالدرج
+                                  جرد درج اليوم المسجل
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-emerald-500/12 text-emerald-700 flex items-center justify-center">
                                   <Wallet size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
-                                {actualCashInDrawer.toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                {actualCashInDrawer === undefined ? 'غير مسجل' : actualCashInDrawer.toLocaleString('ar-EG')}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                كاش اليوم: {todaysCashSales} ج · إلكتروني: {todaysElectronicSales} ج
+                                {actualCashInDrawer === undefined
+                                  ? 'لا يوجد جرد درج مسجل في إغلاق اليوم.'
+                                  : 'المبلغ مأخوذ من حقل الجرد في سجل الإغلاق؛ وليس مجموع فواتير النقد.'}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
-                              <span>مطابقة الكاش والمحافظ</span>
+                              <span>{actualCashInDrawer === undefined ? 'لا يوجد تفصيل جرد متاح' : 'عرض حقل الجرد المسجل'}</span>
                               <Info size={12} />
                             </div>
                           </div>
@@ -1537,7 +1557,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-[#9A6E23] transition-colors">
-                                  العبوات واستهلاك الزيوت
+                                  العبوات والجرامات المسجلة في الفواتير
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-[#C49746]/15 text-[#9A6E23] flex items-center justify-center">
                                   <Package size={16} />
@@ -1545,14 +1565,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
                                 {todaysBottlesCount}{' '}
-                                <span className="text-xs font-normal text-slate-400">عبوة ({todaysEssenceGrams} جم)</span>
+                                <span className="text-xs font-normal text-slate-400">عبوة</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                نقص المخزون الحرج (&lt;100جم): {lowStock.length} عطور
+                                {todaysEssenceGrams.toLocaleString('ar-EG')} جم محسوبة من بنود الفواتير؛ لا تمثل جردًا ميدانيًا.
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#9A6E23] font-bold">
-                              <span>فتح جرد واستهلاك المخزون</span>
+                              <span>فتح سجل المخزون</span>
                               <ArrowLeft size={12} />
                             </div>
                           </div>
@@ -1576,11 +1596,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
-                                {Math.round(totalReservedStockCost).toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency}</span>
+                                {formatMetricNumber(totalReservedStockCost)}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency}</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                محفظة الاسترداد: {Math.round(restockVaultBalance)} ج · خام بالرف: {Math.round(rawStockValue).toLocaleString('ar-EG')} ج
+                                رصيد محفظة إعادة التوريد: {restockVaultBalance.toLocaleString('ar-EG')} {confirmedSettings?.currency} · تكلفة الرصيد المخزني المسجل: {rawStockValue.toLocaleString('ar-EG')} {confirmedSettings?.currency}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
@@ -1601,18 +1621,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {renderReorderStrip()}
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-600 group-hover:text-[#0067C0] transition-colors">
-                                  عمولات وحوافز المبيعات
+                                  العمولات المسجلة على الفواتير
                                 </span>
                                 <div className="w-8 h-8 rounded-xl bg-[#C49746]/15 text-[#9A6E23] flex items-center justify-center">
                                   <Award size={16} />
                                 </div>
                               </div>
                               <div className="text-2xl sm:text-3xl font-black text-[#0F172A] font-mono">
-                                {Math.round(todaysCommission).toLocaleString('ar-EG')}{' '}
-                                <span className="text-xs font-normal text-slate-400">{settings.currency} اليوم</span>
+                                {formatMetricNumber(todaysCommission)}{' '}
+                                <span className="text-xs font-normal text-slate-400">{confirmedSettings?.currency} اليوم</span>
                               </div>
                               <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                                إجمالي عمولات الشهر: {Math.round(monthCommissions).toLocaleString('ar-EG')} ج ({todaysBottlesCount >= 10 ? 'شريحة 7%' : 'شريحة 5%'})
+                                إجمالي العمولات المخزنة في فواتير الشهر: {formatMetricNumber(monthCommissions)} {confirmedSettings?.currency}
                               </p>
                             </div>
                             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-[#0067C0] font-bold">
@@ -1645,26 +1665,26 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-0.5 rounded-full bg-rose-500 text-white font-black text-[10px]">
-                    خطر العجز التشغيلي
+                    فجوة حسابية عن المستهدف
                   </span>
                   <span className="text-xs text-rose-300 font-bold">
-                    حصة مصاريف اليوم: 600 جنيه مصري (إيجار ورواتب)
+                    المستهدف اليومي المحفوظ: {targetPhase1.toLocaleString('ar-EG')} {confirmedSettings?.currency}
                   </span>
                 </div>
                 <h3 className="text-base sm:text-lg font-black text-white">
-                  تحريك المتجر وجلب عمليات بيع فورية هو طوق النجاة لتحقيق الأرباح!
+                  المساهمة المحسوبة من الفواتير المؤكدة أقل من المستهدف اليومي المسجل.
                 </h3>
                 <p className="text-xs text-gray-300 max-w-2xl leading-relaxed">
-                  طالما لم نكسر حاجز الـ 600 ج.م مساهمة، فالمتجر في حالة نزيف مالي للمصاريف الثابتة. كل ساعة تمر دون بيع تخصم من الميزانية العامة للمتجر. المطلوب من البائع طارق وإدارة المحل التحرك الذكي السريع!
+                  الفارق الحسابي الحالي عن المستهدف هو {formatMetricNumber(remainingToBreakEven)} {confirmedSettings?.currency}. لا يثبت هذا الفارق خسارة محاسبية أو نقدية، ولا تتنبأ اللوحة بعدد مبيعات لازمة للوصول إليه.
                 </p>
               </div>
             </div>
 
             <div className="flex flex-col items-center sm:items-end gap-2 shrink-0">
               <div className="text-center sm:text-left bg-white/10 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] text-gray-400 block font-sans">المتبقي لكسر الخسارة:</span>
-                <span className="font-mono font-black text-2xl text-rose-400">{Math.max(1, Math.ceil(remainingToBreakEven))} {settings.currency}</span>
-                <span className="text-[10px] text-amber-300 block font-semibold">≈ {bottlesRemainingToBreakEven} زجاجات عطر فقط</span>
+                <span className="text-[10px] text-gray-400 block font-sans">المتبقي حسابيًا للمستهدف:</span>
+                <span className="font-mono font-black text-2xl text-rose-400">{remainingToBreakEven.toLocaleString('ar-EG', { maximumFractionDigits: 2 })} {confirmedSettings?.currency}</span>
+                <span className="text-[10px] text-amber-300 block font-semibold">قيمة حسابية من سجلات اليوم</span>
               </div>
 
               {onNavigate && (
@@ -1673,35 +1693,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                   className="apple-btn w-full sm:w-auto px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm"
                 >
                   <Plus size={15} />
-                  <span>تسجيل أول بيعة لكسر العجز</span>
+                  <span>فتح شاشة المبيعات</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* Quick Winning Mix to Cover the 600 EGP */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/10 text-xs">
-            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-gray-400 block text-[10px]">خيار سريع 1:</span>
-              <span className="font-bold text-white block">4 عبوات 50 مل</span>
-              <span className="text-emerald-400 text-[10px] font-mono">+154 ج مساهمة</span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-gray-400 block text-[10px]">خيار سريع 2:</span>
-              <span className="font-bold text-white block">4 عبوات 30 مل</span>
-              <span className="text-emerald-400 text-[10px] font-mono">+186 ج مساهمة</span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-gray-400 block text-[10px]">خيار سريع 3:</span>
-              <span className="font-bold text-white block">2 عبوة 25 مل</span>
-              <span className="text-emerald-400 text-[10px] font-mono">+114 ج مساهمة</span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-gray-400 block text-[10px]">خيار سريع 4:</span>
-              <span className="font-bold text-white block">1 عبوة 100 مل نيش</span>
-              <span className="text-emerald-400 text-[10px] font-mono">+182.5 ج مساهمة</span>
-            </div>
-          </div>
+          <p className="pt-2 border-t border-white/10 text-xs text-gray-300">لا تُعرض تركيبات أو أرباح مستقبلية افتراضية؛ مساهمة كل طلب تعتمد على بنوده المسجلة.</p>
         </div>
       )}
         </>
@@ -1716,7 +1714,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </h2>
             </div>
             <span className="text-[11px] text-[#86868B] font-medium hidden sm:inline">
-              متابعة الفواتير المحصلة وحصيلة الخامات المعبأة
+              متابعة الفواتير المسجلة وطرق الدفع المخزنة
             </span>
           </div>
 
@@ -1732,10 +1730,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div>
                 <div className="text-2xl sm:text-3xl font-black text-[#1D1D1F] font-mono">
                   {totalRevenue.toLocaleString('ar-EG')}{' '}
-                  <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
+                  <span className="text-xs font-normal text-[#86868B]">{confirmedSettings?.currency}</span>
                 </div>
                 <p className="text-[10px] text-[#86868B] mt-1 font-medium">
-                  من {todaysSales.length} عملية بيع ناجحة
+                  من {todaysSales.length} فاتورة إنتاج مؤكدة
                 </p>
               </div>
             </div>
@@ -1743,7 +1741,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             {/* 2. Bottles Count */}
             <div className="apple-glass-card rounded-3xl p-5 border border-purple-300/60 bg-gradient-to-br from-white via-purple-500/[0.06] to-indigo-500/[0.12] flex flex-col justify-between">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-[#86868B]">العبوات المجهزة</span>
+                <span className="text-xs font-bold text-[#86868B]">العبوات المسجلة في الفواتير</span>
                 <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center">
                   <Package size={16} />
                 </div>
@@ -1754,7 +1752,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <span className="text-xs font-normal text-[#86868B]">عبوة</span>
                 </div>
                 <p className="text-[10px] text-[#86868B] mt-1 font-medium">
-                  متوسط الفاتورة: {averageBill} {settings.currency}
+                  متوسط الفاتورة: {averageBill === null ? 'غير متاح' : `${averageBill.toLocaleString('ar-EG')} ${confirmedSettings?.currency}`}
                 </p>
               </div>
             </div>
@@ -1762,7 +1760,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             {/* 3. Essence Consumed */}
             <div className="apple-glass-card rounded-3xl p-5 border border-amber-300/60 bg-gradient-to-br from-white via-amber-500/[0.06] to-[#C49746]/[0.14] flex flex-col justify-between">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-[#86868B]">استهلاك الزيت الخام</span>
+                <span className="text-xs font-bold text-[#86868B]">جرامات الزيت المسجلة في الفواتير</span>
                 <div className="w-8 h-8 rounded-xl bg-amber-50 text-[#C49746] flex items-center justify-center">
                   <Layers size={16} />
                 </div>
@@ -1773,7 +1771,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <span className="text-xs font-normal text-[#86868B]">جرام</span>
                 </div>
                 <p className="text-[10px] text-[#86868B] mt-1 font-medium">
-                  جرامات الزيت العطري المصروفة
+                  مجموع الجرامات المحسوب من بنود الفواتير، وليس قياس صرف فعلي.
                 </p>
               </div>
             </div>
@@ -1781,7 +1779,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             {/* 4. Cash In Drawer */}
             <div className="apple-glass-card rounded-3xl p-5 border border-emerald-300/60 bg-gradient-to-br from-white via-emerald-500/[0.07] to-teal-500/[0.13] flex flex-col justify-between">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-[#86868B]">النقدية بالدرج (كاش)</span>
+                <span className="text-xs font-bold text-[#86868B]">المبيعات المصنفة نقدًا في الفواتير</span>
                 <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
                   <Coins size={16} />
                 </div>
@@ -1789,10 +1787,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div>
                 <div className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono">
                   {todaysCashSales.toLocaleString('ar-EG')}{' '}
-                  <span className="text-xs font-normal text-[#86868B]">{settings.currency}</span>
+                  <span className="text-xs font-normal text-[#86868B]">{confirmedSettings?.currency}</span>
                 </div>
                 <p className="text-[10px] text-[#86868B] mt-1 font-medium">
-                  إلكتروني: {todaysElectronicSales} {settings.currency}
+                  إلكتروني/بطاقة/تحويل مسجل: {todaysElectronicSales.toLocaleString('ar-EG')} {confirmedSettings?.currency}
                 </p>
               </div>
             </div>
@@ -1821,36 +1819,36 @@ const Dashboard: React.FC<DashboardProps> = ({
                     ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
                     : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse'
                 }`}>
-                  {isTargetAchieved ? 'تم تحقيق الهدف والتعادل وزيادة 🎉' : isBreakEvenCovered ? 'تمت تغطية مصاريف اليوم' : 'تحت نقطة التعادل (خسارة)'}
+                  {todaysSales.length === 0 ? 'لا توجد فواتير إنتاج مؤكدة اليوم' : isTargetAchieved ? 'بلغت المساهمة المستهدف المسجل' : 'المساهمة دون المستهدف المسجل'}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs mb-5">
                 <div className="p-3 rounded-2xl bg-white/5 border border-white/10 space-y-0.5">
-                  <span className="text-gray-400 text-[11px] block">المرحلة 1: التعادل اليومي (25 يوم)</span>
-                  <span className="font-mono font-bold text-base text-amber-400">600 ج.م</span>
-                  <span className="text-[10px] text-gray-500 block">يغطي ميزانية 15,000 ج كاملة</span>
+                  <span className="text-gray-400 text-[11px] block">المستهدف اليومي المسجل</span>
+                  <span className="font-mono font-bold text-base text-amber-400">{targetPhase1.toLocaleString('ar-EG')} {confirmedSettings?.currency}</span>
+                  <span className="text-[10px] text-gray-500 block">من إعدادات Firestore المؤكدة</span>
                 </div>
 
                 <div className="p-3 rounded-2xl bg-white/5 border border-white/10 space-y-0.5">
-                  <span className="text-gray-400 text-[11px] block">المرحلة 2: المستهدف الربحي</span>
-                  <span className="font-mono font-bold text-base text-[#34C759]">1,000 ج.م</span>
-                  <span className="text-[10px] text-gray-500 block">ربح صافٍ وفائض للتوسع</span>
+                  <span className="text-gray-400 text-[11px] block">الموازنة الشهرية المسجلة</span>
+                  <span className="font-mono font-bold text-base text-[#34C759]">{fixedMonthlyBudget.toLocaleString('ar-EG')} {confirmedSettings?.currency}</span>
+                  <span className="text-[10px] text-gray-500 block">قيمة إعدادات Firestore؛ ليست قياسًا للمصروف الفعلي</span>
                 </div>
 
                 <div className="p-3 rounded-2xl bg-white/5 border border-white/10 space-y-0.5 col-span-2 sm:col-span-1">
-                  <span className="text-gray-400 text-[11px] block">المساهمة الصافية اليوم (بعد 5%)</span>
-                  <span className="font-mono font-bold text-base text-white">+{netContributionToday.toFixed(0)} ج.م</span>
-                  <span className="text-[10px] text-gray-500 block">صافي ربح الخامات - عمولة طارق</span>
+                  <span className="text-gray-400 text-[11px] block">المساهمة المحسوبة من الفواتير</span>
+                  <span className="font-mono font-bold text-base text-white">{netContributionToday.toLocaleString('ar-EG')} {confirmedSettings?.currency}</span>
+                  <span className="text-[10px] text-gray-500 block">الإيراد ناقص التكلفة والعمولات المسجلة؛ ليس صافي ربح مدققًا</span>
                 </div>
               </div>
 
-              {/* Progress Bars for Both Phases */}
+              {/* Progress against the single stored daily target */}
               <div className="space-y-3">
                 <div>
                   <div className="flex justify-between text-xs font-semibold mb-1">
-                    <span className="text-gray-300">مرحلة 1: تغطية المصاريف ونقطة التعادل (600 ج):</span>
-                    <span className="font-mono text-amber-400 font-bold">{progressPhase1.toFixed(0)}%</span>
+                    <span className="text-gray-300">نسبة المساهمة المحسوبة من المستهدف اليومي المحفوظ:</span>
+                    <span className="font-mono text-amber-400 font-bold">{formatConservativePercent(progressPhase1)}</span>
                   </div>
                   <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden p-0.5">
                     <div
@@ -1860,28 +1858,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <div className="flex justify-between text-xs font-semibold mb-1">
-                    <span className="text-gray-300">مرحلة 2: المستهدف الكامل للربح (1,000 ج):</span>
-                    <span className="font-mono text-[#34C759] font-bold">{progressPhase2.toFixed(0)}%</span>
-                  </div>
-                  <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden p-0.5">
-                    <div
-                      className="h-full bg-gradient-to-r from-blue-500 via-indigo-400 to-[#34C759] rounded-full transition-all duration-700"
-                      style={{ width: `${progressPhase2}%` }}
-                    ></div>
-                  </div>
-                </div>
               </div>
             </div>
 
             <div className="pt-3 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-400 gap-2">
               <span>
-                {isBreakEvenCovered 
-                  ? `🎉 ممتاز! تم تخطي نقطة التعادل وتغطية مصاريف اليوم بالكامل. يتبقى ${Math.max(0, targetPhase2 - netContributionToday).toFixed(0)} ج.م للوصول للمستهدف الكامل (1000 ج) (~${bottlesRemainingToFullTarget} زجاجات).` 
-                  : (todaysSales.length === 0
-                      ? `المستهدف اليومي هو 600 ج.م مساهمة لتغطية المصاريف ونقطة التعادل (~${bottlesRemainingToBreakEven} زجاجة عطر).`
-                      : `يلزم بيع حوالي ${bottlesRemainingToBreakEven} زجاجات إضافية لتغطية مصاريف اليوم (الـ 600 ج.م).`)}
+                {todaysSales.length === 0
+                  ? 'لا توجد فواتير إنتاج مؤكدة اليوم؛ لا يُستنتج ربح أو عجز.'
+                  : isBreakEvenCovered
+                  ? `بلغت المساهمة المحسوبة المستهدف المحفوظ؛ لا يمثل ذلك تدقيقًا لصافي الربح. الفائض الحسابي: ${(netContributionToday - targetPhase1).toLocaleString('ar-EG')} ${confirmedSettings?.currency}.`
+                  : `الفارق الحسابي للوصول إلى المستهدف المحفوظ: ${remainingToBreakEven.toLocaleString('ar-EG')} ${confirmedSettings?.currency}. لا يمكن اشتقاق عدد عبوات مستقبلية من هذا الرقم.`}
               </span>
               {onNavigate && canAccessView(currentUser ?? null, View.OPERATIONS_SYSTEM) && (
                 <button
@@ -1911,20 +1897,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/60 space-y-1">
                   <span className="font-bold text-amber-950 block">✨ قاعدة إقناع الزبون الذهبية:</span>
                   <p className="text-[11px] text-amber-900 leading-relaxed">
-                    عرّف الزبون بالنوتات العليا للعطر ثم اتركه يهدأ دقيقة لشم قلب العطر، واعرض دائماً عبوة 50 مل كأفضل حجم اقتصادي وفاخر.
+                    اسأل العميل عن تفضيلاته وقدّم معلومات المنتج المسجلة؛ لا تدّعِ أفضلية حجم أو نتيجة غير موثقة.
                   </p>
                 </div>
 
                 <div className="p-3.5 rounded-2xl bg-blue-50/70 border border-blue-200/60 space-y-1">
                   <span className="font-bold text-blue-950 block">🧴 دقة المعايير والجودة:</span>
                   <p className="text-[11px] text-blue-900 leading-relaxed">
-                    التزم بالجرامات المعتمدة (15 جم للـ 50 مل، 30 جم للـ 100 مل) مع إضافة 1 جم مثبت فقط للعبوات البخاخ لضمان ثبات عالي دون تغبيش.
+                    اعتمد تفاصيل التركيبة والجرامات المحفوظة في سجل الطلب؛ لا تستنتج جرعة من حجم العبوة وحده.
                   </p>
                 </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.04] space-y-2">
-                <span className="text-xs font-black text-[#1D1D1F] block">أكثر العطور طلباً اليوم:</span>
+                <span className="text-xs font-black text-[#1D1D1F] block">أمثلة من كتالوج المنتجات (ليست ترتيبًا للطلب):</span>
                 <div className="flex flex-wrap gap-2">
                   {products.slice(0, 5).map(p => (
                     <span key={p.id} className="px-2.5 py-1 rounded-xl bg-white border border-black/[0.06] text-xs font-semibold text-[#1D1D1F]">
@@ -1955,20 +1941,20 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <AlertOctagon size={18} className="text-red-500" />
-                <h3 className="font-bold text-sm text-[#1D1D1F]">نواقص المخزون (أقل من 100 جم)</h3>
+                <h3 className="font-bold text-sm text-[#1D1D1F]">سجلات المخزون دون العتبة المحفوظة ({stockAlertThreshold} جم)</h3>
               </div>
               <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
                 lowStock.length > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'
               }`}>
-                {lowStock.length} عطور
+                {lowStock.length} سجلات
               </span>
             </div>
 
             {lowStock.length === 0 ? (
               <div className="py-8 text-center text-[#86868B] space-y-1">
-                <CheckCircle2 size={28} className="mx-auto text-emerald-500" />
-                <p className="font-bold text-xs text-[#1D1D1F]">مخزون الزيوت في حالة ممتازة</p>
-                <p className="text-[11px]">جميع العطور يتوفر منها أكثر من 100 جرام خام</p>
+                <CheckCircle2 size={28} className="mx-auto text-slate-400" />
+                <p className="font-bold text-xs text-[#1D1D1F]">{products.length === 0 ? 'لقطة الخادم لا تحتوي سجلات منتجات.' : `لا توجد سجلات منتجات دون ${stockAlertThreshold} جم في اللقطة المؤكدة.`}</p>
+                <p className="text-[11px]">الأرصدة تعكس السجلات البرمجية ولا تثبت جردًا ميدانيًا.</p>
               </div>
             ) : (
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
@@ -2014,44 +2000,46 @@ const Dashboard: React.FC<DashboardProps> = ({
             <h3 className="font-bold text-sm text-[#1D1D1F]">مبيعات اليوم المسجلة</h3>
           </div>
           <span className="text-xs font-medium text-[#86868B]">
-            {todaysSales.length} عملية بيع
+            {todaysSales.length} فاتورة إنتاج مؤكدة
           </span>
         </div>
 
         {todaysSales.length === 0 ? (
           <div className="py-12 text-center text-[#86868B] space-y-2">
             <Coins size={36} className="mx-auto text-gray-300" />
-            <p className="font-black text-sm text-[#1D1D1F]">لا توجد بيانات مبيعات فعلية مسجلة لهذا اليوم</p>
-            <p className="text-[11px]">النظام يعرض البيانات الفعلية المسجلة فقط ولا يستخدم أي أرقام أمثلة أو قيم افتراضية</p>
+            <p className="font-black text-sm text-[#1D1D1F]">لا توجد فواتير إنتاج مؤكدة مسجلة لهذا اليوم</p>
+            <p className="text-[11px]">يعرض النظام السجلات المؤكدة فقط، ولا يملأ أرقامًا افتراضية أو أمثلة.</p>
           </div>
         ) : (
           <>
             {/* Mobile View: Clean Card List (Zero Horizontal Scroll) */}
             <div className="md:hidden space-y-2.5">
               {todaysSales.map((sale) => {
-                const item = sale.items[0];
+                const saleItemsSummary = sale.items.map((item) => `${item.productName} × ${item.quantity}`).join('، ');
+                const saleItemDetails = sale.items.map((item) => `${item.bottleSize} مل × ${item.quantity} (${item.essenceGrams} جم/عبوة)`).join(' · ');
+                const saleContribution = sale.totalPrice - sale.totalCost - Number(sale.commissionAmount ?? sale.totalCommission);
                 return (
                   <div key={sale.id} className="p-3 rounded-2xl bg-[#F5F5F7] border border-black/[0.04] space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-[#86868B] text-[11px]">
-                          {new Date(sale.date).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                          {formatRecordedSaleTime(sale)}
                         </span>
-                        <span className="font-bold text-[#1D1D1F]">{item?.productName || 'خلطة خاصة'}</span>
+                        <span className="font-bold text-[#1D1D1F]">{saleItemsSummary || 'بنود غير متاحة'}</span>
                       </div>
                       <span className="font-mono font-black text-sm text-[#1D1D1F]">
-                        {sale.totalPrice} {settings.currency}
+                        {sale.totalPrice.toLocaleString('ar-EG')} {confirmedSettings?.currency}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between text-[11px] text-[#86868B]">
-                      <span>{item?.bottleSize} مل ({item?.essenceGrams} جم زيت)</span>
+                      <span>{saleItemDetails}</span>
                       <div className="flex items-center gap-2">
                         {canViewProfits(currentUser ?? null) && (
-                          <span className="text-emerald-700 font-bold">مساهمة +{sale.totalProfit} ج</span>
+                          <span className="text-emerald-700 font-bold">مساهمة محسوبة: {saleContribution.toLocaleString('ar-EG')} {confirmedSettings?.currency}</span>
                         )}
                         <span className="px-1.5 py-0.5 rounded bg-white text-[10px] text-[#1D1D1F] border border-black/[0.04]">
-                          {sale.paymentMethod || 'نقدي'}
+                          {sale.paymentMethod}
                         </span>
                       </div>
                     </div>
@@ -2081,25 +2069,28 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </thead>
                 <tbody className="divide-y divide-black/[0.04]">
                   {todaysSales.map((sale) => {
-                    const item = sale.items[0];
+                    const saleItemsSummary = sale.items.map((item) => `${item.productName} × ${item.quantity}`).join('، ');
+                    const saleSizesSummary = sale.items.map((item) => `${item.bottleSize} مل × ${item.quantity}`).join(' · ');
+                    const saleGramsTotal = sale.items.reduce((sum, item) => sum + item.essenceGrams * item.quantity, 0);
+                    const saleContribution = sale.totalPrice - sale.totalCost - Number(sale.commissionAmount ?? sale.totalCommission);
                     return (
                       <tr key={sale.id} className="hover:bg-black/[0.02] transition-colors">
                         <td className="py-3 px-3 text-[#86868B] font-mono">
-                          {new Date(sale.date).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                          {formatRecordedSaleTime(sale)}
                         </td>
-                        <td className="py-3 px-3 font-bold text-[#1D1D1F]">{item?.productName || 'خلطة خاصة'}</td>
-                        <td className="py-3 px-3 font-mono">{item?.bottleSize} مل</td>
-                        <td className="py-3 px-3 font-mono">{item?.essenceGrams} جم</td>
-                        <td className="py-3 px-3 font-mono font-bold text-[#1D1D1F]">{sale.totalPrice} {settings.currency}</td>
+                        <td className="py-3 px-3 font-bold text-[#1D1D1F]">{saleItemsSummary}</td>
+                        <td className="py-3 px-3 font-mono">{saleSizesSummary}</td>
+                        <td className="py-3 px-3 font-mono">{saleGramsTotal.toLocaleString('ar-EG')} جم إجماليًا</td>
+                        <td className="py-3 px-3 font-mono font-bold text-[#1D1D1F]">{sale.totalPrice.toLocaleString('ar-EG')} {confirmedSettings?.currency}</td>
                         {canViewCosts(currentUser ?? null) && (
-                          <td className="py-3 px-3 font-mono text-red-600">{sale.totalCost} {settings.currency}</td>
+                          <td className="py-3 px-3 font-mono text-red-600">{sale.totalCost.toLocaleString('ar-EG')} {confirmedSettings?.currency}</td>
                         )}
                         {canViewProfits(currentUser ?? null) && (
-                          <td className="py-3 px-3 font-mono font-bold text-emerald-600">+{sale.totalProfit} {settings.currency}</td>
+                          <td className="py-3 px-3 font-mono font-bold text-emerald-600">{saleContribution.toLocaleString('ar-EG')} {confirmedSettings?.currency}</td>
                         )}
                         <td className="py-3 px-3">
                           <span className="px-2 py-0.5 rounded-full bg-black/[0.04] text-[10px] font-medium text-[#1D1D1F]">
-                            {sale.paymentMethod || 'نقدي'}
+                            {sale.paymentMethod}
                           </span>
                         </td>
                       </tr>
@@ -2112,13 +2103,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         )}
       </div>
       )}
+      </>
+      )}
 
       {/* Transparent Calculation Breakdown Modal */}
-      {calculationModal && (
+      {dashboardMetricsReady && calculationModal && (
         <CalculationBreakdownModal
           breakdown={calculationModal}
           onClose={() => setCalculationModal(null)}
-          currency={settings.currency}
+          currency={confirmedSettings?.currency || '—'}
         />
       )}
     </div>

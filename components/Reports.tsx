@@ -915,27 +915,6 @@ ${itemsLines}
                     </button>
                   )}
 
-                  {onDeleteSale && sales.some((s) => s.isReversed) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsReportsMenuOpen(false);
-                        const reversedList = sales.filter((s) => s.isReversed);
-                        reversedList.forEach((s) => {
-                          onDeleteSale(s.id, false, 'تنظيف الفواتير الملغاة نهائياً من السجل', 'permanent');
-                        });
-                      }}
-                      className="w-full px-3 py-2 rounded-2xl hover:bg-rose-50 text-rose-700 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
-                    >
-                      <div className="w-7 h-7 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
-                        <Trash2 size={14} />
-                      </div>
-                      <div className="text-right">
-                        <span className="block">حذف الفواتير الملغاة ({sales.filter((s) => s.isReversed).length})</span>
-                        <span className="text-[9.5px] text-rose-500">تنظيف السجل نهائياً</span>
-                      </div>
-                    </button>
-                  )}
                 </div>
               </>
             )}
