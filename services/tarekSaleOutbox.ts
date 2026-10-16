@@ -18,6 +18,7 @@ export interface TarekSaleOutboxEntry {
   retryCount: number;
   status: TarekSaleOutboxStatus;
   errorCode?: string;
+  nextRetryAt?: string;
 }
 
 export interface TarekSaleFlushResult {
@@ -34,6 +35,13 @@ export interface TarekSaleCommitAcknowledgement {
 }
 
 export type TarekSaleCommitter = (intent: WorkerSaleIntentV3) => Promise<TarekSaleCommitAcknowledgement>;
+
+export interface TarekSaleFlushOptions {
+  /** Explicit user action such as "sync now" may retry before the automatic backoff expires. */
+  force?: boolean;
+  /** Injectable clock for deterministic retry tests. */
+  now?: number;
+}
 
 type LockManagerLike = {
   request<T>(name: string, options: { mode: 'exclusive' }, callback: () => Promise<T>): Promise<T>;
@@ -163,6 +171,11 @@ export async function replaceTarekSaleQuote(
   });
 }
 
+function retryDelayMs(retryCount: number): number {
+  const exponent = Math.min(4, Math.max(0, retryCount - 1));
+  return Math.min(15 * 60_000, 60_000 * (2 ** exponent));
+}
+
 async function updateEntry(id: string, status: TarekSaleOutboxStatus, errorCode?: string): Promise<void> {
   await withOutboxLock(async () => {
     const entries = readEntries();
@@ -174,6 +187,11 @@ async function updateEntry(id: string, status: TarekSaleOutboxStatus, errorCode?
         updatedAt: new Date().toISOString(),
         retryCount: entry.retryCount + (status === 'فشل' ? 1 : 0),
       };
+      if (status === 'فشل') {
+        updated.nextRetryAt = new Date(Date.now() + retryDelayMs(updated.retryCount)).toISOString();
+      } else {
+        delete updated.nextRetryAt;
+      }
       if (errorCode) updated.errorCode = errorCode;
       else delete updated.errorCode;
       return updated;
@@ -209,7 +227,10 @@ function isCommitAcknowledgement(
 }
 
 /** Retains every entry on timeout, rejection, malformed ack, or local removal failure. */
-export async function flushTarekSaleOutbox(commit: TarekSaleCommitter): Promise<TarekSaleFlushResult> {
+export async function flushTarekSaleOutbox(
+  commit: TarekSaleCommitter,
+  options: TarekSaleFlushOptions = {},
+): Promise<TarekSaleFlushResult> {
   if (activeFlush) return activeFlush;
   const task = (async () => {
     // A tab may have closed after marking an item in-flight but before observing
@@ -221,6 +242,10 @@ export async function flushTarekSaleOutbox(commit: TarekSaleCommitter): Promise<
 
     for (const entry of pending) {
       if (entry.status === 'يحتاج تحديث السعر') continue;
+      if (entry.status === 'فشل' && !options.force) {
+        const retryAt = Date.parse(entry.nextRetryAt || '');
+        if (!Number.isFinite(retryAt) || (options.now ?? Date.now()) < retryAt) continue;
+      }
       try {
         await updateEntry(entry.id, 'جاري المزامنة');
         const acknowledgement = await commit(entry.intent);

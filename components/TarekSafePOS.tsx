@@ -267,7 +267,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     }
   }
 
-  async function flushOutboxNow(saleToWatch?: string) {
+  async function flushOutboxNow(saleToWatch?: string, forceRetry = false) {
     if (!localWorkerUsable || typeof navigator === 'undefined' || !navigator.onLine) {
       setError('العامل المحلي أو جلسة الاختبار غير متاحين؛ بقيت الفاتورة في هذا المتصفح فقط.');
       return;
@@ -283,7 +283,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
           if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
           return currentUser.getIdToken();
         },
-      ));
+      ), { force: forceRetry });
       setOutbox(getTarekSaleOutbox());
       if (saleToWatch && result.syncedSaleIds.includes(saleToWatch)) {
         setCart([]);
@@ -481,7 +481,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
           {quote && <button type="button" onClick={() => void approveQuotedSale()} disabled={busy || !localWorkerUsable || Date.now() >= quote.expiresAt || cartHasQueuedSale} className="inline-flex items-center gap-2 rounded-xl bg-emerald-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
             {busy ? <LoaderCircle className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} اعتماد البيع ({formatEgp(quote.sale.totalPrice)})
           </button>}
-          {outbox.some((entry) => entry.status === 'فشل' || entry.status === 'معلق' || entry.status === 'جاري المزامنة') && <button type="button" onClick={() => void flushOutboxNow()} disabled={busy || !localWorkerUsable} className="inline-flex items-center gap-2 rounded-xl border border-black/15 px-4 py-2 text-sm font-bold disabled:opacity-40"><RefreshCw size={15} /> مزامنة الآن</button>}
+          {outbox.some((entry) => entry.status === 'فشل' || entry.status === 'معلق' || entry.status === 'جاري المزامنة') && <button type="button" onClick={() => void flushOutboxNow(undefined, true)} disabled={busy || !localWorkerUsable} className="inline-flex items-center gap-2 rounded-xl border border-black/15 px-4 py-2 text-sm font-bold disabled:opacity-40"><RefreshCw size={15} /> مزامنة الآن</button>}
         </div>
 
         {quote && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4" aria-live="polite">

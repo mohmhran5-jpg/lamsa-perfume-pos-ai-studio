@@ -6,6 +6,12 @@ import { createGoogleServiceAccountTokenProvider, FIRESTORE_DATASTORE_SCOPE, GOO
 import { createFirestoreTransport } from '../src/index.mjs';
 import { handleLamsaSale, handleLamsaSaleQuote } from '../src/lamsaSaleWorker.mjs';
 import {
+  LOCAL_LAMSA_SALE_ENDPOINT,
+  quoteTarekSaleToLocalEmulatorWorker,
+  submitTarekSaleIntentToLocalEmulatorWorker,
+} from '../../services/workerSaleClient.ts';
+import { enqueueTarekSale, flushTarekSaleOutbox, getTarekSaleOutbox } from '../../services/tarekSaleOutbox.ts';
+import {
   PRODUCTION_FIRESTORE_DATABASE_ID,
   PRODUCTION_FIRESTORE_PROJECT_ID,
   PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
@@ -672,6 +678,105 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
     assert.equal(Number((await restDoc(lockPath)).generation), lockAfterCommit);
     assert.equal((await restDoc('sales/lamsa-v3-normal-0001')).items[0].sellingPrice, 300);
     assert.equal((await restDoc('sales/lamsa-v3-niche-0001')).items[0].sellingPrice, 450);
+  });
+
+  await check('application Tarek client quotes and commits through Firebase-authenticated Worker Emulator with idempotent outbox replay', async () => {
+    const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const values = new Map();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: {
+        getItem: (key) => values.has(key) ? values.get(key) : null,
+        setItem: (key, value) => values.set(key, String(value)),
+        removeItem: (key) => values.delete(key),
+      },
+    });
+    const saleId = 'lamsa-client-worker-e2e-0001';
+    const quoteId = 'quote-lamsa-client-worker-e2e-0001';
+    const draft = {
+      saleId,
+      quoteId,
+      lines: [{
+        lineId: 'line-client-worker-e2e-1',
+        productId: 'lamsa-prodtransport',
+        bottleSizeId: 'bottle-50-spray',
+        bottleSizeMl: 50,
+        quantity: 1,
+        essenceGramsPerBottle: 15,
+        isColoredBottle: false,
+      }],
+      manualDiscountEgp: 0,
+      paymentMethod: 'نقدي',
+      packagingPaid: false,
+    };
+    let idTokenCalls = 0;
+    let workerRequests = 0;
+    const tokenProvider = async () => { idTokenCalls += 1; return managerToken; };
+    const localFetch = async (input, init) => {
+      assert.equal(new URL(String(input)).origin, workerUrl);
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${managerToken}`);
+      const sent = JSON.parse(String(init?.body || '{}'));
+      assert.equal(sent.schema, 'lamsa.sale-intent/v3');
+      assert.equal(sent.saleId, saleId);
+      const serialized = JSON.stringify(sent);
+      for (const key of ['totalCost', 'totalProfit', 'commission', 'sellingPrice', 'previewTotal']) {
+        assert.equal(serialized.includes(key), false, `client request leaked ${key}`);
+      }
+      workerRequests += 1;
+      return fetch(input, init);
+    };
+
+    try {
+      const stockBefore = (await restDoc('tarek_products/lamsa-prodtransport')).stock_grams;
+      const quote = await quoteTarekSaleToLocalEmulatorWorker(
+        draft,
+        LOCAL_LAMSA_SALE_ENDPOINT,
+        tokenProvider,
+        localFetch,
+      );
+      assert.equal(quote.quoteId, quoteId);
+      assert.equal(quote.sale.id, saleId);
+      assert.equal(quote.sale.totalPrice, 300);
+      assert.equal('totalProfit' in quote.sale, false);
+      assert.equal(await restDoc(`sales/${saleId}`), null);
+      assert.equal((await restDoc('tarek_products/lamsa-prodtransport')).stock_grams, stockBefore,
+        'quote must not commit inventory');
+
+      await enqueueTarekSale(draft);
+      let dropFirstAcknowledgement = true;
+      const commit = async (intent) => {
+        const acknowledgement = await submitTarekSaleIntentToLocalEmulatorWorker(
+          intent,
+          LOCAL_LAMSA_SALE_ENDPOINT,
+          tokenProvider,
+          localFetch,
+        );
+        if (dropFirstAcknowledgement) {
+          dropFirstAcknowledgement = false;
+          throw new Error('worker-sale/network-timeout-after-commit');
+        }
+        return acknowledgement;
+      };
+
+      const lostAck = await flushTarekSaleOutbox(commit);
+      assert.equal(lostAck.failed, 1);
+      assert.equal(getTarekSaleOutbox().length, 1, 'uncertain result must remain durable');
+      assert.equal((await restDoc(`sales/${saleId}`)).items[0].sellingPrice, 300);
+      const stockAfterFirstCommit = (await restDoc('tarek_products/lamsa-prodtransport')).stock_grams;
+      assert.equal(stockAfterFirstCommit, stockBefore - 15);
+
+      const replay = await flushTarekSaleOutbox(commit, { force: true });
+      assert.equal(replay.synced, 1);
+      assert.deepEqual(getTarekSaleOutbox(), []);
+      assert.equal((await restDoc('tarek_products/lamsa-prodtransport')).stock_grams, stockAfterFirstCommit,
+        'idempotent retry must not deduct inventory twice');
+      assert.equal(workerRequests, 3, 'one quote, one commit, and one idempotent retry');
+      assert.equal(idTokenCalls, 3, 'each request must use a fresh Firebase ID token');
+    } finally {
+      if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage);
+      else delete globalThis.localStorage;
+    }
   });
 
   await check('production-pinned OAuth/Firestore REST transport runs quote and commit only through mocked auth and local Emulator', runProductionTransportEmulatorTest);

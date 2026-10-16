@@ -88,11 +88,39 @@ test('ambiguous response retains the exact intent and an already-committed retry
   const retried = await flushTarekSaleOutbox(async (intent) => {
     replayIntent = structuredClone(intent);
     return acknowledgement(intent.saleId, 'already-committed');
-  });
+  }, { force: true });
   assert.deepEqual(replayIntent, firstIntent);
   assert.deepEqual(retried, {
     attempted: 1, synced: 1, failed: 0, syncedSaleIds: ['tarek-outbox-sale-01'],
   });
+  assert.deepEqual(getTarekSaleOutbox(), []);
+});
+
+test('automatic retries back off after failure while explicit manual retry can proceed immediately', async () => {
+  await enqueueTarekSale(draft());
+  let commits = 0;
+  await flushTarekSaleOutbox(async () => {
+    commits += 1;
+    throw new Error('worker-sale/network-timeout');
+  });
+  const failed = getTarekSaleOutbox()[0];
+  assert.equal(failed.retryCount, 1);
+  assert.equal(Number.isFinite(Date.parse(failed.nextRetryAt)), true);
+
+  const skipped = await flushTarekSaleOutbox(async (intent) => {
+    commits += 1;
+    return acknowledgement(intent.saleId);
+  }, { now: Date.parse(failed.nextRetryAt) - 1 });
+  assert.equal(commits, 1, 'automatic retry must not call Worker before its deadline');
+  assert.equal(skipped.failed, 0);
+  assert.equal(getTarekSaleOutbox()[0].status, 'فشل');
+
+  const retried = await flushTarekSaleOutbox(async (intent) => {
+    commits += 1;
+    return acknowledgement(intent.saleId);
+  }, { force: true });
+  assert.equal(commits, 2, 'manual sync may retry immediately');
+  assert.equal(retried.synced, 1);
   assert.deepEqual(getTarekSaleOutbox(), []);
 });
 
