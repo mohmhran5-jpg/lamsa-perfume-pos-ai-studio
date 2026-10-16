@@ -23,6 +23,7 @@ import {
 import {
   isAllowedLamsaRequestOrigin,
   isAllowedTrustedServerTimeOrigin,
+  isLamsaCommissionCounterBootstrapReached,
   isLamsaSalesCutoverReached,
   isProductionLamsaRouteEnabled,
   isTrustedServerTimeRouteEnabled,
@@ -141,6 +142,13 @@ export function assertLamsaRequestAllowed(request, env, now = new Date()) {
   if (!isLamsaSalesCutoverReached(now)) throw new ApiError(503, 'sale/cutover-not-started');
   if (!isAllowedLamsaRequestOrigin(env, request.headers.get('origin'))) {
     throw new ApiError(403, 'worker/origin-not-allowed');
+  }
+}
+
+export function assertLamsaCommissionCounterBootstrapAllowed(request, env, now = new Date()) {
+  assertLamsaRequestAllowed(request, env, now);
+  if (env?.ENVIRONMENT !== 'local-emulator' && !isLamsaCommissionCounterBootstrapReached(now)) {
+    throw new ApiError(503, 'sale/commission-counter-bootstrap-not-started');
   }
 }
 
@@ -782,7 +790,7 @@ export default {
     }
     if (request.method === 'POST' && url.pathname === '/api/lamsa/commission-counter/bootstrap') {
       try {
-        assertLamsaRequestAllowed(request, env);
+        assertLamsaCommissionCounterBootstrapAllowed(request, env);
         return withWorkerCors(await handleLamsaCommissionCounterBootstrap(request, env, {
           authenticate, ...firestoreTransport,
         }), request, env);

@@ -4,12 +4,19 @@ const LOCAL_CORS_ORIGINS = new Set([
 ]);
 const PRODUCTION_PROJECT_ID = 'gen-lang-client-0515786951';
 
-export const LAMSA_SALES_CUTOVER_DATE_KEY = '2026-10-17';
+export const LAMSA_SALES_CUTOVER_DATE_KEY = '2026-10-16';
+export const LAMSA_COMMISSION_COUNTER_BOOTSTRAP_AT_UTC = '2026-10-17T00:00:00.000Z';
 
 export function isLamsaSalesCutoverReached(now = new Date()) {
   return now instanceof Date
     && !Number.isNaN(now.getTime())
     && now.toISOString().slice(0, 10) >= LAMSA_SALES_CUTOVER_DATE_KEY;
+}
+
+export function isLamsaCommissionCounterBootstrapReached(now = new Date()) {
+  return now instanceof Date
+    && !Number.isNaN(now.getTime())
+    && now.getTime() >= Date.parse(LAMSA_COMMISSION_COUNTER_BOOTSTRAP_AT_UTC);
 }
 
 /** Only a single canonical HTTPS origin is accepted for a production browser client. */

@@ -1202,6 +1202,35 @@ test('owner sale commits inventory atomically without automatic commission when 
   assert.equal(commission.eligibleSalesCount, 0);
 });
 
+test('owner POS review payload commits before counter readiness with zero commission and no counter write', async () => {
+  const sale = saleFixture('owner-pos-review-before-counter', 'oil-owner-pos-review', 12, {
+    date: '2026-10-16T10:00:00.000Z',
+    items: [{ id: 'line-owner-pos-review', productId: 'oil-owner-pos-review', productName: 'Oil', bottleSize: 10,
+      essenceGrams: 12, cost: 40, sellingPrice: 120, profit: 0, quantity: 1 }],
+    totalProfit: 0,
+    commissionAmount: 0,
+    totalCommission: 0,
+    commissionTimingStatus: 'needs_owner_review',
+    commissionReviewReason: 'counter-not-ready',
+    commissionCandidateDayKey: '2026-10-16',
+  });
+  await seedProduct(ownerDb, 'oil-owner-pos-review', productFixture('oil-owner-pos-review', 100));
+  await assertSucceeds(commitSaleAndInventory(ownerDb, sale));
+  const saved = (await getDoc(doc(ownerDb, 'sales', sale.id))).data();
+  assert.equal(saved.commissionTimingStatus, 'needs_owner_review');
+  assert.equal(saved.commissionReviewReason, 'counter-not-ready');
+  assert.equal(saved.commissionAmount, 0);
+  assert.equal(saved.totalCommission, 0);
+  assert.equal(saved.totalProfit, 0);
+  assert.equal(saved.items[0].profit, 0);
+  assert.equal((await getDoc(doc(ownerDb, 'commission_day_counters', '2026-10-16'))).exists(), false);
+  assert.equal((await getDoc(doc(ownerDb, 'sale_financials', sale.id))).exists(), false);
+  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-owner-pos-review'))).data().stock_grams, 88);
+  const commission = calculateExactDailyCommission([saved], 'طارق', '2026-10-16', DEFAULT_COMMISSION_POLICY);
+  assert.equal(commission.totalCommissionEgp, 0);
+  assert.equal(commission.eligibleSalesCount, 0);
+});
+
 test('owner sale with a stale counter generation commits as owner-review and does not change the counter', async () => {
   const first = saleFixture('owner-counter-first', 'oil-counter-first', 10);
   const stale = saleFixture('owner-counter-stale', 'oil-counter-stale', 10);
