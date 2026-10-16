@@ -1,0 +1,13 @@
+name = "worker-sale-prototype"
+main = "src/index.mjs"
+compatibility_date = "2026-10-15"
+
+[vars]
+ENVIRONMENT = "local-emulator"
+PROJECT_ID = "demo-worker-sale"
+FIRESTORE_DATABASE_ID = "demo-named-firestore-db"
+OWNER_EMAIL = "owner@example.test"
+FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"
+FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
+# Emulator-only admin bypass. This literal is not a production credential.
+FIRESTORE_EMULATOR_ADMIN_TOKEN = "owner"

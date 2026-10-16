@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function verifiedGoogle() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    function owner() {
+      return verifiedGoogle()
+        && request.auth.token.email.lower() == 'owner@example.test';
+    }
+
+    function grantPath() {
+      return /databases/$(database)/documents/role_assignments/$(request.auth.token.email.lower());
+    }
+
+    function activeRole(role) {
+      return verifiedGoogle()
+        && exists(grantPath())
+        && get(grantPath()).data.email == request.auth.token.email.lower()
+        && get(grantPath()).data.active == true
+        && get(grantPath()).data.role == role;
+    }
+
+    function operationalUser() {
+      return activeRole('INVENTORY_VIEWER')
+        || activeRole('STORE_MANAGER')
+        || activeRole('SALES_OPERATOR');
+    }
+
+    match /role_assignments/{email} {
+      allow get: if owner() || (verifiedGoogle() && request.auth.token.email.lower() == email);
+      allow list, create, update, delete: if owner();
+    }
+
+    // Canonical stock-only data is the one shared real-time source for all devices.
+    match /inventory_stock/{id} {
+      allow read: if owner() || operationalUser();
+      allow write: if owner();
+    }
+
+    // Owner-only source data. The selling worker reads it using its emulator admin mock.
+    match /products/{id} {
+      allow read, write: if owner();
+    }
+
+    match /sales_catalog/{id} {
+      allow read: if owner() || activeRole('STORE_MANAGER') || activeRole('SALES_OPERATOR');
+      allow write: if owner();
+    }
+
+    match /mix_catalog/{id} {
+      allow read: if owner() || activeRole('STORE_MANAGER') || activeRole('SALES_OPERATOR');
+      allow write: if owner();
+    }
+
+    match /mixes/{id} {
+      allow read, write: if owner();
+    }
+
+    match /promotions/{id} {
+      allow read, write: if owner();
+    }
+
+    match /sales/{id} {
+      allow read, write: if owner();
+    }
+
+    // Cashier-visible receipt projection: excludes costs, profit, commission and vault balances.
+    match /sale_operations/{id} {
+      allow read: if owner() || operationalUser();
+      allow write: if owner();
+    }
+
+    match /sale_costs/{id} {
+      allow read, write: if owner();
+    }
+
+    match /sale_financials/{id} {
+      allow read, write: if owner();
+    }
+
+    match /customers/{id} {
+      allow read, write: if owner();
+    }
+
+    match /settings/{id} {
+      allow read, write: if owner();
+    }
+
+    match /vaults/{id} {
+      allow read, write: if owner();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
