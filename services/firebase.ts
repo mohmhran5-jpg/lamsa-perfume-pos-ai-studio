@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, 
+  connectFirestoreEmulator,
   setLogLevel,
   collection, 
   doc, 
@@ -16,9 +17,39 @@ import {
   where,
   startAfter,
   documentId,
-  getDocFromServer
+  getDocFromServer,
+  getDocsFromServer,
+  runTransaction,
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged, User } from 'firebase/auth';
+import {
+  getAuth,
+  connectAuthEmulator,
+  getIdTokenResult,
+  GoogleAuthProvider,
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  User,
+  UserCredential,
+} from 'firebase/auth';
+import {
+  clearCurrentFirebaseRoleAssignment,
+  isVerifiedOwnerIdentity,
+  isVerifiedGoogleIdentity,
+  isVerifiedTarekIdentity,
+  resolveFirebaseAppRole,
+  setCurrentFirebaseRoleAssignment,
+  type AssignedOperationalRole,
+  type FirebaseRoleAssignmentLike,
+  OWNER_AUTH_EMAIL,
+  TAREK_AUTH_EMAIL,
+} from './authPolicy';
+import {
+  commitSaleAndInventory,
+  reverseSaleAndInventory,
+} from './saleSync';
 import firebaseConfig from '../firebase-applet-config.json';
 import { 
   Product, 
@@ -43,6 +74,29 @@ import {
   APP_SYSTEM_VERSION,
   OwnerStaffBroadcast
 } from '../types';
+import {
+  projectBottleSizeFinancials,
+  projectBottleSizeCosts,
+  projectCostPolicySettings,
+  projectFinancialAdminSettings,
+  projectOperationalProduct,
+  projectOperationalStoreSettings,
+  projectProductCost,
+  projectTarekProduct,
+  projectTarekSaleBottleSize,
+  projectTarekSaleProduct,
+  SEPARATED_COLLECTIONS,
+} from './separatedDataModel';
+
+export type SnapshotFreshness = 'live' | 'cached' | 'pending' | 'error' | 'missing';
+
+const getSnapshotFreshness = (snapshot: { metadata: { fromCache: boolean; hasPendingWrites: boolean } }): SnapshotFreshness => {
+  if (snapshot.metadata.hasPendingWrites) return 'pending';
+  if (snapshot.metadata.fromCache) return 'cached';
+  return 'live';
+};
+
+const verifiedSnapshotOptions = { includeMetadataChanges: true } as const;
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -60,42 +114,184 @@ try {
 // Initialize Firestore strictly targeting the provisioned database as per Firebase skill mandate
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
 
+// Temporary local preview safety switch: never let a development preview reach production Firebase.
+if (import.meta.env.DEV && import.meta.env.VITE_PREVIEW_SAFE_MODE === 'true') {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+}
+
 let currentUser: User | null = null;
-let authPromise: Promise<User | null> | null = null;
 
-// Ensure authentication session if available
-export const ensureAuth = (): Promise<User | null> => {
-  if (currentUser) return Promise.resolve(currentUser);
-  if (authPromise) return authPromise;
+export interface EmailRoleAssignment extends FirebaseRoleAssignmentLike {
+  email: string;
+  role: AssignedOperationalRole;
+  active: boolean;
+  updatedAt: string;
+  updatedBy: string;
+  legacyAccess?: boolean;
+}
 
-  authPromise = new Promise((resolve) => {
-    try {
-      onAuthStateChanged(auth, async (user) => {
-        if (user) {
-          currentUser = user;
-          resolve(user);
-        } else {
-          try {
-            const cred = await signInAnonymously(auth);
-            currentUser = cred.user;
-            resolve(cred.user);
-          } catch {
-            // In environments where anonymous auth is restricted by project admin,
-            // continue gracefully with direct store access allowed by firestore rules.
-            resolve(null);
-          }
-        }
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+export type OperationalAccessRequestStatus = 'pending' | 'approved' | 'dismissed';
 
-  return authPromise;
+export interface OperationalAccessRequest {
+  email: string;
+  requesterUid: string;
+  displayName: string;
+  requestedAt: string;
+  status: OperationalAccessRequestStatus;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  grantedRole?: AssignedOperationalRole;
+}
+
+const getVerifiedFirebaseIdentity = async (user: User | null) => {
+  if (!user || user.isAnonymous) {
+    throw new Error('auth/owner-auth-required');
+  }
+  const token = await getIdTokenResult(user);
+  const firebaseClaim = token.claims.firebase as { sign_in_provider?: unknown } | undefined;
+  return {
+    email: token.claims.email,
+    emailVerified: token.claims.email_verified,
+    isAnonymous: user.isAnonymous,
+    signInProvider: firebaseClaim?.sign_in_provider,
+  };
 };
 
-// Immediate background authentication attempt
-ensureAuth().catch(() => {});
+export const validateOwnerAuthUser = async (user: User | null): Promise<User> => {
+  const identity = await getVerifiedFirebaseIdentity(user);
+  if (!user || !isVerifiedOwnerIdentity(identity) || user.email?.trim().toLowerCase() !== OWNER_AUTH_EMAIL) {
+    throw new Error('auth/owner-not-authorized');
+  }
+  return user;
+};
+
+export const validateTarekAuthUser = async (user: User | null): Promise<User> => {
+  const authorized = await validateAuthorizedAuthUser(user);
+  if (authorized.role !== 'TAREK') {
+    throw new Error('auth/tarek-not-authorized');
+  }
+  setCurrentFirebaseRoleAssignment(authorized.roleAssignment);
+  return authorized.user;
+};
+
+export const validateAuthorizedAuthUser = async (user: User | null) => {
+  const identity = await getVerifiedFirebaseIdentity(user);
+  let roleAssignment: FirebaseRoleAssignmentLike | null = null;
+  if (!isVerifiedOwnerIdentity(identity) && typeof identity.email === 'string') {
+    const normalizedEmail = identity.email.trim().toLowerCase();
+    const roleSnapshot = await getDocFromServer(doc(db, 'role_assignments', normalizedEmail));
+    if (roleSnapshot.exists()) {
+      const data = roleSnapshot.data();
+      roleAssignment = {
+        email: typeof data.email === 'string' ? data.email : '',
+        role: typeof data.role === 'string' ? data.role : '',
+        active: data.active === true,
+        updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : '',
+        updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : '',
+      };
+    }
+  }
+  const role = resolveFirebaseAppRole(identity, roleAssignment);
+  if (!user || !role) throw new Error('auth/account-not-authorized');
+  return { user, role, roleAssignment } as const;
+};
+
+export const assertOwnerAuth = (): User => {
+  const user = auth.currentUser;
+  const hasGoogleProvider = Boolean(user?.providerData.some((provider) => provider.providerId === 'google.com'));
+  if (!isVerifiedOwnerIdentity({
+    email: user?.email,
+    emailVerified: user?.emailVerified,
+    isAnonymous: user?.isAnonymous,
+    signInProvider: hasGoogleProvider ? 'google.com' : undefined,
+  })) {
+    throw new Error('auth/owner-auth-required');
+  }
+  return user;
+};
+
+export const assertTarekAuth = (): User => {
+  const user = auth.currentUser;
+  const hasGoogleProvider = Boolean(user?.providerData.some((provider) => provider.providerId === 'google.com'));
+  if (!isVerifiedTarekIdentity({
+    email: user?.email,
+    emailVerified: user?.emailVerified,
+    isAnonymous: user?.isAnonymous,
+    signInProvider: hasGoogleProvider ? 'google.com' : undefined,
+  })) {
+    throw new Error('auth/tarek-auth-required');
+  }
+  return user;
+};
+
+const waitForAuthInitialization = (): Promise<User | null> => new Promise((resolve, reject) => {
+  let unsubscribe = () => {};
+  unsubscribe = onAuthStateChanged(
+    auth,
+    (user) => {
+      unsubscribe();
+      resolve(user);
+    },
+    (error) => {
+      unsubscribe();
+      reject(error);
+    },
+  );
+});
+
+/** Requires a real Firebase session whose signed ID-token claims identify the verified owner. */
+export const requireOwnerAuth = async (): Promise<User> => {
+  const user = auth.currentUser || await waitForAuthInitialization();
+  return validateOwnerAuthUser(user);
+};
+
+/** Requires Tarek's verified Google identity; rules still restrict this session to safe projections. */
+export const requireTarekAuth = async (): Promise<User> => {
+  const user = auth.currentUser || await waitForAuthInitialization();
+  return validateTarekAuthUser(user);
+};
+
+export const signInWithGoogle = async (): Promise<UserCredential | null> => {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    return await signInWithPopup(auth, provider);
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
+    throw error;
+  }
+};
+
+export const completeGoogleRedirectSignIn = (): Promise<UserCredential | null> => getRedirectResult(auth);
+export const signOutFirebase = (): Promise<void> => {
+  clearCurrentFirebaseRoleAssignment();
+  return signOut(auth);
+};
+
+export const getFirebaseAuthErrorMessage = (error: unknown): string => {
+  const authError = error as { code?: string; message?: string } | null;
+  const code = authError?.code || authError?.message;
+  if (code === 'auth/popup-closed-by-user') return 'أُغلقت نافذة Google قبل إكمال تسجيل الدخول.';
+  if (code === 'auth/cancelled-popup-request') return 'أُلغيت محاولة تسجيل الدخول الحالية.';
+  if (code === 'auth/network-request-failed' || code === 'unavailable') return 'تعذر الاتصال بخدمة المصادقة. تحقق من الشبكة ثم أعد المحاولة.';
+  if (code === 'auth/unauthorized-domain') return 'هذا النطاق غير مضاف إلى النطاقات المصرح بها في Firebase Authentication.';
+  if (code === 'auth/operation-not-allowed') return 'تسجيل الدخول باستخدام Google غير مفعّل في Firebase Authentication بعد.';
+  if (code === 'auth/owner-not-authorized') return `هذا الحساب غير مخوّل. استخدم حساب المالك ${OWNER_AUTH_EMAIL}.`;
+  if (code === 'auth/tarek-not-authorized') return `هذا الحساب غير مخوّل لدور طارق. يجب استخدام حساب Google الموثّق ${TAREK_AUTH_EMAIL}.`;
+  if (code === 'auth/account-not-authorized') return 'هذا البريد لا يحمل منحة وصول نشطة؛ يمكنك طلب الوصول من شاشة الدخول، ولن تُمنح صلاحية حتى يراجع المالك الطلب.';
+  if (code === 'auth/owner-auth-required') return 'يلزم تسجيل دخول Google بحساب المالك مع بريد موثّق.';
+  if (code === 'auth/tarek-auth-required') return 'يلزم تسجيل دخول Google الموثّق بحساب طارق المعتمد.';
+  if (code === 'auth/email-not-verified') return 'لم تؤكد Firebase أن البريد الإلكتروني موثّق.';
+  if (code === 'access-request/not-applicable') return 'لا يمكن لهذا الحساب تقديم طلب وصول.';
+  if (code === 'access-request/already-reviewed') return 'سبق أن راجع المالك هذا الطلب. تواصل معه لإعادة فتحه أو منح الصلاحية.';
+  if (code === 'auth/user-disabled') return 'حساب Google هذا معطّل في Firebase Authentication.';
+  return 'تعذر إكمال المصادقة. لم تُمنح أي صلاحية؛ أعد المحاولة بعد التحقق من الاتصال وإعدادات Firebase.';
+};
 
 export enum OperationType {
   CREATE = 'create',
@@ -123,19 +319,23 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+) {
   const errMsg = error instanceof Error ? error.message : String(error);
+  const errorCode = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
 
-  // If it's a transient connection / offline / unavailable event, log a graceful diagnostic without throwing
-  if (
+  const isTransientConnectionError = (
     errMsg.includes('unavailable') ||
     errMsg.includes('the client is offline') ||
     errMsg.includes('could not reach Cloud Firestore backend') ||
-    errMsg.includes('Connection failed')
-  ) {
-    console.warn(`[Firestore Offline Cache] Operation ${operationType} on path ${path} operating in offline-first mode: ${errMsg}`);
-    return;
-  }
+    errMsg.includes('Connection failed') ||
+    errorCode === 'unavailable'
+  );
 
   const errInfo: FirestoreErrorInfo = {
     error: errMsg,
@@ -154,7 +354,25 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
 
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  const statusDetail = {
+    code: errorCode,
+    message: errMsg,
+    operationType,
+    path,
+    transient: isTransientConnectionError,
+  };
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('lamsa-firestore-error', { detail: statusDetail }));
+  }
+
+  if (isTransientConnectionError) {
+    console.warn(`[Firestore unavailable] Operation ${operationType} on ${path}: ${errMsg}`);
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
+
+  // Listener errors are reported to the App status channel; write errors must reject.
+  if (operationType === OperationType.GET) return;
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -184,11 +402,11 @@ export function cleanForFirestore<T>(data: T): T {
 // Test initial connection safely with resilient offline-first fallback
 export const testFirestoreConnection = async (): Promise<boolean> => {
   try {
-    await ensureAuth();
-    await getDoc(doc(db, 'settings', 'store'));
+    await requireOwnerAuth();
+    await getDocFromServer(doc(db, 'settings', 'store'));
     return true;
   } catch (error) {
-    console.warn("Firestore status: operating in resilient offline-first mode.");
+    handleFirestoreError(error, OperationType.GET, 'settings/store');
     return false;
   }
 };
@@ -207,15 +425,19 @@ export const posRealtimeChannel = typeof window !== 'undefined' && 'BroadcastCha
  * Distinguishes between initial load of historical sales and live new sales added in real-time.
  */
 export const subscribeToSales = (
-  onUpdate: (sales: Sale[]) => void,
-  onLiveSaleAdded?: (newSale: Sale, isRemote: boolean) => void
+  onUpdate: (sales: Sale[], freshness?: SnapshotFreshness) => void,
+  onLiveSaleAdded?: (newSale: Sale, isRemote: boolean) => void,
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const salesCol = collection(db, 'sales');
   const q = query(salesCol);
   const seenSaleIds = new Set<string>();
   let isInitialSnapshot = true;
 
-  return onSnapshot(q, (snapshot) => {
+  return onSnapshot(q, verifiedSnapshotOptions, (snapshot) => {
+    const freshness = getSnapshotFreshness(snapshot);
+    onFreshness?.(freshness);
     const list: Sale[] = [];
     snapshot.forEach((docSnap) => {
       const data = docSnap.data() as Sale;
@@ -223,13 +445,13 @@ export const subscribeToSales = (
     });
     // Sort newest first
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    onUpdate(list);
+    onUpdate(list, freshness);
 
     // CRITICAL: Only trigger live alert for new documents added in real-time AFTER the initial load!
     // Historical/past sales are loaded silently without buzzing or alerting.
     if (isInitialSnapshot) {
       snapshot.forEach((docSnap) => seenSaleIds.add(docSnap.id));
-      isInitialSnapshot = false;
+      if (freshness === 'live') isInitialSnapshot = false;
     } else {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added' && !seenSaleIds.has(change.doc.id)) {
@@ -243,32 +465,18 @@ export const subscribeToSales = (
       });
     }
   }, (err) => {
+    onFreshness?.('error');
     handleFirestoreError(err, OperationType.GET, 'sales');
   });
 };
 
-export const addSaleCloud = async (sale: Sale, updatedProducts?: Product[]) => {
-  await ensureAuth();
+export const addSaleCloud = async (sale: Sale) => {
+  await requireOwnerAuth();
+  // Read current remote stock and commit sale + deductions atomically. The
+  // stable sale ID makes retry after an ambiguous response idempotent.
+  await commitSaleAndInventory(db, sale);
 
-  // 1. Immediately persist the sale document so all connected devices sync instantaneously
-  const saleRef = doc(db, 'sales', sale.id);
-  await setDoc(saleRef, cleanForFirestore(sale));
-
-  // 2. Synchronize product inventory stock deductions in the cloud
-  if (updatedProducts && updatedProducts.length > 0) {
-    try {
-      const batch = writeBatch(db);
-      updatedProducts.forEach((p) => {
-        const pRef = doc(db, 'products', p.id.toString());
-        batch.set(pRef, cleanForFirestore(p), { merge: true });
-      });
-      await batch.commit();
-    } catch (prodErr) {
-      console.warn("Product stock cloud sync warning:", prodErr);
-    }
-  }
-
-  // 3. Notify other local browser windows and tabs immediately
+  // Notify other local browser windows only after Firestore confirms the batch.
   if (posRealtimeChannel) {
     try {
       posRealtimeChannel.postMessage({ type: 'LIVE_SALE', sale, timestamp: Date.now() });
@@ -276,27 +484,21 @@ export const addSaleCloud = async (sale: Sale, updatedProducts?: Product[]) => {
   }
 };
 
-export const deleteSaleCloud = async (saleId: string) => {
-  await ensureAuth();
-  await deleteDoc(doc(db, 'sales', saleId));
+/** Invoice editing is disabled; corrections must use the immutable reversal record. */
+export const updateSaleAndInventoryCloud = async (_sale: Sale, _adjustInventory = true): Promise<never> => {
+  throw new Error('sale/edit-disabled-use-reversal');
+};
+
+export const deleteSaleCloud = async (_saleId: string): Promise<never> => {
+  throw new Error('sale/permanent-delete-disabled');
 };
 
 export const deleteSaleAndRestoreInventoryCloud = async (
-  saleId: string,
-  restoredProducts?: Product[]
-) => {
-  await ensureAuth();
-  const batch = writeBatch(db);
-  batch.delete(doc(db, 'sales', saleId));
-
-  if (restoredProducts && restoredProducts.length > 0) {
-    restoredProducts.forEach((p) => {
-      const pRef = doc(db, 'products', p.id.toString());
-      batch.set(pRef, cleanForFirestore(p), { merge: true });
-    });
-  }
-
-  await batch.commit();
+  _saleId: string,
+  _restoreInventory = true,
+  _fallbackCommissionRate = 0.05,
+): Promise<never> => {
+  throw new Error('sale/permanent-delete-disabled');
 };
 
 /**
@@ -306,40 +508,16 @@ export const reverseSaleCloud = async (
   sale: Sale, 
   reversalReason: string, 
   reversedBy: string,
-  restoredProducts?: Product[]
+  restoreInventory = true,
+  fallbackCommissionRate = 0.05,
 ) => {
-  await ensureAuth();
-  const batch = writeBatch(db);
-
-  // Update sale with reversal flag
-  const saleRef = doc(db, 'sales', sale.id);
-  const updatedSale: Partial<Sale> = {
-    ...sale,
-    isReversed: true,
-    reversalReason,
-    reversedBy,
-    reversedAt: new Date().toISOString()
-  };
-  batch.set(saleRef, cleanForFirestore(updatedSale), { merge: true });
-
-  // Restore inventory if provided
-  if (restoredProducts && restoredProducts.length > 0) {
-    restoredProducts.forEach(p => {
-      const pRef = doc(db, 'products', p.id.toString());
-      batch.set(pRef, cleanForFirestore(p), { merge: true });
-    });
-  }
-
-  await batch.commit();
+  await requireOwnerAuth();
+  return reverseSaleAndInventory(db, sale.id, reversalReason, reversedBy, restoreInventory, fallbackCommissionRate);
 };
 
 export const clearAllSalesCloud = async (sales: Sale[]) => {
-  await ensureAuth();
-  const batch = writeBatch(db);
-  sales.forEach((s) => {
-    batch.delete(doc(db, 'sales', s.id));
-  });
-  await batch.commit();
+  void sales;
+  throw new Error('sale/permanent-delete-disabled');
 };
 
 // ========================================================
@@ -347,12 +525,50 @@ export const clearAllSalesCloud = async (sales: Sale[]) => {
 // ========================================================
 
 export const subscribeToProducts = (
-  onUpdate: (products: Product[]) => void, 
-  seedIfEmpty?: Product[]
+  onUpdate: (products: Product[], freshness?: SnapshotFreshness) => void,
+  seedIfEmpty?: Product[],
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const productsCol = collection(db, 'products');
+  const stockProjectionCol = collection(db, SEPARATED_COLLECTIONS.tarekProducts);
+  let baseProducts: Product[] = [];
+  let productsLoaded = false;
+  let productFreshness: SnapshotFreshness | null = null;
+  let stockFreshness: SnapshotFreshness | null = null;
+  let canonicalStocks = new Map<string, number>();
+  const reportFreshness = () => {
+    if (productFreshness === 'error' || stockFreshness === 'error') {
+      onFreshness?.('error');
+      return;
+    }
+    if (productFreshness === null || stockFreshness === null) return;
+    onFreshness?.(
+      productFreshness === 'pending' || stockFreshness === 'pending'
+        ? 'pending'
+        : productFreshness === 'cached' || stockFreshness === 'cached'
+        ? 'cached'
+        : 'live'
+    );
+  };
+  const emitMergedProducts = () => {
+    if (!productsLoaded || productFreshness === null || stockFreshness === null) return;
+    const freshness: SnapshotFreshness =
+      productFreshness === 'pending' || stockFreshness === 'pending'
+        ? 'pending'
+        : productFreshness === 'cached' || stockFreshness === 'cached'
+        ? 'cached'
+        : 'live';
+    onUpdate(baseProducts.map((product) => {
+      const canonicalStock = canonicalStocks.get(String(product.id));
+      return canonicalStock === undefined ? product : { ...product, stock_grams: canonicalStock };
+    }), freshness);
+    reportFreshness();
+  };
 
-  return onSnapshot(productsCol, async (snapshot) => {
+  const unsubscribeProducts = onSnapshot(productsCol, verifiedSnapshotOptions, async (snapshot) => {
+    productFreshness = getSnapshotFreshness(snapshot);
+    reportFreshness();
     if (snapshot.empty && seedIfEmpty && seedIfEmpty.length > 0) {
       // Seed initial perfume catalogue to cloud once if collection is empty
       try {
@@ -369,42 +585,116 @@ export const subscribeToProducts = (
       list.push({ ...data, id: Number(docSnap.id) || data.id });
     });
     list.sort((a, b) => Number(a.id) - Number(b.id));
-    if (list.length > 0) {
-      onUpdate(list);
-    }
+    baseProducts = list;
+    productsLoaded = true;
+    emitMergedProducts();
   }, (err) => {
+    productFreshness = 'error';
+    reportFreshness();
     handleFirestoreError(err, OperationType.GET, 'products');
   });
+  const unsubscribeStock = onSnapshot(stockProjectionCol, verifiedSnapshotOptions, (snapshot) => {
+    stockFreshness = getSnapshotFreshness(snapshot);
+    reportFreshness();
+    const next = new Map<string, number>();
+    snapshot.forEach((docSnap) => {
+      const stock = docSnap.data().stock_grams;
+      if (typeof stock === 'number' && Number.isFinite(stock) && stock >= 0) next.set(docSnap.id, stock);
+    });
+    canonicalStocks = next;
+    emitMergedProducts();
+  }, (err) => {
+    stockFreshness = 'error';
+    reportFreshness();
+    handleFirestoreError(err, OperationType.GET, SEPARATED_COLLECTIONS.tarekProducts);
+  });
+  return () => {
+    unsubscribeProducts();
+    unsubscribeStock();
+  };
 };
 
-export const seedProductsCloud = async (products: Product[]) => {
-  await ensureAuth();
-  // Batch writes in chunks of 450 (Firestore limit is 500)
-  const chunkSize = 400;
-  for (let i = 0; i < products.length; i += chunkSize) {
-    const chunk = products.slice(i, i + chunkSize);
-    const batch = writeBatch(db);
-    chunk.forEach((p) => {
-      const pRef = doc(db, 'products', p.id.toString());
-      batch.set(pRef, cleanForFirestore(p));
+async function writeProductProjectionChunk(
+  products: Product[],
+  mergeLegacy: boolean,
+  stockDeltas: Map<string, number> = new Map(),
+): Promise<Product[]> {
+  const prepared = products.map((product) => ({
+    ...product,
+    updatedAt: product.updatedAt || new Date().toISOString(),
+  }));
+  let savedProducts: Product[] = [];
+  await runTransaction(db, async (transaction) => {
+    const refs = prepared.map((product) => {
+      const id = String(product.id).trim();
+      if (!id || id.includes('/')) throw new Error('product/invalid-document-id');
+      return {
+        product,
+        id,
+        stockRef: doc(db, SEPARATED_COLLECTIONS.tarekProducts, id),
+        operationRef: doc(db, SEPARATED_COLLECTIONS.productOperations, id),
+      };
     });
-    await batch.commit();
+    const stockSnapshots = await Promise.all(refs.map(({ stockRef }) => transaction.get(stockRef)));
+    const operationSnapshots = await Promise.all(refs.map(({ operationRef }) => transaction.get(operationRef)));
+    const nextSavedProducts: Product[] = [];
+
+    for (let index = 0; index < refs.length; index += 1) {
+      const { product, id, stockRef, operationRef } = refs[index];
+      const stockSnapshot = stockSnapshots[index];
+      const operationSnapshot = operationSnapshots[index];
+      const hasCanonicalStock = stockSnapshot.exists() || operationSnapshot.exists();
+      const currentStock = stockSnapshot.exists()
+        ? stockSnapshot.data().stock_grams
+        : operationSnapshot.exists() ? operationSnapshot.data().stock_grams : product.stock_grams;
+      const stockDelta = stockDeltas.get(id) ?? 0;
+      const nextStock = hasCanonicalStock ? Number(currentStock) + stockDelta : currentStock;
+      if (typeof currentStock !== 'number' || !Number.isFinite(currentStock)
+          || !Number.isFinite(stockDelta) || typeof nextStock !== 'number' || !Number.isFinite(nextStock) || nextStock < 0) {
+        throw new Error(`product/invalid-canonical-stock:${id}`);
+      }
+      const synchronizedProduct = { ...product, stock_grams: nextStock };
+      const productDocument = cleanForFirestore(synchronizedProduct);
+      const legacyRef = doc(db, 'products', id);
+      if (mergeLegacy) transaction.set(legacyRef, productDocument, { merge: true });
+      else transaction.set(legacyRef, productDocument);
+      transaction.set(operationRef, cleanForFirestore(projectOperationalProduct(synchronizedProduct)));
+      transaction.set(doc(db, SEPARATED_COLLECTIONS.productCosts, id), cleanForFirestore(projectProductCost(synchronizedProduct)));
+      transaction.set(stockRef, cleanForFirestore(projectTarekProduct(synchronizedProduct)));
+      transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekSaleProducts, id), cleanForFirestore(projectTarekSaleProduct(synchronizedProduct)));
+      nextSavedProducts.push(synchronizedProduct);
+    }
+    savedProducts = nextSavedProducts;
+  });
+  return savedProducts;
+}
+
+export const seedProductsCloud = async (products: Product[], stockDeltas: Map<string, number> = new Map()) => {
+  await requireOwnerAuth();
+  // Five documents per product are written atomically; leave headroom under Firestore's 500-write cap.
+  const chunkSize = 80;
+  for (let i = 0; i < products.length; i += chunkSize) {
+    await writeProductProjectionChunk(products.slice(i, i + chunkSize), false, stockDeltas);
   }
 };
 
-export const saveProductCloud = async (product: Product) => {
-  await ensureAuth();
+export const saveProductCloud = async (product: Product, stockDelta = 0) => {
+  await requireOwnerAuth();
   const withTimestamp: Product = {
     ...product,
     updatedAt: new Date().toISOString(),
   };
-  await setDoc(doc(db, 'products', product.id.toString()), cleanForFirestore(withTimestamp), { merge: true });
+  const [synchronizedProduct] = await writeProductProjectionChunk(
+    [withTimestamp],
+    true,
+    new Map([[String(product.id), stockDelta]]),
+  );
 
   if (posRealtimeChannel) {
     try {
       posRealtimeChannel.postMessage({
         type: 'PRODUCT_UPDATE',
-        product: withTimestamp,
+        product: synchronizedProduct,
         timestamp: Date.now()
       });
     } catch {}
@@ -412,8 +702,15 @@ export const saveProductCloud = async (product: Product) => {
 };
 
 export const deleteProductCloud = async (productId: number | string) => {
-  await ensureAuth();
-  await deleteDoc(doc(db, 'products', productId.toString()));
+  await requireOwnerAuth();
+  const id = String(productId);
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'products', id));
+  batch.delete(doc(db, SEPARATED_COLLECTIONS.productOperations, id));
+  batch.delete(doc(db, SEPARATED_COLLECTIONS.productCosts, id));
+  batch.delete(doc(db, SEPARATED_COLLECTIONS.tarekProducts, id));
+  batch.delete(doc(db, SEPARATED_COLLECTIONS.tarekSaleProducts, id));
+  await batch.commit();
 
   if (posRealtimeChannel) {
     try {
@@ -431,12 +728,16 @@ export const deleteProductCloud = async (productId: number | string) => {
 // ========================================================
 
 export const subscribeToExpenses = (
-  onUpdate: (expenses: Expense[]) => void,
-  seedIfEmpty?: Expense[]
+  onUpdate: (expenses: Expense[], freshness?: SnapshotFreshness) => void,
+  seedIfEmpty?: Expense[],
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const expensesCol = collection(db, 'expenses');
 
-  return onSnapshot(expensesCol, async (snapshot) => {
+  return onSnapshot(expensesCol, verifiedSnapshotOptions, async (snapshot) => {
+    const freshness = getSnapshotFreshness(snapshot);
+    onFreshness?.(freshness);
     if (snapshot.empty && seedIfEmpty && seedIfEmpty.length > 0) {
       try {
         const batch = writeBatch(db);
@@ -457,16 +758,15 @@ export const subscribeToExpenses = (
       list.push({ ...data, id: docSnap.id });
     });
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    if (list.length > 0) {
-      onUpdate(list);
-    }
+    onUpdate(list, freshness);
   }, (err) => {
+    onFreshness?.('error');
     handleFirestoreError(err, OperationType.GET, 'expenses');
   });
 };
 
 export const saveExpenseCloud = async (expense: Expense) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const withTimestamp: Expense = {
     ...expense,
     updatedAt: new Date().toISOString(),
@@ -485,7 +785,7 @@ export const saveExpenseCloud = async (expense: Expense) => {
 };
 
 export const deleteExpenseCloud = async (expenseId: string) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   await deleteDoc(doc(db, 'expenses', expenseId));
 
   if (posRealtimeChannel) {
@@ -504,26 +804,27 @@ export const deleteExpenseCloud = async (expenseId: string) => {
 // ========================================================
 
 export const subscribeToSettings = (
-  onUpdate: (settings: StoreSettings) => void,
-  initialFallback: StoreSettings
+  onUpdate: (
+    settings: StoreSettings,
+    freshness?: SnapshotFreshness,
+    rawSettings?: Partial<StoreSettings> | null
+  ) => void,
+  initialFallback: StoreSettings,
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const settingsDocRef = doc(db, 'settings', 'store');
 
-  return onSnapshot(settingsDocRef, async (docSnap) => {
+  return onSnapshot(settingsDocRef, verifiedSnapshotOptions, (docSnap) => {
+    const snapshotFreshness = getSnapshotFreshness(docSnap);
     if (!docSnap.exists()) {
-      try {
-        await ensureAuth();
-        await setDoc(settingsDocRef, cleanForFirestore({
-          ...initialFallback,
-          updatedAt: new Date().toISOString(),
-        }));
-      } catch (e) {
-        console.error("Error creating initial cloud settings:", e);
-      }
+      const freshness = snapshotFreshness === 'live' ? 'missing' : snapshotFreshness;
+      onFreshness?.(freshness);
+      onUpdate(initialFallback, freshness, null);
       return;
     }
 
-    const data = docSnap.data() as StoreSettings;
+    const data = docSnap.data() as Partial<StoreSettings>;
     const merged: StoreSettings = {
       ...initialFallback,
       ...data,
@@ -546,19 +847,117 @@ export const subscribeToSettings = (
       siteHeadingCustomColor: data.siteHeadingCustomColor ?? initialFallback.siteHeadingCustomColor,
       siteNumeralSystem: data.siteNumeralSystem || initialFallback.siteNumeralSystem,
     };
-    onUpdate(merged);
+    onFreshness?.(snapshotFreshness);
+    onUpdate(merged, snapshotFreshness, data);
   }, (err) => {
+    onFreshness?.('error');
     handleFirestoreError(err, OperationType.GET, 'settings/store');
   });
 };
 
+async function writeStoreProjectionBundle(
+  settingsInput: StoreSettings | null,
+  bottleSizeOverride?: BottleSize[],
+): Promise<StoreSettings> {
+  await requireOwnerAuth();
+  const settingsRef = doc(db, 'settings', 'store');
+  const [legacyBottleSnapshot, saleBottleSnapshot] = await Promise.all([
+    getDocsFromServer(collection(db, 'bottleSizes')),
+    getDocsFromServer(collection(db, SEPARATED_COLLECTIONS.tarekSaleBottleSizes)),
+  ]);
+  let savedSettings: StoreSettings | null = null;
+  await runTransaction(db, async (transaction) => {
+    const settingsSnapshot = await transaction.get(settingsRef);
+    const storedSettings = settingsSnapshot.exists() ? settingsSnapshot.data() as StoreSettings : null;
+    const baseSettings = settingsInput ?? storedSettings;
+    if (!baseSettings) throw new Error('settings/store-missing; refusing to invent sale policy');
+
+    if (legacyBottleSnapshot.size > 100 || saleBottleSnapshot.size > 100) {
+      throw new Error('bottle-size-catalog/existing-over-100-items');
+    }
+    const candidateIds = new Set([
+      ...legacyBottleSnapshot.docs.map((snapshot) => snapshot.id),
+      ...saleBottleSnapshot.docs.map((snapshot) => snapshot.id),
+      ...(storedSettings?.bottleSizes ?? []).map((bottle) => String(bottle.id)),
+      ...(settingsInput?.bottleSizes ?? []).map((bottle) => String(bottle.id)),
+    ].filter((id) => id.trim() && !id.includes('/')));
+    if (candidateIds.size > 200) throw new Error('bottle-size-catalog/too-many-stale-ids');
+    const candidateIdList = [...candidateIds];
+    const legacyRefs = candidateIdList.map((id) => doc(db, 'bottleSizes', id));
+    const saleRefs = candidateIdList.map((id) => doc(db, SEPARATED_COLLECTIONS.tarekSaleBottleSizes, id));
+    const [legacySnapshots, saleSnapshots] = await Promise.all([
+      Promise.all(legacyRefs.map((ref) => transaction.get(ref))),
+      Promise.all(saleRefs.map((ref) => transaction.get(ref))),
+    ]);
+    const legacyBottleSizes = legacySnapshots.flatMap((snapshot, index) => snapshot.exists()
+      ? [{ ...snapshot.data(), id: candidateIdList[index] } as BottleSize]
+      : []);
+    const bottleSizes = bottleSizeOverride
+      ?? (legacyBottleSizes.length > 0 ? legacyBottleSizes : storedSettings?.bottleSizes ?? settingsInput?.bottleSizes ?? []);
+    if (bottleSizes.length > 100) throw new Error('bottle-size-catalog/over-100-items');
+    const bottleIds = new Set<string>();
+    for (const bottle of bottleSizes) {
+      const id = String(bottle.id).trim();
+      if (!id || id.includes('/') || bottleIds.has(id)) throw new Error('bottle-size-catalog/invalid-or-duplicate-id');
+      bottleIds.add(id);
+    }
+
+    const nextSettings: StoreSettings = {
+      ...baseSettings,
+      bottleSizes,
+      updatedAt: new Date().toISOString(),
+    };
+    transaction.set(settingsRef, cleanForFirestore(nextSettings), { merge: true });
+    transaction.set(
+      doc(db, SEPARATED_COLLECTIONS.operationalSettings, 'store'),
+      cleanForFirestore(projectOperationalStoreSettings(nextSettings)),
+    );
+    transaction.set(
+      doc(db, SEPARATED_COLLECTIONS.costCatalog, 'store-cost-inputs'),
+      cleanForFirestore({
+        schemaVersion: 1,
+        costPolicy: projectCostPolicySettings(nextSettings),
+        bottleSizes: bottleSizes.map(projectBottleSizeCosts),
+      }),
+    );
+    transaction.set(
+      doc(db, SEPARATED_COLLECTIONS.financialAdmin, 'store'),
+      cleanForFirestore({
+        schemaVersion: 1,
+        settings: projectFinancialAdminSettings(nextSettings),
+        bottleSizeMargins: bottleSizes.map(projectBottleSizeFinancials),
+      }),
+    );
+
+    for (const bottle of bottleSizes) {
+      const id = String(bottle.id);
+      transaction.set(doc(db, 'bottleSizes', id), cleanForFirestore(bottle));
+      transaction.set(
+        doc(db, SEPARATED_COLLECTIONS.tarekSaleBottleSizes, id),
+        cleanForFirestore(projectTarekSaleBottleSize(bottle)),
+      );
+    }
+    const obsoleteIds = candidateIdList.filter((id) => !bottleIds.has(id));
+    const obsoleteWrites = obsoleteIds.reduce((count, id) => {
+      const index = candidateIdList.indexOf(id);
+      return count + Number(legacySnapshots[index].exists()) + Number(saleSnapshots[index].exists());
+    }, 0);
+    if (4 + bottleSizes.length * 2 + obsoleteWrites > 500) {
+      throw new Error('bottle-size-catalog/transaction-write-limit');
+    }
+    for (const id of obsoleteIds) {
+      const index = candidateIdList.indexOf(id);
+      if (legacySnapshots[index].exists()) transaction.delete(legacyRefs[index]);
+      if (saleSnapshots[index].exists()) transaction.delete(saleRefs[index]);
+    }
+    savedSettings = nextSettings;
+  });
+  if (!savedSettings) throw new Error('settings/projection-transaction-failed');
+  return savedSettings;
+}
+
 export const saveSettingsCloud = async (settings: StoreSettings) => {
-  await ensureAuth();
-  const withTimestamp: StoreSettings = {
-    ...settings,
-    updatedAt: new Date().toISOString(),
-  };
-  await setDoc(doc(db, 'settings', 'store'), cleanForFirestore(withTimestamp), { merge: true });
+  const withTimestamp = await writeStoreProjectionBundle(settings);
 
   if (posRealtimeChannel) {
     try {
@@ -579,17 +978,13 @@ export const subscribeToBottleSizes = (
   onUpdate: (sizes: BottleSize[]) => void,
   initialFallback: BottleSize[]
 ) => {
+  assertOwnerAuth();
   const bottleSizesCol = collection(db, 'bottleSizes');
 
   return onSnapshot(bottleSizesCol, async (snapshot) => {
     if (snapshot.empty && initialFallback && initialFallback.length > 0) {
       try {
-        const batch = writeBatch(db);
-        initialFallback.forEach((b) => {
-          const bRef = doc(db, 'bottleSizes', b.id);
-          batch.set(bRef, cleanForFirestore(b));
-        });
-        await batch.commit();
+        await saveBottleSizesCloud(initialFallback);
       } catch (e) {
         console.error("Error seeding bottle sizes:", e);
       }
@@ -611,13 +1006,7 @@ export const subscribeToBottleSizes = (
 };
 
 export const saveBottleSizesCloud = async (sizes: BottleSize[]) => {
-  await ensureAuth();
-  const batch = writeBatch(db);
-  sizes.forEach((b) => {
-    const bRef = doc(db, 'bottleSizes', b.id);
-    batch.set(bRef, cleanForFirestore(b));
-  });
-  await batch.commit();
+  await writeStoreProjectionBundle(null, sizes);
 
   if (posRealtimeChannel) {
     try {
@@ -635,12 +1024,16 @@ export const saveBottleSizesCloud = async (sizes: BottleSize[]) => {
 // ========================================================
 
 export const subscribeToVaults = (
-  onUpdate: (vaults: FinancialVault[]) => void,
-  initialFallback?: FinancialVault[]
+  onUpdate: (vaults: FinancialVault[], freshness?: SnapshotFreshness) => void,
+  initialFallback?: FinancialVault[],
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const vaultsCol = collection(db, 'vaults');
 
-  return onSnapshot(vaultsCol, async (snapshot) => {
+  return onSnapshot(vaultsCol, verifiedSnapshotOptions, async (snapshot) => {
+    const freshness = getSnapshotFreshness(snapshot);
+    onFreshness?.(freshness);
     if (snapshot.empty && initialFallback && initialFallback.length > 0) {
       try {
         const batch = writeBatch(db);
@@ -659,21 +1052,20 @@ export const subscribeToVaults = (
     snapshot.forEach((docSnap) => {
       list.push(docSnap.data() as FinancialVault);
     });
-    if (list.length > 0) {
-      onUpdate(list);
-    }
+    onUpdate(list, freshness);
   }, (err) => {
+    onFreshness?.('error');
     handleFirestoreError(err, OperationType.GET, 'vaults');
   });
 };
 
 export const saveVaultCloud = async (vault: FinancialVault) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   await setDoc(doc(db, 'vaults', vault.id), cleanForFirestore(vault), { merge: true });
 };
 
 export const saveAllVaultsCloud = async (vaults: FinancialVault[]) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const batch = writeBatch(db);
   vaults.forEach((v) => {
     const vRef = doc(db, 'vaults', v.id);
@@ -683,19 +1075,24 @@ export const saveAllVaultsCloud = async (vaults: FinancialVault[]) => {
 };
 
 export const subscribeToWithdrawals = (
-  onUpdate: (withdrawals: WithdrawalTransaction[]) => void
+  onUpdate: (withdrawals: WithdrawalTransaction[], freshness?: SnapshotFreshness) => void,
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const withdrawalsCol = collection(db, 'withdrawals');
   const q = query(withdrawalsCol);
 
-  return onSnapshot(q, (snapshot) => {
+  return onSnapshot(q, verifiedSnapshotOptions, (snapshot) => {
+    const freshness = getSnapshotFreshness(snapshot);
+    onFreshness?.(freshness);
     const list: WithdrawalTransaction[] = [];
     snapshot.forEach((docSnap) => {
       list.push({ ...docSnap.data(), id: docSnap.id } as WithdrawalTransaction);
     });
     list.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
-    onUpdate(list);
+    onUpdate(list, freshness);
   }, (err) => {
+    onFreshness?.('error');
     handleFirestoreError(err, OperationType.GET, 'withdrawals');
   });
 };
@@ -704,7 +1101,7 @@ export const addWithdrawalCloud = async (
   tx: WithdrawalTransaction,
   updatedVault?: FinancialVault
 ) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const batch = writeBatch(db);
   const txRef = doc(db, 'withdrawals', tx.id);
   batch.set(txRef, cleanForFirestore(tx));
@@ -721,6 +1118,7 @@ export const addWithdrawalCloud = async (
 export const subscribeToStaffAttendance = (
   onUpdate: (records: StaffAttendanceRecord[]) => void
 ) => {
+  assertOwnerAuth();
   const attCol = collection(db, 'staff_attendance');
   const q = query(attCol);
 
@@ -737,7 +1135,7 @@ export const subscribeToStaffAttendance = (
 };
 
 export const saveStaffAttendanceCloud = async (record: StaffAttendanceRecord) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'staff_attendance', record.id);
   await setDoc(docRef, cleanForFirestore(record), { merge: true });
 };
@@ -748,6 +1146,7 @@ export const saveStaffAttendanceCloud = async (record: StaffAttendanceRecord) =>
 export const subscribeToProductionBatches = (
   onUpdate: (batches: ProductionBatch[]) => void
 ) => {
+  assertOwnerAuth();
   const batchesCol = collection(db, 'production_batches');
   const q = query(batchesCol);
 
@@ -764,7 +1163,7 @@ export const subscribeToProductionBatches = (
 };
 
 export const saveProductionBatchCloud = async (batchRecord: ProductionBatch) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'production_batches', batchRecord.id);
   await setDoc(docRef, cleanForFirestore(batchRecord), { merge: true });
 };
@@ -827,6 +1226,7 @@ const getUtcIsoAtAuditOperatingDayStart = (dateKey: string): string => {
 export const subscribeToTodaysAuditLogs = (
   onUpdate: (logs: AuditLogRecord[]) => void
 ) => {
+  assertOwnerAuth();
   const logsCol = collection(db, 'audit_logs');
   const attachCurrentOperatingDayListener = () => {
     const operatingDateKey = getAuditOperatingDateKey();
@@ -867,6 +1267,7 @@ export const subscribeToTodaysAuditLogs = (
 export const loadAuditLogsPage = async (
   cursor: AuditLogPageCursor | null = null
 ): Promise<AuditLogPage> => {
+  await requireOwnerAuth();
   const logsCol = collection(db, 'audit_logs');
   const q = cursor
     ? query(
@@ -900,7 +1301,7 @@ export const loadAuditLogsPage = async (
 };
 
 export const addAuditLogCloud = async (logRecord: AuditLogRecord) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'audit_logs', logRecord.id);
   await setDoc(docRef, cleanForFirestore(logRecord), { merge: true });
 };
@@ -913,6 +1314,7 @@ export const subscribeToAppUsers = (
   onUpdate: (users: AppUser[]) => void,
   seedIfEmpty?: AppUser[]
 ) => {
+  assertOwnerAuth();
   const usersCol = collection(db, 'app_users');
   return onSnapshot(usersCol, async (snapshot) => {
     if (snapshot.empty && seedIfEmpty && seedIfEmpty.length > 0) {
@@ -934,13 +1336,13 @@ export const subscribeToAppUsers = (
 };
 
 export const saveAppUserCloud = async (user: AppUser) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'app_users', user.id);
   await setDoc(docRef, cleanForFirestore(user), { merge: true });
 };
 
 export const seedInitialUsersCloud = async (users: AppUser[]) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const batch = writeBatch(db);
   users.forEach((u) => {
     const docRef = doc(db, 'app_users', u.id);
@@ -949,28 +1351,208 @@ export const seedInitialUsersCloud = async (users: AppUser[]) => {
   await batch.commit();
 };
 
+const normalizeRoleEmail = (emailInput: string): string => {
+  const email = emailInput.trim().toLowerCase();
+  if (!/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(email)) {
+    throw new Error('أدخل بريداً إلكترونياً صالحاً.');
+  }
+  if (email === OWNER_AUTH_EMAIL) {
+    throw new Error('حساب المالك الأساسي لا يحتاج إلى منحة، ولا يمكن إيقافه من هذه الشاشة.');
+  }
+  return email;
+};
+
+export const subscribeToEmailRoleAssignments = (
+  onUpdate: (assignments: EmailRoleAssignment[]) => void,
+  onError: (error: Error) => void,
+) => {
+  assertOwnerAuth();
+  return onSnapshot(collection(db, 'role_assignments'), (snapshot) => {
+    const assignments = snapshot.docs.map((item) => ({
+      ...item.data(),
+      email: item.id,
+    }) as EmailRoleAssignment);
+    assignments.sort((a, b) => a.email.localeCompare(b.email));
+    onUpdate(assignments);
+  }, (reason) => onError(reason instanceof Error ? reason : new Error('تعذر تحميل منح الصلاحيات.')));
+};
+
+/** A verified Google user may request review, but this never creates a role grant. */
+export const submitOperationalAccessRequestCloud = async (): Promise<OperationalAccessRequest> => {
+  const user = auth.currentUser;
+  const identity = await getVerifiedFirebaseIdentity(user);
+  if (!user || !isVerifiedGoogleIdentity(identity) || typeof user.email !== 'string') {
+    throw new Error('auth/email-not-verified');
+  }
+  const email = user.email.trim().toLowerCase();
+  if (!email || email === OWNER_AUTH_EMAIL) throw new Error('access-request/not-applicable');
+
+  const requestRef = doc(db, 'access_requests', email);
+  const existing = await getDocFromServer(requestRef);
+  if (existing.exists()) {
+    const current = existing.data() as OperationalAccessRequest;
+    if (current.status === 'pending') return { ...current, email };
+    if (current.status !== 'dismissed') throw new Error('access-request/already-reviewed');
+  }
+
+  const request: OperationalAccessRequest = {
+    email,
+    requesterUid: user.uid,
+    displayName: user.displayName?.trim().slice(0, 120) || email,
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+  };
+  await setDoc(requestRef, request);
+  return request;
+};
+
+export const getOwnOperationalAccessRequestCloud = async (): Promise<OperationalAccessRequest | null> => {
+  const user = auth.currentUser;
+  const identity = await getVerifiedFirebaseIdentity(user);
+  if (!user || !isVerifiedGoogleIdentity(identity) || typeof user.email !== 'string') {
+    throw new Error('auth/email-not-verified');
+  }
+  const email = user.email.trim().toLowerCase();
+  const snapshot = await getDocFromServer(doc(db, 'access_requests', email));
+  return snapshot.exists()
+    ? { ...snapshot.data(), email: snapshot.id } as OperationalAccessRequest
+    : null;
+};
+
+export const subscribeToOperationalAccessRequestsCloud = (
+  onUpdate: (requests: OperationalAccessRequest[]) => void,
+  onError: (error: Error) => void,
+) => {
+  assertOwnerAuth();
+  return onSnapshot(
+    query(collection(db, 'access_requests'), where('status', '==', 'pending'), limit(100)),
+    (snapshot) => {
+      const requests = snapshot.docs.map((item) => ({
+        ...item.data(),
+        email: item.id,
+      }) as OperationalAccessRequest);
+      requests.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+      onUpdate(requests);
+    },
+    (reason) => onError(reason instanceof Error ? reason : new Error('تعذر تحميل طلبات الوصول.')),
+  );
+};
+
+export const dismissOperationalAccessRequestCloud = async (emailInput: string): Promise<void> => {
+  await requireOwnerAuth();
+  const email = normalizeRoleEmail(emailInput);
+  const reviewedBy = auth.currentUser?.email?.trim().toLowerCase();
+  if (!reviewedBy || reviewedBy !== OWNER_AUTH_EMAIL) throw new Error('auth/owner-auth-required');
+  const requestRef = doc(db, 'access_requests', email);
+  const requestSnapshot = await getDocFromServer(requestRef);
+  if (!requestSnapshot.exists() || requestSnapshot.data().status !== 'pending') return;
+  await setDoc(requestRef, {
+    status: 'dismissed',
+    reviewedAt: new Date().toISOString(),
+    reviewedBy,
+  }, { merge: true });
+};
+
+export const saveEmailRoleAssignmentCloud = async (
+  emailInput: string,
+  role: AssignedOperationalRole = 'INVENTORY_VIEWER',
+): Promise<EmailRoleAssignment> => {
+  await requireOwnerAuth();
+  const email = normalizeRoleEmail(emailInput);
+  if (role !== 'INVENTORY_VIEWER' && role !== 'STORE_MANAGER') throw new Error('دور التشغيل المختار غير مدعوم.');
+  const updatedBy = auth.currentUser?.email?.trim().toLowerCase();
+  if (!updatedBy || updatedBy !== OWNER_AUTH_EMAIL) throw new Error('auth/owner-auth-required');
+  const assignment: EmailRoleAssignment = {
+    email,
+    role,
+    active: true,
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+  };
+  const assignmentRef = doc(db, 'role_assignments', email);
+  const requestRef = doc(db, 'access_requests', email);
+  const requestSnapshot = await getDocFromServer(requestRef);
+  const batch = writeBatch(db);
+  batch.set(assignmentRef, assignment);
+  if (requestSnapshot.exists() && requestSnapshot.data().status === 'pending') {
+    batch.set(requestRef, {
+      status: 'approved',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: updatedBy,
+      grantedRole: role,
+    }, { merge: true });
+  }
+  await batch.commit();
+  return assignment;
+};
+
+export const setEmailRoleAssignmentActiveCloud = async (
+  emailInput: string,
+  active: boolean,
+): Promise<void> => {
+  await requireOwnerAuth();
+  const email = normalizeRoleEmail(emailInput);
+  const updatedBy = auth.currentUser?.email?.trim().toLowerCase();
+  if (!updatedBy || updatedBy !== OWNER_AUTH_EMAIL) throw new Error('auth/owner-auth-required');
+  const roleRef = doc(db, 'role_assignments', email);
+  const previousSnapshot = await getDocFromServer(roleRef);
+  const previousRole = previousSnapshot.exists() ? previousSnapshot.data().role : undefined;
+  const role: AssignedOperationalRole = previousRole === 'STORE_MANAGER'
+    ? 'STORE_MANAGER'
+    : previousRole === 'INVENTORY_VIEWER'
+    ? 'INVENTORY_VIEWER'
+    : email === TAREK_AUTH_EMAIL
+    ? 'STORE_MANAGER'
+    : 'INVENTORY_VIEWER';
+  const assignment: EmailRoleAssignment = {
+    email,
+    role,
+    active,
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+  };
+  const requestRef = doc(db, 'access_requests', email);
+  const requestSnapshot = await getDocFromServer(requestRef);
+  const batch = writeBatch(db);
+  batch.set(roleRef, assignment);
+  if (!active && requestSnapshot.exists()
+    && ['pending', 'approved'].includes(String(requestSnapshot.data().status))) {
+    batch.set(requestRef, {
+      status: 'dismissed',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: updatedBy,
+    }, { merge: true });
+  }
+  await batch.commit();
+};
+
 // ========================================================
 // 12. DAILY CLOSURES (فتح وإغلاق اليوم التشغيلي)
 // ========================================================
 
 export const subscribeToDailyClosures = (
-  onUpdate: (closures: DailyClosure[]) => void
+  onUpdate: (closures: DailyClosure[], freshness?: SnapshotFreshness) => void,
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const closuresCol = collection(db, 'daily_closures');
-  return onSnapshot(closuresCol, (snapshot) => {
+  return onSnapshot(closuresCol, verifiedSnapshotOptions, (snapshot) => {
+    const freshness = getSnapshotFreshness(snapshot);
+    onFreshness?.(freshness);
     const list: DailyClosure[] = [];
     snapshot.forEach((docSnap) => {
       list.push({ ...docSnap.data(), id: docSnap.id } as DailyClosure);
     });
     list.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
-    onUpdate(list);
+    onUpdate(list, freshness);
   }, (err) => {
+    onFreshness?.('error');
     handleFirestoreError(err, OperationType.GET, 'daily_closures');
   });
 };
 
 export const saveDailyClosureCloud = async (closure: DailyClosure) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'daily_closures', closure.id);
   await setDoc(docRef, cleanForFirestore(closure), { merge: true });
 };
@@ -982,6 +1564,7 @@ export const saveDailyClosureCloud = async (closure: DailyClosure) => {
 export const subscribeToPurchaseRequests = (
   onUpdate: (requests: PurchaseRequest[]) => void
 ) => {
+  assertOwnerAuth();
   const reqCol = collection(db, 'purchase_requests');
   return onSnapshot(reqCol, (snapshot) => {
     const list: PurchaseRequest[] = [];
@@ -996,7 +1579,7 @@ export const subscribeToPurchaseRequests = (
 };
 
 export const savePurchaseRequestCloud = async (request: PurchaseRequest) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'purchase_requests', request.id);
   await setDoc(docRef, cleanForFirestore(request), { merge: true });
 };
@@ -1008,6 +1591,7 @@ export const savePurchaseRequestCloud = async (request: PurchaseRequest) => {
 export const subscribeToCustomerRequests = (
   onUpdate: (requests: CustomerRequest[]) => void
 ) => {
+  assertOwnerAuth();
   const reqCol = collection(db, 'customer_requests');
   return onSnapshot(reqCol, (snapshot) => {
     const list: CustomerRequest[] = [];
@@ -1022,7 +1606,7 @@ export const subscribeToCustomerRequests = (
 };
 
 export const saveCustomerRequestCloud = async (request: CustomerRequest) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'customer_requests', request.id);
   await setDoc(docRef, cleanForFirestore(request), { merge: true });
 };
@@ -1034,6 +1618,7 @@ export const saveCustomerRequestCloud = async (request: CustomerRequest) => {
 export const subscribeToStockChecks = (
   onUpdate: (checks: StockCheckRecord[]) => void
 ) => {
+  assertOwnerAuth();
   const checksCol = collection(db, 'stock_checks');
   return onSnapshot(checksCol, (snapshot) => {
     const list: StockCheckRecord[] = [];
@@ -1048,7 +1633,7 @@ export const subscribeToStockChecks = (
 };
 
 export const saveStockCheckCloud = async (record: StockCheckRecord) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'stock_checks', record.id);
   await setDoc(docRef, cleanForFirestore(record), { merge: true });
 };
@@ -1084,17 +1669,23 @@ export const getCustomerDocId = (c: Partial<CustomCustomerRecord>): string => {
 };
 
 export const subscribeToCustomCustomers = (
-  onUpdate: (customers: CustomCustomerRecord[]) => void
+  onUpdate: (customers: CustomCustomerRecord[], freshness?: SnapshotFreshness) => void,
+  onFreshness?: (freshness: SnapshotFreshness) => void
 ) => {
+  assertOwnerAuth();
   const custCol = collection(db, 'customers');
   return onSnapshot(
     custCol,
+    verifiedSnapshotOptions,
     (snapshot) => {
+      const freshness = getSnapshotFreshness(snapshot);
+      onFreshness?.(freshness);
       const list: CustomCustomerRecord[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as CustomCustomerRecord;
         if (isVirtualDemoCustomer(data)) {
-          deleteDoc(doc(db, 'customers', docSnap.id)).catch(() => {});
+          // Keep existing records untouched; demo filtering is presentation-only.
+          list.push({ ...data, id: docSnap.id });
           return;
         }
         list.push({ ...data, id: docSnap.id });
@@ -1104,9 +1695,10 @@ export const subscribeToCustomCustomers = (
           new Date(b.updatedAt || b.createdAt || 0).getTime() -
           new Date(a.updatedAt || a.createdAt || 0).getTime()
       );
-      onUpdate(list);
+      onUpdate(list, freshness);
     },
     (err) => {
+      onFreshness?.('error');
       handleFirestoreError(err, OperationType.GET, 'customers');
     }
   );
@@ -1114,7 +1706,7 @@ export const subscribeToCustomCustomers = (
 
 export const saveCustomCustomerCloud = async (record: CustomCustomerRecord) => {
   if (isVirtualDemoCustomer(record)) return;
-  await ensureAuth();
+  await requireOwnerAuth();
   const docId = getCustomerDocId(record);
   const docRef = doc(db, 'customers', docId);
   await setDoc(
@@ -1129,7 +1721,7 @@ export const saveCustomCustomerCloud = async (record: CustomCustomerRecord) => {
 };
 
 export const deleteCustomCustomerCloud = async (record: Partial<CustomCustomerRecord>) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docId = getCustomerDocId(record);
   await deleteDoc(doc(db, 'customers', docId));
 };
@@ -1141,6 +1733,7 @@ export const deleteCustomCustomerCloud = async (record: Partial<CustomCustomerRe
 export const subscribeToSavedMixes = (
   onUpdate: (mixes: SavedMixFormula[]) => void
 ) => {
+  assertOwnerAuth();
   const mixesCol = collection(db, 'saved_mixes');
   return onSnapshot(
     mixesCol,
@@ -1164,7 +1757,7 @@ export const subscribeToSavedMixes = (
 };
 
 export const saveSavedMixCloud = async (formula: SavedMixFormula) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'saved_mixes', formula.id);
   await setDoc(
     docRef,
@@ -1177,7 +1770,7 @@ export const saveSavedMixCloud = async (formula: SavedMixFormula) => {
 };
 
 export const deleteSavedMixCloud = async (mixId: string) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   await deleteDoc(doc(db, 'saved_mixes', mixId));
 };
 
@@ -1260,15 +1853,13 @@ export const detectCurrentDeviceMetadata = (): {
 };
 
 /**
- * Publish heartbeats and real-time terminal presence to Firestore
+ * Publish device presence and return the confirmed Firestore write duration.
  */
 export const publishDevicePresence = async (
-  currentUser: AppUser | null,
-  currentViewName?: string,
-  syncLatencyMs?: number
-): Promise<void> => {
+  currentUser: AppUser | null
+): Promise<number> => {
   try {
-    await ensureAuth();
+    await requireOwnerAuth();
     const deviceId = getLocalDeviceId();
     const meta = detectCurrentDeviceMetadata();
     const docRef = doc(db, 'connected_devices', deviceId);
@@ -1281,17 +1872,18 @@ export const publishDevicePresence = async (
       deviceName: meta.deviceName,
       deviceType: meta.deviceType,
       browser: meta.browser,
-      currentView: currentViewName || 'نظام لمسة عطر',
       isOnline: true,
       lastSeen: new Date().toISOString(),
       lastSeenMs: Date.now(),
       appVersion: APP_SYSTEM_VERSION,
-      syncLatencyMs: syncLatencyMs ?? 18,
     };
 
+    const startedAt = performance.now();
     await setDoc(docRef, cleanForFirestore(payload), { merge: true });
+    return Math.max(0, Math.round(performance.now() - startedAt));
   } catch (err) {
-    // Graceful silent fallback if offline
+    handleFirestoreError(err, OperationType.WRITE, 'connected_devices');
+    throw err;
   }
 };
 
@@ -1300,6 +1892,7 @@ export const publishDevicePresence = async (
  */
 export const markDeviceOfflineCloud = async (): Promise<void> => {
   try {
+    assertOwnerAuth();
     const deviceId = getLocalDeviceId();
     const docRef = doc(db, 'connected_devices', deviceId);
     await setDoc(
@@ -1320,8 +1913,10 @@ export const markDeviceOfflineCloud = async (): Promise<void> => {
  * Subscribe in real time to all currently connected active terminals across all devices
  */
 export const subscribeToConnectedDevices = (
-  onUpdate: (devices: ConnectedDeviceRecord[]) => void
+  onUpdate: (devices: ConnectedDeviceRecord[]) => void,
+  onStatus?: (status: 'live' | 'cached' | 'error') => void
 ) => {
+  assertOwnerAuth();
   const devicesCol = collection(db, 'connected_devices');
   const activeWindowMs = 3 * 60 * 1000;
   const queryStartCutoff = Date.now() - activeWindowMs;
@@ -1362,7 +1957,9 @@ export const subscribeToConnectedDevices = (
 
   const unsubscribe = onSnapshot(
     devicesQuery,
+    { includeMetadataChanges: true },
     (snapshot) => {
+      onStatus?.(snapshot.metadata.fromCache ? 'cached' : 'live');
       latestDevices = snapshot.docs.map((docSnap) => ({
         ...docSnap.data(),
         deviceId: docSnap.id,
@@ -1370,6 +1967,7 @@ export const subscribeToConnectedDevices = (
       publishActiveDevices();
     },
     (err) => {
+      onStatus?.('error');
       handleFirestoreError(err, OperationType.GET, 'connected_devices');
     }
   );
@@ -1381,34 +1979,12 @@ export const subscribeToConnectedDevices = (
 };
 
 /**
- * Turbo Sync ping: performs an instantaneous round-trip ping to measure real-time latency
- * and ensure Firestore cache is fully reconciled with server
- */
-export const measureTurboSyncLatency = async (): Promise<number> => {
-  const start = performance.now();
-  try {
-    const testDoc = doc(db, 'test', 'sync_pulse');
-    await setDoc(
-      testDoc,
-      {
-        pulseMs: Date.now(),
-        clientDeviceId: getLocalDeviceId(),
-      },
-      { merge: true }
-    );
-    const end = performance.now();
-    return Math.max(8, Math.round(end - start));
-  } catch {
-    return 32;
-  }
-};
-
-/**
  * Real-Time Owner Direct Directives & Staff Broadcasts
  */
 export const subscribeToOwnerBroadcasts = (
   onUpdate: (broadcasts: OwnerStaffBroadcast[]) => void
 ) => {
+  assertOwnerAuth();
   const broadcastsCol = collection(db, 'owner_broadcasts');
   return onSnapshot(
     broadcastsCol,
@@ -1431,7 +2007,7 @@ export const subscribeToOwnerBroadcasts = (
 };
 
 export const sendOwnerBroadcastCloud = async (broadcast: OwnerStaffBroadcast) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'owner_broadcasts', broadcast.id);
   await setDoc(
     docRef,
@@ -1447,7 +2023,7 @@ export const acknowledgeOwnerBroadcastCloud = async (
   broadcastId: string,
   employeeName: string
 ) => {
-  await ensureAuth();
+  await requireOwnerAuth();
   const docRef = doc(db, 'owner_broadcasts', broadcastId);
   const snap = await getDoc(docRef);
   if (snap.exists()) {
@@ -1464,5 +2040,3 @@ export const acknowledgeOwnerBroadcastCloud = async (
     }
   }
 };
-
-

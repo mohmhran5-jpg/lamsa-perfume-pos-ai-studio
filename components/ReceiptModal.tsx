@@ -555,6 +555,7 @@ export const ThermalReceiptLiveView: React.FC<ThermalReceiptLiveViewProps> = ({
 interface ReceiptModalProps {
   sale: Sale;
   settings: StoreSettings;
+  cloudSyncSucceeded?: boolean | null;
   onClose: () => void;
   onUpdateSettings?: (settings: StoreSettings) => void;
   previousCustomers?: { name: string; phone: string }[];
@@ -564,6 +565,7 @@ interface ReceiptModalProps {
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   sale,
   settings,
+  cloudSyncSucceeded = null,
   onClose,
   onUpdateSettings,
   previousCustomers = [],
@@ -945,6 +947,18 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               <span>{isEditingBranding ? 'العودة للمشاركة' : 'تنسيق الفاتورة'}</span>
             </button>
           </div>
+
+          {cloudSyncSucceeded !== null && (
+            <div role="status" aria-live="polite" className={`mb-2 rounded-xl border px-3 py-2 text-[10px] font-black leading-relaxed ${
+              cloudSyncSucceeded
+                ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                : 'border-amber-400/35 bg-amber-500/10 text-amber-100'
+            }`}>
+              {cloudSyncSucceeded
+                ? 'تأكيد Firestore: حُفظت هذه الفاتورة سحابياً.'
+                : 'تنبيه: الفاتورة محفوظة محلياً فقط؛ لم يؤكد Firestore المزامنة.'}
+            </div>
+          )}
 
           {/* Smooth Scrollable Complete Live Preview Area (Top to Bottom Visibility) */}
           <div className="flex-1 min-h-0 max-h-[52vh] md:max-h-none overflow-y-auto overscroll-contain modal-scroll-area py-2 px-1 flex flex-col items-center justify-start">

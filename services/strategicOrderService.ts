@@ -9,7 +9,7 @@ import {
   getApprovedOilGramCost,
   isLiveProductionSale
 } from '../types';
-import { db, cleanForFirestore, handleFirestoreError, OperationType } from './firebase';
+import { db, cleanForFirestore, handleFirestoreError, OperationType, assertOwnerAuth, requireOwnerAuth } from './firebase';
 import { collection, doc, setDoc, onSnapshot, getDocs } from 'firebase/firestore';
 
 const LOCAL_STORAGE_ORDERS_KEY = 'lamsa_strategic_orders_v1';
@@ -269,6 +269,7 @@ export function saveLocalStrategicOrders(orders: StrategicReplenishmentOrder[]):
 }
 
 export const subscribeToStrategicOrders = (callback: (orders: StrategicReplenishmentOrder[]) => void) => {
+  assertOwnerAuth();
   const path = 'replenishment_orders';
   return onSnapshot(collection(db, path), (snapshot) => {
     const cloudOrders: StrategicReplenishmentOrder[] = [];
@@ -284,11 +285,13 @@ export const subscribeToStrategicOrders = (callback: (orders: StrategicReplenish
     }
   }, (err) => {
     console.warn('Strategic orders subscription error, using local fallback:', err);
+    handleFirestoreError(err, OperationType.GET, path);
     callback(getLocalStrategicOrders());
   });
 };
 
 export const saveStrategicOrderCloud = async (order: StrategicReplenishmentOrder): Promise<void> => {
+  await requireOwnerAuth();
   const path = 'replenishment_orders';
   try {
     const cleaned = cleanForFirestore(order);

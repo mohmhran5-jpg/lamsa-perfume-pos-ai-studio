@@ -1,6 +1,6 @@
 import { FragranceDatabaseEntry, Product, Season, Gender, PerfumeType, TimeOfDay } from '../types';
 import { analyzePerfumeDetails, searchFragranceIntelligence } from './geminiService';
-import { db, cleanForFirestore, handleFirestoreError, OperationType } from './firebase';
+import { db, cleanForFirestore, handleFirestoreError, OperationType, assertOwnerAuth, requireOwnerAuth } from './firebase';
 import { collection, doc, setDoc, getDocs, onSnapshot, writeBatch } from 'firebase/firestore';
 
 const LOCAL_STORAGE_KEY = 'lamsa_fragrance_db_v2';
@@ -788,6 +788,7 @@ export function scanDuplicateFragrances(products: Product[]): { name: string; co
 export const subscribeToFragranceDatabase = (
   callback: (entries: FragranceDatabaseEntry[]) => void
 ) => {
+  assertOwnerAuth();
   const path = 'fragrance_database';
   return onSnapshot(collection(db, path), (snapshot) => {
     const cloudEntries: FragranceDatabaseEntry[] = [];
@@ -805,11 +806,13 @@ export const subscribeToFragranceDatabase = (
     }
   }, (err) => {
     console.warn('Fragrance DB subscription error, using local storage:', err);
+    handleFirestoreError(err, OperationType.GET, path);
     callback(getLocalFragranceDatabase());
   });
 };
 
 export const saveFragranceProfileCloud = async (entry: FragranceDatabaseEntry): Promise<void> => {
+  await requireOwnerAuth();
   const path = 'fragrance_database';
   try {
     const cleaned = cleanForFirestore(entry);
@@ -828,6 +831,7 @@ export const bulkUpsertFragranceProfilesCloud = async (
   entries: FragranceDatabaseEntry[]
 ): Promise<FragranceDatabaseEntry[]> => {
   if (!entries || entries.length === 0) return getLocalFragranceDatabase();
+  await requireOwnerAuth();
   const path = 'fragrance_database';
 
   // 1. Update local database immediately for instant UI responsiveness
@@ -852,13 +856,14 @@ export const bulkUpsertFragranceProfilesCloud = async (
     });
     await batch.commit();
   } catch (err) {
-    console.warn('Offline/local fallback for bulkUpsertFragranceProfilesCloud:', err);
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 
   return mergedList;
 };
 
 export const bulkSeedFragranceDatabase = async (): Promise<void> => {
+  await requireOwnerAuth();
   const path = 'fragrance_database';
   try {
     const batch = writeBatch(db);
@@ -869,7 +874,7 @@ export const bulkSeedFragranceDatabase = async (): Promise<void> => {
     await batch.commit();
     saveLocalFragranceDatabase(VERIFIED_SEED_FRAGRANCES);
   } catch (err) {
-    console.warn('Could not bulk seed online, saved locally:', err);
+    handleFirestoreError(err, OperationType.WRITE, path);
     saveLocalFragranceDatabase(VERIFIED_SEED_FRAGRANCES);
   }
 };
@@ -917,4 +922,3 @@ export const bulkSaveEnrichedPerfumesToEncyclopedia = async (
 
   return bulkUpsertFragranceProfilesCloud(entries);
 };
-

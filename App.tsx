@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Inventory from './components/Inventory';
 import POS from './components/POS';
+import TarekReadOnlyWorkspace from './components/TarekReadOnlyWorkspace';
 import Reports from './components/Reports';
 import Expenses from './components/Expenses';
 import Settings from './components/Settings';
@@ -30,13 +31,15 @@ import OwnerLiveAlertsRadarModal from './components/OwnerLiveAlertsRadarModal';
 import PWAInstallModal from './components/PWAInstallModal';
 import ConnectedDevicesSyncModal from './components/ConnectedDevicesSyncModal';
 import StaffEntitlements from './components/StaffEntitlements';
+import OwnerCommissionCounterBootstrap from './components/OwnerCommissionCounterBootstrap';
+import { prepareTarekReadOnlyCatalogCloud } from './services/separatedDataService';
 import { soundAlertService } from './services/soundAlertService';
 import { browserNotificationService } from './services/browserNotificationService';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { 
   View, 
   Product, 
   Sale, 
-  SaleItem,
   Expense, 
   StoreSettings, 
   BottleSize, 
@@ -77,6 +80,15 @@ import {
   removeDeletedTombstone,
   getDeletedTombstones
 } from './services/persistenceService';
+import {
+  enqueueOfflineAction,
+  flushPendingSaleQueue,
+  getOfflineQueue,
+  startSaleQueueAutoRetry,
+  subscribeToOfflineQueue,
+  type SaleFlushResult,
+} from './services/offlineSyncService';
+import { clearCurrentFirebaseRoleAssignment, setCurrentFirebaseRoleAssignment, TAREK_AUTH_EMAIL } from './services/authPolicy';
 import { 
   subscribeToFragranceDatabase, 
   saveFragranceProfileCloud, 
@@ -113,8 +125,7 @@ import {
   saveAllVaultsCloud,
   addWithdrawalCloud,
   addSaleCloud,
-  deleteSaleCloud,
-  deleteSaleAndRestoreInventoryCloud,
+  reverseSaleCloud,
   saveProductCloud,
   deleteProductCloud,
   seedProductsCloud,
@@ -154,8 +165,21 @@ import {
   subscribeToOwnerBroadcasts,
   sendOwnerBroadcastCloud,
   acknowledgeOwnerBroadcastCloud,
+  auth,
+  completeGoogleRedirectSignIn,
+  getFirebaseAuthErrorMessage,
+  signInWithGoogle,
+  signOutFirebase,
+  validateAuthorizedAuthUser,
+  submitOperationalAccessRequestCloud,
+  getOwnOperationalAccessRequestCloud,
+  subscribeToOperationalAccessRequestsCloud,
+  type OperationalAccessRequestStatus,
+  type SnapshotFreshness,
 } from './services/firebase';
-import { getSessionUser, saveSessionUser, canAccessView, hasPermission, logRejectedAccessAttempt } from './services/authService';
+import { getSaleStockDeductions } from './services/saleSync';
+import type { DashboardDataSourceHealthMap, DashboardDataSourceKey, DashboardDataSourceState } from './services/dashboardDataTypes';
+import { clearSessionUser, canAccessView, hasPermission, logRejectedAccessAttempt } from './services/authService';
 import { Lock, Radio, CheckCircle2, X, Sparkles, Star, Clock, Hourglass, ExternalLink, Repeat } from 'lucide-react';
 
 // Seed Data
@@ -289,6 +313,13 @@ const INITIAL_PRODUCTS: Product[] = [
   { id: 127, name: "أزورو", brand: "أزارو", origin: "فرنسي", gender: "رجالي", season: "كل الفصول", type: "عادي", stock_grams: 1000 }
 ];
 
+const isInitialCatalogTemplate = (product: Product): boolean =>
+  INITIAL_PRODUCTS.some((template) =>
+    String(template.id) === String(product.id)
+    && template.name === product.name
+    && template.stock_grams === product.stock_grams
+  );
+
 // Default is strictly zero sales as requested (no mock or simulated sales)
 const INITIAL_SALES: Sale[] = [];
 
@@ -306,6 +337,46 @@ const mergeAuditLogRecords = (
   return Array.from(recordsById.values()).sort(
     (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
   );
+};
+
+interface DashboardServerData {
+  sales: Sale[];
+  products: Product[];
+  expenses: Expense[];
+  settings: Partial<StoreSettings> | null;
+  vaults: FinancialVault[];
+  withdrawals: WithdrawalTransaction[];
+  closures: DailyClosure[];
+  customers: CustomCustomerRecord[];
+}
+
+const createInitialDashboardFeedHealth = (): DashboardDataSourceHealthMap => ({
+  sales: { state: 'connecting', lastConfirmedAt: null },
+  products: { state: 'connecting', lastConfirmedAt: null },
+  expenses: { state: 'connecting', lastConfirmedAt: null },
+  settings: { state: 'connecting', lastConfirmedAt: null },
+  vaults: { state: 'connecting', lastConfirmedAt: null },
+  withdrawals: { state: 'connecting', lastConfirmedAt: null },
+  closures: { state: 'connecting', lastConfirmedAt: null },
+  customers: { state: 'connecting', lastConfirmedAt: null },
+});
+
+const createInitialDashboardServerData = (): DashboardServerData => ({
+  sales: [],
+  products: [],
+  expenses: [],
+  settings: null,
+  vaults: [],
+  withdrawals: [],
+  closures: [],
+  customers: [],
+});
+
+const getBrowserLocalDateKey = (date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 const App: React.FC = () => {
@@ -495,16 +566,29 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => subscribeToTodaysAuditLogs((cloudAudit) => {
-    setAuditLogs((existing) => mergeAuditLogRecords(existing, cloudAudit));
-    setIsCloudConnected(true);
-  }), []);
+  const [authStatus, setAuthStatus] = useState<'checking' | 'signed_out' | 'unauthorized' | 'error' | 'ready'>('checking');
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [accessRequestStatus, setAccessRequestStatus] = useState<OperationalAccessRequestStatus | 'none'>('none');
+  const [isSubmittingAccessRequest, setIsSubmittingAccessRequest] = useState(false);
+  const [isCheckingAccessRequest, setIsCheckingAccessRequest] = useState(false);
+  const [isPreparingTarekCatalog, setIsPreparingTarekCatalog] = useState(false);
+  const [tarekCatalogPrepStatus, setTarekCatalogPrepStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    if (currentView === View.AUDIT_LOGS) void loadMoreAuditLogs();
-  }, [currentView, loadMoreAuditLogs]);
+    if (authStatus !== 'ready' || authEmail?.trim().toLowerCase() !== 'moh.mhran@gmail.com') return;
+    return subscribeToTodaysAuditLogs((cloudAudit) => {
+      setAuditLogs((existing) => mergeAuditLogRecords(existing, cloudAudit));
+    });
+  }, [authStatus, authEmail]);
 
-  // User Accounts & Authentication State (with automatic sanitization so 5188 never forces password change & Dr. Mohamed / Tarek are always present)
+  useEffect(() => {
+    if (authStatus !== 'ready' || authEmail?.trim().toLowerCase() !== 'moh.mhran@gmail.com') return;
+    if (currentView === View.AUDIT_LOGS) void loadMoreAuditLogs();
+  }, [authStatus, authEmail, currentView, loadMoreAuditLogs]);
+
+  // User profiles are local/application data only; Firebase Auth is the sole identity source.
   const sanitizeUserAccount = (u: AppUser): AppUser => {
     const uname = (u.username || '').toLowerCase().trim();
     const dname = (u.displayName || '').trim();
@@ -523,7 +607,7 @@ const App: React.FC = () => {
         username: 'mohamed',
         displayName: u.displayName || 'د. محمد (المالك)',
         role: 'OWNER',
-        passwordHash: u.passwordHash || '5188',
+        passwordHash: u.passwordHash || '',
         isActive: true,
         requiresPasswordChange: false,
         permissions: {
@@ -547,7 +631,7 @@ const App: React.FC = () => {
         username: 'tarek',
         displayName: u.displayName || 'طارق (مسؤول ومدير المبيعات)',
         role: 'STORE_MANAGER',
-        passwordHash: u.passwordHash || '12345',
+        passwordHash: u.passwordHash || '',
         isActive: true,
         requiresPasswordChange: false,
         permissions: {
@@ -600,17 +684,36 @@ const App: React.FC = () => {
     return ensureCoreUsersList(DEFAULT_USERS);
   });
 
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
-    const session = getSessionUser();
-    if (session) return sanitizeUserAccount(session);
-    return DEFAULT_USERS[0]; // Default to Dr. Mohamed (Owner)
-  });
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
 
-  // Owner Preview Mode & Security State (معاينة الواجهة وتتبع الصلاحيات)
-  const [previewModeUser, setPreviewModeUser] = useState<AppUser | null>(null);
+  const [dashboardFeedHealth, setDashboardFeedHealth] = useState<DashboardDataSourceHealthMap>(
+    createInitialDashboardFeedHealth
+  );
+  const [dashboardServerData, setDashboardServerData] = useState<DashboardServerData>(
+    createInitialDashboardServerData
+  );
+  const reportDashboardSource = useCallback((
+    key: DashboardDataSourceKey,
+    freshness: SnapshotFreshness | 'restricted',
+    data?: DashboardServerData[DashboardDataSourceKey]
+  ) => {
+    const state = freshness as DashboardDataSourceState;
+    setDashboardFeedHealth((previous) => ({
+      ...previous,
+      [key]: {
+        state,
+        lastConfirmedAt: state === 'live' ? new Date().toISOString() : previous[key].lastConfirmedAt,
+      },
+    }));
+    if (state === 'live' && data !== undefined) {
+      setDashboardServerData((previous) => ({ ...previous, [key]: data } as DashboardServerData));
+    }
+  }, []);
+
+  // User roles are derived from verified Firebase Google identity; no local staff impersonation is permitted.
   const [rejectedAttemptsCount, setRejectedAttemptsCount] = useState<number>(0);
 
-  const effectiveUser = previewModeUser || currentUser;
+  const effectiveUser = currentUser;
 
   // Auto-redirect unauthorized views immediately to Tarek Workspace or POS
   useEffect(() => {
@@ -671,6 +774,34 @@ const App: React.FC = () => {
   const dismissTopNotification = (id: string) => {
     setTopNotifications(prev => prev.filter(n => n.id !== id));
   };
+
+  useEffect(() => {
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') return;
+    let initialSnapshot = true;
+    const seenRequests = new Set<string>();
+    return subscribeToOperationalAccessRequestsCloud((requests) => {
+      for (const request of requests) {
+        const requestKey = `${request.email}:${request.requestedAt}`;
+        if (initialSnapshot) {
+          seenRequests.add(requestKey);
+          continue;
+        }
+        if (seenRequests.has(requestKey)) continue;
+        seenRequests.add(requestKey);
+        pushTopNotification(
+          'auth',
+          'طلب وصول جديد',
+          `طلب ${request.email} صلاحية تشغيل؛ لا تُمنح أي صلاحية قبل اختيارك للدور.`,
+          'طلب جديد',
+          'مراجعة الطلب',
+          () => setCurrentView(View.USERS_MANAGEMENT),
+        );
+      }
+      initialSnapshot = false;
+    }, (error) => {
+      console.error('Unable to subscribe to access requests:', error);
+    });
+  }, [authStatus, currentUser?.role, currentUser?.id]);
 
   // Apple Welcome & Lock Screen state for complete store privacy
   const [isScreenLocked, setIsScreenLocked] = useState<boolean>(() => {
@@ -947,10 +1078,23 @@ const App: React.FC = () => {
     return getLocalStrategicOrders();
   });
 
-  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(true);
+  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+  const [cloudMessage, setCloudMessage] = useState<string>('المزامنة السحابية غير مؤكدة.');
+  const [queuedSaleCount, setQueuedSaleCount] = useState(() =>
+    getOfflineQueue().filter((item) => item.entityType === 'sale').length
+  );
+  const [saleQueueSyncing, setSaleQueueSyncing] = useState(false);
+  const [saleQueueNotice, setSaleQueueNotice] = useState(() =>
+    getOfflineQueue().some((item) => item.entityType === 'sale')
+      ? 'توجد فواتير محلية بانتظار تأكيد Firestore.'
+      : ''
+  );
+  const saleQueueRetryRef = useRef<(() => Promise<SaleFlushResult | null>) | null>(null);
   const [isOwnerLiveRadarOpen, setIsOwnerLiveRadarOpen] = useState<boolean>(false);
   const [isPWAInstallModalOpen, setIsPWAInstallModalOpen] = useState<boolean>(false);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDeviceRecord[]>([]);
+  const [deviceFeedStatus, setDeviceFeedStatus] = useState<'connecting' | 'live' | 'cached' | 'error'>('connecting');
+  const [deviceFeedLastServerUpdate, setDeviceFeedLastServerUpdate] = useState<number | null>(null);
   const [isConnectedDevicesModalOpen, setIsConnectedDevicesModalOpen] = useState<boolean>(false);
   const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>(() => {
     return loadDataSync<OwnerStaffBroadcast[]>('lamsa_owner_broadcasts', []);
@@ -959,7 +1103,141 @@ const App: React.FC = () => {
     const cached = loadDataSync<string[]>('lamsa_dismissed_broadcasts_v2', []);
     return new Set(cached);
   });
-  const prevDeviceCountRef = useRef<number>(0);
+  const prevDeviceIdsRef = useRef<Set<string> | null>(null);
+
+  const applyAuthorizedIdentity = (authorized: Awaited<ReturnType<typeof validateAuthorizedAuthUser>>) => {
+    setCurrentFirebaseRoleAssignment(authorized.roleAssignment);
+    const isOwner = authorized.role === 'OWNER';
+    const profile = isOwner ? DEFAULT_USERS[0] : DEFAULT_USERS[1];
+    const normalizedEmail = authorized.user.email?.trim().toLowerCase() || '';
+    const isKnownTarek = normalizedEmail === TAREK_AUTH_EMAIL;
+    setAuthEmail(authorized.user.email || null);
+    setCurrentUser({
+      ...profile,
+      id: isOwner ? 'owner_mohamed' : `google_${authorized.user.uid}`,
+      username: isOwner ? 'mohamed' : isKnownTarek ? 'tarek' : normalizedEmail,
+      displayName: isOwner
+        ? profile.displayName
+        : isKnownTarek
+        ? profile.displayName
+        : (authorized.user.displayName?.trim() || authorized.user.email || 'مستخدم تشغيل'),
+      role: isOwner ? 'OWNER' : 'STORE_MANAGER',
+      isActive: true,
+      requiresPasswordChange: false,
+      passwordHash: '',
+      permissions: isOwner ? { ...OWNER_FULL_PERMISSIONS } : { ...TAREK_OPERATIONAL_PERMISSIONS },
+      lastLoginAt: new Date().toISOString(),
+    });
+  };
+
+  // App roles are constructed only from verified Google ID-token claims; local profiles never authorize access.
+  useEffect(() => {
+    let active = true;
+    let latestCheck = 0;
+    let lastFirebaseUser: User | null = null;
+    let transientAuthFailure = false;
+    clearSessionUser();
+
+    const validateFirebaseUser = async (firebaseUser: User | null) => {
+      const checkId = ++latestCheck;
+      lastFirebaseUser = firebaseUser;
+      if (!firebaseUser) {
+        transientAuthFailure = false;
+        clearCurrentFirebaseRoleAssignment();
+        setAuthStatus('signed_out');
+        setAuthEmail(null);
+        setAccessRequestStatus('none');
+        setCurrentUser(null);
+        setIsCloudConnected(false);
+        setCloudMessage('سجّل الدخول بحساب Google المعتمد؛ لا يوجد اتصال سحابي قبل التحقق.');
+        return;
+      }
+
+      setAuthStatus('checking');
+      setAccessRequestStatus('none');
+      setCurrentUser(null);
+      clearCurrentFirebaseRoleAssignment();
+      try {
+        const authorized = await validateAuthorizedAuthUser(firebaseUser);
+        if (!active || checkId !== latestCheck) return;
+        transientAuthFailure = false;
+        applyAuthorizedIdentity(authorized);
+        setAuthError(null);
+        setAuthStatus('ready');
+      } catch (error) {
+        if (!active || checkId !== latestCheck) return;
+        clearCurrentFirebaseRoleAssignment();
+        const code = (error as { code?: string })?.code;
+        const isTransient = ['auth/network-request-failed', 'network-request-failed', 'unavailable', 'deadline-exceeded'].includes(String(code));
+        transientAuthFailure = isTransient;
+        setAuthEmail(firebaseUser.email || null);
+        setCurrentUser(null);
+        setAuthError(getFirebaseAuthErrorMessage(error));
+        setAuthStatus(isTransient ? 'error' : 'unauthorized');
+        setIsCloudConnected(false);
+        setCloudMessage('لا يوجد اتصال سحابي موثوق قبل التحقق من حساب Google المعتمد.');
+        if (!isTransient) {
+          void getOwnOperationalAccessRequestCloud().then((request) => {
+            if (!active || checkId !== latestCheck) return;
+            setAccessRequestStatus(request?.status || 'none');
+          }).catch(() => {
+            if (active && checkId === latestCheck) setAccessRequestStatus('none');
+          });
+        }
+      }
+    };
+
+    const retryAuthAfterConnectivityReturns = () => {
+      if (!active || !transientAuthFailure) return;
+      const firebaseUser = auth.currentUser || lastFirebaseUser;
+      if (firebaseUser) void validateFirebaseUser(firebaseUser);
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, validateFirebaseUser, (error) => {
+      if (!active) return;
+      setCurrentUser(null);
+      setAuthStatus('error');
+      setAuthError(getFirebaseAuthErrorMessage(error));
+      const code = (error as { code?: string })?.code;
+      transientAuthFailure = ['auth/network-request-failed', 'network-request-failed', 'unavailable', 'deadline-exceeded'].includes(String(code));
+    });
+
+    window.addEventListener('online', retryAuthAfterConnectivityReturns);
+    window.addEventListener('focus', retryAuthAfterConnectivityReturns);
+    window.addEventListener('pageshow', retryAuthAfterConnectivityReturns);
+    document.addEventListener('visibilitychange', retryAuthAfterConnectivityReturns);
+
+    completeGoogleRedirectSignIn().catch((error) => {
+      if (!active) return;
+      setAuthError(getFirebaseAuthErrorMessage(error));
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+      window.removeEventListener('online', retryAuthAfterConnectivityReturns);
+      window.removeEventListener('focus', retryAuthAfterConnectivityReturns);
+      window.removeEventListener('pageshow', retryAuthAfterConnectivityReturns);
+      document.removeEventListener('visibilitychange', retryAuthAfterConnectivityReturns);
+      clearCurrentFirebaseRoleAssignment();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onFirestoreError = (event: Event) => {
+      const detail = (event as CustomEvent<{ code?: string; transient?: boolean }>).detail || {};
+      setIsCloudConnected(false);
+      setCloudMessage(
+        detail.code === 'permission-denied'
+          ? 'رفضت قواعد Firestore العملية؛ البيانات على هذا الجهاز فقط ولم تتأكد المزامنة.'
+          : detail.transient
+          ? 'تعذر الاتصال بـFirestore؛ الحفظ المحلي لا يعني مزامنة سحابية.'
+          : 'فشلت عملية Firestore؛ الحفظ المحلي فقط ما لم يظهر تأكيد سحابي.'
+      );
+    };
+    window.addEventListener('lamsa-firestore-error', onFirestoreError);
+    return () => window.removeEventListener('lamsa-firestore-error', onFirestoreError);
+  }, []);
 
   // Track known remote event IDs to trigger real-time sound & system notifications when new records arrive from other devices
   const isInitialSalesLoadedRef = useRef<boolean>(false);
@@ -979,7 +1257,32 @@ const App: React.FC = () => {
 
   // Real-time synchronization across all devices via Firestore onSnapshot
   useEffect(() => {
-    testFirestoreConnection().catch(() => {});
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') {
+      if (authStatus === 'ready') {
+        const restricted = createInitialDashboardFeedHealth();
+        (Object.keys(restricted) as DashboardDataSourceKey[]).forEach((key) => {
+          restricted[key] = { state: 'restricted', lastConfirmedAt: null };
+        });
+        setDashboardFeedHealth(restricted);
+        setDashboardServerData(createInitialDashboardServerData());
+      }
+      setConnectedDevices([]);
+      setDeviceFeedStatus('connecting');
+      setDeviceFeedLastServerUpdate(null);
+      return;
+    }
+    setDashboardFeedHealth(createInitialDashboardFeedHealth());
+    setDashboardServerData(createInitialDashboardServerData());
+    let active = true;
+    setIsCloudConnected(false);
+    setCloudMessage('جارٍ التحقق من اتصال Firestore…');
+    void testFirestoreConnection().then((connected) => {
+      if (!active) return;
+      setIsCloudConnected(connected);
+      setCloudMessage(connected
+        ? 'اتصال Firestore مؤكد الآن.'
+        : 'تعذر تأكيد Firestore؛ البيانات المحلية فقط ولم تتأكد المزامنة.');
+    });
 
     // Hydrate from IndexedDB on startup if localStorage was reset or cleared
     hydrateFromIndexedDBIfNeeded<Product[]>('lamsa_products', (restored) => {
@@ -1000,7 +1303,8 @@ const App: React.FC = () => {
 
     // Listen to real-time sales on all open terminals/devices (never delete historical records)
     const unsubSales = subscribeToSales(
-      (cloudSales) => {
+      (cloudSales, freshness) => {
+        reportDashboardSource('sales', freshness || 'cached', cloudSales);
         const incomingSales = cloudSales || [];
         const classified = incomingSales.map((s) => {
           const isSystemTest = s.id.startsWith('sale-10') || isTestOrExampleRecord(s);
@@ -1013,20 +1317,16 @@ const App: React.FC = () => {
               }
             : {
                 ...s,
-                dataClassification: s.dataClassification || ('PRODUCTION' as const),
                 isTestData: false,
               };
         });
         setSales(prevLocal => {
-          const { merged, unsyncedLocalItems } = mergeCollectionRecords(prevLocal, classified, 'sales');
-          if (unsyncedLocalItems.length > 0) {
-            unsyncedLocalItems.forEach(s => addSaleCloud(s).catch(console.error));
-          }
+          // Keep local-only sales pending until their sale + stock can be retried atomically.
+          const { merged } = mergeCollectionRecords(prevLocal, classified, 'sales');
           persistDataDurable('lamsa_sales', merged);
           return merged;
         });
-        setIsCloudConnected(true);
-      },
+          },
       (liveSale, isRemote) => {
         // Triggered ONLY for sales actually happening in real time right now!
         soundAlertService.playSaleChime();
@@ -1050,26 +1350,29 @@ const App: React.FC = () => {
           'عرض الفاتورة',
           () => setCurrentView(View.REPORTS)
         );
-      }
+      },
+      (freshness) => reportDashboardSource('sales', freshness)
     );
 
     // Listen to real-time perfume inventory catalogue
-    const unsubProducts = subscribeToProducts((cloudProducts) => {
+    const unsubProducts = subscribeToProducts((cloudProducts, freshness) => {
+      reportDashboardSource('products', freshness || 'cached', cloudProducts);
       if (cloudProducts && cloudProducts.length > 0) {
         setProducts(prevLocal => {
           const { merged, unsyncedLocalItems } = mergeCollectionRecords(prevLocal, cloudProducts, 'products');
-          if (unsyncedLocalItems.length > 0) {
-            unsyncedLocalItems.forEach(p => saveProductCloud(p).catch(console.error));
+          const localUserProducts = unsyncedLocalItems.filter((product) => !isInitialCatalogTemplate(product));
+          if (localUserProducts.length > 0) {
+            localUserProducts.forEach((product) => saveProductCloud(product).catch(console.error));
           }
           persistDataDurable('lamsa_products', merged);
           return merged;
         });
-        setIsCloudConnected(true);
-      }
-    }, INITIAL_PRODUCTS);
+          }
+    }, undefined, (freshness) => reportDashboardSource('products', freshness));
 
     // Listen to real-time expenses
-    const unsubExpenses = subscribeToExpenses((cloudExpenses) => {
+    const unsubExpenses = subscribeToExpenses((cloudExpenses, freshness) => {
+      reportDashboardSource('expenses', freshness || 'cached', cloudExpenses);
       const incomingExpenses = cloudExpenses || [];
 
       // Detect incoming expenses from other devices in real-time
@@ -1109,7 +1412,6 @@ const App: React.FC = () => {
               }
             : {
                 ...exp,
-                dataClassification: exp.dataClassification || ('PRODUCTION' as const),
                 isTestData: false,
               };
         });
@@ -1121,15 +1423,19 @@ const App: React.FC = () => {
           persistDataDurable('lamsa_expenses_v2', merged);
           return merged;
         });
-        setIsCloudConnected(true);
-      }
-    }, INITIAL_EXPENSES);
+          }
+    }, undefined, (freshness) => reportDashboardSource('expenses', freshness));
 
     let isInitialSettingsReceived = false;
     let prevSyncedSettings = settings;
 
     // Listen to real-time settings and branding (instant color and letter sync)
-    const unsubSettings = subscribeToSettings((cloudSettings) => {
+    const unsubSettings = subscribeToSettings((cloudSettings, freshness, rawSettings) => {
+      reportDashboardSource(
+        'settings',
+        freshness || 'cached',
+        freshness === 'live' && rawSettings ? rawSettings : undefined
+      );
       if (cloudSettings) {
         if (isInitialSettingsReceived) {
           if (cloudSettings.activeThemeId && cloudSettings.activeThemeId !== prevSyncedSettings.activeThemeId) {
@@ -1161,9 +1467,8 @@ const App: React.FC = () => {
 
         setSettings(cloudSettings);
         persistDataDurable('lamsa_settings_v2', cloudSettings);
-        setIsCloudConnected(true);
-      }
-    }, DEFAULT_SETTINGS);
+          }
+    }, DEFAULT_SETTINGS, (freshness) => reportDashboardSource('settings', freshness));
 
     // Listen to real-time bottle sizes and pricing
     const unsubBottleSizes = subscribeToBottleSizes((cloudSizes) => {
@@ -1177,21 +1482,21 @@ const App: React.FC = () => {
         });
         setBottleSizes(enriched);
         persistDataDurable('lamsa_bottle_sizes_v2', enriched);
-        setIsCloudConnected(true);
-      }
+          }
     }, DEFAULT_BOTTLE_SIZES);
 
     // Listen to real-time financial vaults
-    const unsubVaults = subscribeToVaults((cloudVaults) => {
+    const unsubVaults = subscribeToVaults((cloudVaults, freshness) => {
+      reportDashboardSource('vaults', freshness || 'cached', cloudVaults);
       if (cloudVaults && cloudVaults.length > 0) {
         setVaults(cloudVaults);
         persistDataDurable('lamsa_vaults_v1', cloudVaults);
-        setIsCloudConnected(true);
-      }
-    }, DEFAULT_VAULTS);
+          }
+    }, undefined, (freshness) => reportDashboardSource('vaults', freshness));
 
     // Listen to real-time audited withdrawal transactions
-    const unsubWithdrawals = subscribeToWithdrawals((cloudWithdrawals) => {
+    const unsubWithdrawals = subscribeToWithdrawals((cloudWithdrawals, freshness) => {
+      reportDashboardSource('withdrawals', freshness || 'cached', cloudWithdrawals);
       const incomingWithdrawals = cloudWithdrawals || [];
       if (isInitialWithdrawalsLoadedRef.current && incomingWithdrawals.length > 0) {
         const remoteNewWithdrawals = incomingWithdrawals.filter(w => !knownWithdrawalIdsRef.current.has(w.id));
@@ -1220,9 +1525,8 @@ const App: React.FC = () => {
       if (cloudWithdrawals) {
         setWithdrawals(cloudWithdrawals);
         persistDataDurable('lamsa_withdrawals_v1', cloudWithdrawals);
-        setIsCloudConnected(true);
-      }
-    });
+          }
+    }, (freshness) => reportDashboardSource('withdrawals', freshness));
 
     // Listen to real-time staff attendance records (حضور وفتح المتجر لطاقم العمل)
     const unsubAttendance = subscribeToStaffAttendance((cloudAttendance) => {
@@ -1253,8 +1557,7 @@ const App: React.FC = () => {
       if (cloudAttendance) {
         setAttendanceRecords(cloudAttendance);
         persistDataDurable('lamsa_attendance_v1', cloudAttendance);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time production batches
@@ -1262,8 +1565,7 @@ const App: React.FC = () => {
       if (cloudBatches) {
         setBatches(cloudBatches);
         persistDataDurable('lamsa_batches_v1', cloudBatches);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time app users
@@ -1272,26 +1574,12 @@ const App: React.FC = () => {
         const completeUsers = ensureCoreUsersList(cloudUsers);
         setUsers(completeUsers);
         persistDataDurable('lamsa_users_v1', completeUsers);
-        setIsCloudConnected(true);
-
-        // Self-heal Firestore if Dr. Mohamed or Tarek was missing from cloud collection
-        const hasOwnerInCloud = cloudUsers.some(
-          (u) => u.role === 'OWNER' || u.username === 'mohamed' || u.id === 'user-mohamed'
-        );
-        const hasTarekInCloud = cloudUsers.some(
-          (u) => u.username === 'tarek' || u.id === 'user-tarek' || u.id === 'user-tarek-sales'
-        );
-        if (!hasOwnerInCloud) {
-          saveAppUserCloud(completeUsers[0]).catch(() => {});
-        }
-        if (!hasTarekInCloud && completeUsers[1]) {
-          saveAppUserCloud(completeUsers[1]).catch(() => {});
-        }
       }
-    }, DEFAULT_USERS);
+    });
 
     // Listen to real-time daily closures
-    const unsubClosures = subscribeToDailyClosures((cloudClosures) => {
+    const unsubClosures = subscribeToDailyClosures((cloudClosures, freshness) => {
+      reportDashboardSource('closures', freshness || 'cached', cloudClosures);
       const incomingClosures = cloudClosures || [];
       if (isInitialClosuresLoadedRef.current && incomingClosures.length > 0) {
         const remoteNewClosures = incomingClosures.filter(c => !knownClosureIdsRef.current.has(c.id));
@@ -1321,17 +1609,15 @@ const App: React.FC = () => {
       if (cloudClosures) {
         setDailyClosures(cloudClosures);
         persistDataDurable('lamsa_closures_v1', cloudClosures);
-        setIsCloudConnected(true);
-      }
-    });
+          }
+    }, (freshness) => reportDashboardSource('closures', freshness));
 
     // Listen to real-time purchase requests
     const unsubPurchases = subscribeToPurchaseRequests((cloudPurchases) => {
       if (cloudPurchases) {
         setPurchaseRequests(cloudPurchases);
         persistDataDurable('lamsa_purchase_requests_v1', cloudPurchases);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time customer requests
@@ -1339,8 +1625,7 @@ const App: React.FC = () => {
       if (cloudReqs) {
         setCustomerRequests(cloudReqs);
         persistDataDurable('lamsa_customer_requests_v1', cloudReqs);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time stock checks
@@ -1348,8 +1633,7 @@ const App: React.FC = () => {
       if (cloudChecks) {
         setStockChecks(cloudChecks);
         persistDataDurable('lamsa_stock_checks_v1', cloudChecks);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time fragrance database
@@ -1357,8 +1641,7 @@ const App: React.FC = () => {
       if (entries && entries.length > 0) {
         setFragranceDatabase(entries);
         saveLocalFragranceDatabase(entries);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time strategic replenishment orders
@@ -1366,19 +1649,18 @@ const App: React.FC = () => {
       if (orders) {
         setStrategicOrders(orders);
         saveLocalStrategicOrders(orders);
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Listen to real-time custom customers & loyalty profiles
-    const unsubCustomers = subscribeToCustomCustomers((cloudCustomers) => {
+    const unsubCustomers = subscribeToCustomCustomers((cloudCustomers, freshness) => {
+      reportDashboardSource('customers', freshness || 'cached', cloudCustomers);
       if (cloudCustomers) {
         const cleanReal = cloudCustomers.filter(c => !isVirtualDemoCustomer(c));
         setCustomCustomers(cleanReal);
         persistDataDurable('lamsa_custom_customers_v1', cleanReal);
-        setIsCloudConnected(true);
-      }
-    });
+          }
+    }, (freshness) => reportDashboardSource('customers', freshness));
 
     // Listen to real-time saved perfume mix formulas
     const unsubSavedMixes = subscribeToSavedMixes((cloudMixes) => {
@@ -1391,15 +1673,18 @@ const App: React.FC = () => {
           persistDataDurable('lamsa_saved_mixes_v1', merged);
           return merged;
         });
-        setIsCloudConnected(true);
-      }
+          }
     });
 
     // Real-Time Connected Devices Presence Listener
-    const unsubDevices = subscribeToConnectedDevices((activeList) => {
-      setConnectedDevices(activeList);
-      setIsCloudConnected(true);
-    });
+    setDeviceFeedStatus('connecting');
+    const unsubDevices = subscribeToConnectedDevices(
+      (activeList) => setConnectedDevices(activeList),
+      (status) => {
+        setDeviceFeedStatus(status);
+        if (status === 'live') setDeviceFeedLastServerUpdate(Date.now());
+      }
+    );
 
     // Real-Time Owner Staff Directives & Broadcasts Listener
     const unsubBroadcasts = subscribeToOwnerBroadcasts((cloudBroadcasts) => {
@@ -1464,6 +1749,8 @@ const App: React.FC = () => {
     }
 
     return () => {
+      active = false;
+      setIsCloudConnected(false);
       if (posRealtimeChannel) {
         posRealtimeChannel.removeEventListener('message', onRealtimeMessage);
       }
@@ -1488,17 +1775,73 @@ const App: React.FC = () => {
       unsubDevices();
       unsubBroadcasts();
     };
+  }, [authStatus, currentUser?.id, currentUser?.role, reportDashboardSource]);
+
+  // Reflect synchronous outbox writes in this tab and other tabs on the same device.
+  useEffect(() => {
+    const updateQueuedSales = (queue = getOfflineQueue()) => {
+      setQueuedSaleCount(queue.filter((item) => item.entityType === 'sale').length);
+    };
+    updateQueuedSales();
+    return subscribeToOfflineQueue(updateQueuedSales);
   }, []);
+
+  // The legacy full-Sale outbox is owner-only. Employee sales must use the
+  // separate minimal v3 Tarek outbox; never route them through addSaleCloud.
+  useEffect(() => {
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') return;
+    let active = true;
+    const retry = startSaleQueueAutoRetry((sale) => addSaleCloud(sale), {
+      onSyncStart: () => {
+        if (!active) return;
+        setSaleQueueSyncing(true);
+        setSaleQueueNotice('جارٍ إرسال الفواتير المعلقة وانتظار تأكيد Firestore…');
+      },
+      onResult: (result) => {
+        if (!active || result.attempted === 0) return;
+        setSaleQueueSyncing(false);
+        const remaining = getOfflineQueue().filter((item) => item.entityType === 'sale');
+        setQueuedSaleCount(remaining.length);
+        if (remaining.length === 0 && result.synced > 0) {
+          setSaleQueueNotice(`أكد Firestore مزامنة ${result.synced} فاتورة مع المخزون.`);
+          setCloudMessage('تم تأكيد مزامنة الفواتير المعلقة مع المخزون عبر Firestore.');
+        } else if (remaining.length > 0) {
+          const permissionBlocked = currentUser.role !== 'OWNER' && remaining.some((item) =>
+            item.errorMessage?.includes('owner-auth-required')
+            || item.errorMessage?.includes('permission-denied')
+            || item.errorMessage?.includes('not-authorized')
+          );
+          setSaleQueueNotice(permissionBlocked
+            ? 'الفاتورة محفوظة على هذا الجهاز، لكن صلاحيات طارق الحالية لا تسمح بكتابتها إلى Firestore؛ لم تُعتبر متزامنة.'
+            : 'تعذر تأكيد بعض الفواتير؛ ما زالت محفوظة محلياً وستُعاد المحاولة تلقائياً.');
+        }
+      },
+      onError: (error) => {
+        if (!active) return;
+        setSaleQueueSyncing(false);
+        console.error('Queued sale retry failed:', error);
+        setSaleQueueNotice('تعذر إكمال محاولة المزامنة؛ ما زالت الفواتير محفوظة في الطابور المحلي.');
+      },
+    });
+    saleQueueRetryRef.current = retry.retryNow;
+    return () => {
+      active = false;
+      setSaleQueueSyncing(false);
+      if (saleQueueRetryRef.current === retry.retryNow) saleQueueRetryRef.current = null;
+      retry.stop();
+    };
+  }, [authStatus, currentUser?.id, currentUser?.role]);
 
   // Real-Time Multi-Device Presence Heartbeat & Auto-Sync
   useEffect(() => {
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') return;
     // Initial presence ping
-    publishDevicePresence(currentUser, currentView).catch(() => {});
+    publishDevicePresence(currentUser).catch(() => {});
 
     // Presence is informational; one-minute heartbeats reduce background writes
     // while the onSnapshot streams for sales and operational data stay immediate.
     const interval = setInterval(() => {
-      publishDevicePresence(currentUser, currentView).catch(() => {});
+      publishDevicePresence(currentUser).catch(() => {});
     }, 60000);
 
     const handleBeforeUnload = () => {
@@ -1511,27 +1854,31 @@ const App: React.FC = () => {
       clearInterval(interval);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [currentUser, currentView]);
+  }, [authStatus, currentUser]);
 
-  // Real-time Notification for Store Owner when new devices connect
+  // Notify only for a new device ID in a server-confirmed presence snapshot.
   useEffect(() => {
-    const isOwnerOnly = effectiveUser?.role === 'OWNER';
-    if (isOwnerOnly && prevDeviceCountRef.current > 0 && connectedDevices.length > prevDeviceCountRef.current) {
-      const newlyJoined = connectedDevices.find((d) => d.deviceId !== getLocalDeviceId());
+    if (deviceFeedStatus !== 'live') return;
+    const currentIds = new Set(connectedDevices.map((device) => device.deviceId));
+    const previousIds = prevDeviceIdsRef.current;
+    if (effectiveUser?.role === 'OWNER' && previousIds) {
+      const newlyJoined = connectedDevices.find((device) =>
+        device.deviceId !== getLocalDeviceId() && !previousIds.has(device.deviceId)
+      );
       if (newlyJoined) {
         soundAlertService.playActionChime();
         pushTopNotification(
           'goal',
-          `📱 جهاز جديد متصل بالوقت الفعلي`,
-          `انضم الآن: [${newlyJoined.deviceName}] بواسطة [${newlyJoined.userName}] · إجمالي الأجهزة المتصلة: ${connectedDevices.length}`,
+          `📱 نبضة حضور جديدة`,
+          `وصلت نبضة من [${newlyJoined.deviceName}] بواسطة [${newlyJoined.userName}] · إجمالي النبضات الحديثة: ${connectedDevices.length}`,
           'رادار التزامن',
           'عرض الأجهزة',
           () => setIsConnectedDevicesModalOpen(true)
         );
       }
     }
-    prevDeviceCountRef.current = connectedDevices.length;
-  }, [connectedDevices.length, effectiveUser]);
+    prevDeviceIdsRef.current = currentIds;
+  }, [connectedDevices, deviceFeedStatus, effectiveUser]);
 
   // Sync state changes to durable storage (localStorage + IndexedDB)
   useEffect(() => {
@@ -1682,10 +2029,6 @@ const App: React.FC = () => {
       }
       return [...prev, user];
     });
-    if (currentUser?.id === user.id) {
-      setCurrentUser(user);
-      saveSessionUser(user);
-    }
     try {
       await saveAppUserCloud(user);
     } catch (e) {
@@ -1884,26 +2227,65 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLoginSuccess = (user: AppUser) => {
-    const cleanUser: AppUser = sanitizeUserAccount(user);
-    setCurrentUser(cleanUser);
-    saveSessionUser(cleanUser);
-    setIsAuthModalOpen(false);
+  const handleGoogleSignIn = async () => {
+    setAuthError(null);
+    setIsSigningIn(true);
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setAuthError(getFirebaseAuthErrorMessage(error));
+      setAuthStatus(auth.currentUser ? 'error' : 'signed_out');
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleRequestOperationalAccess = async () => {
+    setIsSubmittingAccessRequest(true);
+    setAuthError(null);
+    try {
+      const request = await submitOperationalAccessRequestCloud();
+      setAccessRequestStatus(request.status);
+    } catch (error) {
+      setAuthError(getFirebaseAuthErrorMessage(error));
+    } finally {
+      setIsSubmittingAccessRequest(false);
+    }
+  };
+
+  const handleCheckOperationalAccess = async () => {
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) {
+      setAccessRequestStatus('none');
+      setAuthStatus('signed_out');
+      return;
+    }
+    setIsCheckingAccessRequest(true);
+    setAuthError(null);
+    try {
+      const authorized = await validateAuthorizedAuthUser(firebaseUser);
+      applyAuthorizedIdentity(authorized);
+      setAccessRequestStatus('approved');
+      setAuthStatus('ready');
+    } catch (error) {
+      setAuthError(getFirebaseAuthErrorMessage(error));
+      try {
+        const request = await getOwnOperationalAccessRequestCloud();
+        setAccessRequestStatus(request?.status || 'none');
+      } catch {
+        setAccessRequestStatus('none');
+      }
+    } finally {
+      setIsCheckingAccessRequest(false);
+    }
+  };
+
+  const handleLocalUnlock = () => {
+    if (authStatus !== 'ready' || !currentUser) return;
     setIsScreenLocked(false);
     try {
       sessionStorage.setItem('lamsa_unlocked_session_v1', 'true');
     } catch {}
-    if (cleanUser.role !== 'OWNER') {
-      setCurrentView(View.POS);
-    }
-    pushTopNotification(
-      'auth',
-      `مرحباً بك، ${cleanUser.displayName.replace(/\(.*?\)/g, '').trim()}`,
-      cleanUser.role === 'OWNER'
-        ? 'تم تفعيل صلاحيات المدير العام والمالك بالكامل (5188)'
-        : 'تم تفعيل واجهة مسؤول المبيعات وصالة العرض',
-      cleanUser.role === 'OWNER' ? 'وضع المدير العام' : 'وضع المبيعات'
-    );
   };
 
   const handleLockScreen = () => {
@@ -1913,13 +2295,39 @@ const App: React.FC = () => {
     } catch {}
   };
 
-  const handleLogout = () => {
-    saveSessionUser(null);
-    setCurrentUser(null);
+  const handleLogout = async () => {
+    clearSessionUser();
+    setIsAuthModalOpen(false);
+    setAuthError(null);
+    setAccessRequestStatus('none');
+    setIsCloudConnected(false);
+    setCloudMessage('سجّل الدخول بحساب Google المعتمد؛ لا يوجد اتصال سحابي قبل التحقق.');
     setIsScreenLocked(true);
     try {
       sessionStorage.removeItem('lamsa_unlocked_session_v1');
     } catch {}
+    try {
+      await signOutFirebase();
+    } catch (error) {
+      setAuthStatus('error');
+      setAuthError(getFirebaseAuthErrorMessage(error));
+    }
+    setCurrentUser(null);
+  };
+
+  const handlePrepareTarekCatalog = async () => {
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') return;
+    setIsPreparingTarekCatalog(true);
+    setTarekCatalogPrepStatus(null);
+    try {
+      const result = await prepareTarekReadOnlyCatalogCloud();
+      setTarekCatalogPrepStatus(`اكتملت الإسقاطات الآمنة: ${result.products} منتج مخزون، و${result.saleProducts} منتج بيع، و${result.saleBottleSizes} سعراً مرجعياً للعبوات. لم تُعدّل السجلات القديمة.`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'تعذّر تجهيز الإسقاطات الآمنة.';
+      setTarekCatalogPrepStatus(`لم يكتمل التجهيز: ${detail}`);
+    } finally {
+      setIsPreparingTarekCatalog(false);
+    }
   };
 
   // Real-time Administrative Directives & Staff Broadcast Handlers
@@ -2064,45 +2472,79 @@ const App: React.FC = () => {
 
   // Real-time sale completion synchronized to cloud (multi-item and single-item support)
   const handleSaleComplete = async (rawSale: Sale) => {
+    if (currentUser?.role !== 'OWNER') {
+      setSaleQueueNotice('مسار POS المالي القديم للمالك فقط؛ يلزم استخدام نية البيع التشغيلية v3 قبل إتاحة البيع للموظف.');
+      throw new Error('sale-sync/tarek-v3-required');
+    }
     const sale: Sale = {
       ...rawSale,
       dataClassification: rawSale.dataClassification || 'PRODUCTION',
       isTestData: Boolean(rawSale.isTestData),
     };
-    let updatedProductsList: Product[] | undefined;
-    if (sale.items.length > 0) {
-      const deductionMap = new Map<string, number>();
-      sale.items.forEach(item => {
-        const qty = item.quantity || 1;
-        if (item.isMix && item.mixComponents && item.mixComponents.length > 0) {
-          item.mixComponents.forEach(comp => {
-            const pidStr = String(comp.productId);
-            const compGrams = (Number(comp.grams) || 0) * qty;
-            deductionMap.set(pidStr, (deductionMap.get(pidStr) || 0) + compGrams);
-          });
-        } else {
-          const pidStr = String(item.productId);
-          const itemGrams = Number(item.essenceGrams) || 0;
-          deductionMap.set(pidStr, (deductionMap.get(pidStr) || 0) + itemGrams);
-        }
-      });
-      const updatedList: Product[] = [];
-      const newProducts = products.map(p => {
-        const pidStr = String(p.id);
-        if (deductionMap.has(pidStr)) {
-          const deduction = deductionMap.get(pidStr)!;
-          const updated = { ...p, stock_grams: Math.max(0, p.stock_grams - deduction) };
-          updatedList.push(updated);
-          return updated;
-        }
-        return p;
-      });
-      updatedProductsList = updatedList;
-      setProducts(newProducts);
-      persistDataDurable('lamsa_products', newProducts);
+    const deductionMap = getSaleStockDeductions(sale);
+    for (const [productId, deduction] of deductionMap) {
+      const product = products.find(p => String(p.id) === productId);
+      if (!product || !Number.isFinite(product.stock_grams) || product.stock_grams < deduction) {
+        throw new Error(`sale-sync/preflight-insufficient-stock:${productId}`);
+      }
     }
 
-    // Immediate optimistic local update
+    // Write the durable local outbox before the first network call. If the app
+    // closes while Firestore is unavailable or its acknowledgement is ambiguous,
+    // the same sale ID survives restart and can be retried idempotently.
+    let cloudSyncSucceeded = false;
+    let queuedSale: ReturnType<typeof enqueueOfflineAction>;
+    try {
+      queuedSale = enqueueOfflineAction('sale', sale);
+      setSaleQueueNotice('حُفظت الفاتورة في الطابور المحلي؛ بانتظار تأكيد Firestore.');
+    } catch (queueError) {
+      console.error('Could not persist sale to the durable outbox:', queueError);
+      setSaleQueueNotice('تعذر حفظ الفاتورة محلياً؛ لم تُعتمد ولم تُعرض كبيع مكتمل.');
+      throw new Error('sale-sync/offline-queue-persistence-failed');
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      setSaleQueueSyncing(true);
+      try {
+        const retryResult = await flushPendingSaleQueue((pendingSale) => addSaleCloud(pendingSale));
+        if (retryResult.syncedIds.includes(queuedSale.id)) {
+          cloudSyncSucceeded = true;
+          setSaleQueueNotice('أكد Firestore حفظ الفاتورة وتحديث المخزون.');
+          setCloudMessage('تم تأكيد مزامنة أحدث عملية إلى Firestore.');
+        } else if (retryResult.failed > 0) {
+          const retained = getOfflineQueue().find((item) => item.id === queuedSale.id);
+          if (/^sale-sync\/commission-counter-(?:not-ready|stale|ambiguous-date)$/.test(retained?.errorMessage || '')) {
+            setSaleQueueNotice('لم تُعتمد الفاتورة بسبب عدم جاهزية العداد أو تغيّر generation؛ بقيت للمراجعة ولم يُخصم المخزون محلياً. حدّث العداد/الاقتباس ثم أعد إدخالها.');
+            throw new Error(retained?.errorMessage);
+          }
+          const permissionBlocked = currentUser?.role !== 'OWNER'
+            && (retained?.errorMessage?.includes('owner-auth-required')
+              || retained?.errorMessage?.includes('permission-denied')
+              || retained?.errorMessage?.includes('not-authorized'));
+          setSaleQueueNotice(permissionBlocked
+            ? 'الفاتورة محفوظة محلياً، لكن صلاحيات طارق الحالية لا تسمح بكتابتها إلى Firestore؛ لم تُعتبر متزامنة.'
+            : 'لم يؤكد Firestore البيع بعد؛ بقيت الفاتورة في الطابور وستُعاد المحاولة تلقائياً.');
+        }
+      } catch (retryError) {
+        const retryCode = retryError instanceof Error ? retryError.message : '';
+        if (/^sale-sync\/commission-counter-(?:not-ready|stale|ambiguous-date)$/.test(retryCode)) {
+          setSaleQueueNotice('لم تُعتمد الفاتورة بسبب تعارض عداد العمولة؛ احتُفظ بها كعنصر فشل للمراجعة، ولم يُحدّث المخزون المحلي.');
+          throw retryError;
+        }
+        console.error('Queued sale retry failed after durable queueing:', retryError);
+        setSaleQueueNotice('لم يؤكد Firestore البيع؛ بقيت الفاتورة محفوظة في الطابور المحلي.');
+      } finally {
+        setSaleQueueSyncing(false);
+      }
+    }
+
+    // Local sale/inventory changes are durable only after cloud commit or a verified queue write.
+    const newProducts = products.map(product => {
+      const deduction = deductionMap.get(String(product.id));
+      return deduction === undefined ? product : { ...product, stock_grams: product.stock_grams - deduction };
+    });
+    setProducts(newProducts);
+    persistDataDurable('lamsa_products', newProducts);
     setSales(prev => {
       const next = [sale, ...prev];
       persistDataDurable('lamsa_sales', next);
@@ -2139,7 +2581,13 @@ const App: React.FC = () => {
             repurchaseRatePercent: nextRepurchase,
             updatedAt: new Date().toISOString(),
           };
-          saveSavedMixCloud(updatedFormula).catch(() => {});
+          if (cloudSyncSucceeded) {
+            saveSavedMixCloud(updatedFormula).catch((error) => {
+              console.error('Could not sync sale-related mix stats:', error);
+              setIsCloudConnected(false);
+              setCloudMessage('تمت مزامنة الفاتورة، لكن تعذرت مزامنة بعض بيانات التركيبة.');
+            });
+          }
           return updatedFormula;
         });
         if (changed) {
@@ -2219,7 +2667,13 @@ const App: React.FC = () => {
           next = [newRecord, ...prev];
         }
 
-        saveCustomCustomerCloud(targetToSaveCloud).catch(err => console.error('Error syncing sale customer to cloud:', err));
+        if (cloudSyncSucceeded) {
+          saveCustomCustomerCloud(targetToSaveCloud).catch((error) => {
+            console.error('Error syncing sale customer to cloud:', error);
+            setIsCloudConnected(false);
+            setCloudMessage('تمت مزامنة الفاتورة، لكن تعذرت مزامنة سجل العميل.');
+          });
+        }
         persistDataDurable('lamsa_custom_customers_v1', next);
         return next;
       });
@@ -2232,15 +2686,6 @@ const App: React.FC = () => {
       ? ` · +${sale.loyaltyPointsEarned} نقطة ولاء للعميل`
       : '';
 
-    pushTopNotification(
-      'sale',
-      `تم إصدار الفاتورة #${sale.id.slice(-6)} بنجاح`,
-      `${itemsSummary} · الإجمالي: ${sale.totalPrice.toLocaleString('ar-EG')} ${settings.currency} (${sale.paymentMethod || 'نقدي'})${loyaltySubtitle}`,
-      `+${sale.totalPrice} ${settings.currency}`,
-      'سجل الفواتير',
-      () => setCurrentView(View.REPORTS)
-    );
-
     // Update Restock Vault balance in real-time (capital recovery for raw materials)
     if (sale.totalCost > 0) {
       setVaults(prevVaults => {
@@ -2251,7 +2696,13 @@ const App: React.FC = () => {
               totalInflow: (v.totalInflow || 0) + sale.totalCost,
               currentBalance: (v.currentBalance || 0) + sale.totalCost,
             };
-            saveVaultCloud(updated).catch(console.error);
+            if (cloudSyncSucceeded) {
+              saveVaultCloud(updated).catch((error) => {
+                console.error('Could not sync sale-related vault balance:', error);
+                setIsCloudConnected(false);
+                setCloudMessage('تمت مزامنة الفاتورة، لكن تعذرت مزامنة رصيد الخزينة.');
+              });
+            }
             return updated;
           }
           return v;
@@ -2261,12 +2712,17 @@ const App: React.FC = () => {
       });
     }
 
-    // Push to Firestore - immediately reflects on all other devices in real-time
-    try {
-      await addSaleCloud(sale, updatedProductsList);
-    } catch (err) {
-      console.error("Error saving sale to Firestore:", err);
-    }
+    pushTopNotification(
+      cloudSyncSucceeded ? 'sale' : 'warning',
+      cloudSyncSucceeded
+        ? `تم حفظ الفاتورة #${sale.id.slice(-6)} ومزامنتها مع Firestore`
+        : `حُفظت الفاتورة #${sale.id.slice(-6)} محلياً فقط — المزامنة غير مؤكدة`,
+      `${itemsSummary} · الإجمالي: ${sale.totalPrice.toLocaleString('ar-EG')} ${settings.currency} (${sale.paymentMethod || 'نقدي'})${loyaltySubtitle}${cloudSyncSucceeded ? '' : ' · لم يؤكد Firestore الحفظ'}`,
+      cloudSyncSucceeded ? `مزامنة مؤكدة · ${sale.totalPrice} ${settings.currency}` : `محلي فقط · ${sale.totalPrice} ${settings.currency}`,
+      'سجل الفواتير',
+      () => setCurrentView(View.REPORTS)
+    );
+    return cloudSyncSucceeded;
   };
 
   // Add audited withdrawal transaction from any financial vault
@@ -2290,127 +2746,37 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUpdateSale = async (
-    updatedSale: Sale,
-    previousSale: Sale,
-    restoreOrAdjustStock: boolean = true
-  ) => {
-    let updatedProductsList: Product[] = [];
-
-    if (restoreOrAdjustStock) {
-      const getGramsMap = (items: SaleItem[]) => {
-        const map = new Map<string, number>();
-        (items || []).forEach(it => {
-          const qty = it.quantity || 1;
-          if (it.isMix && it.mixComponents && it.mixComponents.length > 0) {
-            it.mixComponents.forEach(comp => {
-              const pidStr = String(comp.productId);
-              map.set(pidStr, (map.get(pidStr) || 0) + (Number(comp.grams) || 0) * qty);
-            });
-          } else {
-            const pidStr = String(it.productId);
-            map.set(pidStr, (map.get(pidStr) || 0) + (Number(it.essenceGrams) || 0));
-          }
-        });
-        return map;
-      };
-
-      const oldGramsMap = getGramsMap(previousSale.items || []);
-      const newGramsMap = getGramsMap(updatedSale.items || []);
-      const allPids = new Set<string>([...oldGramsMap.keys(), ...newGramsMap.keys()]);
-      if (allPids.size > 0) {
-        const nextProducts = products.map(p => {
-          const pidStr = String(p.id);
-          if (allPids.has(pidStr)) {
-            const oldG = oldGramsMap.get(pidStr) || 0;
-            const newG = newGramsMap.get(pidStr) || 0;
-            const delta = newG - oldG; // positive means deduct more, negative means restore stock
-            if (delta !== 0) {
-              const updatedProd = {
-                ...p,
-                stock_grams: Math.max(0, p.stock_grams - delta)
-              };
-              updatedProductsList.push(updatedProd);
-              return updatedProd;
-            }
-          }
-          return p;
-        });
-        setProducts(nextProducts);
-        persistDataDurable('lamsa_products', nextProducts);
-      }
-    }
-
-    setSales(prev => {
-      const next = prev.map(s => (s.id === updatedSale.id ? updatedSale : s));
-      persistDataDurable('lamsa_sales', next);
-      return next;
-    });
-
-    // Immutable Audit Trail recording with deep old vs new values comparison (§41)
-    handleAddAuditLog({
-      id: `audit-sale-edit-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      user: currentUser?.displayName || 'د. محمد (المالك)',
-      action: 'تعديل فاتورة',
-      entityType: 'sale',
-      entityId: updatedSale.id,
-      entityName: `فاتورة #${updatedSale.id.slice(-6)}`,
-      oldValue: {
-        totalPrice: previousSale.totalPrice,
-        itemsCount: previousSale.items?.length || 0,
-        paymentMethod: previousSale.paymentMethod || 'نقدي',
-        discount: previousSale.discount || 0,
-        customerName: previousSale.customerName || 'عميل نقدي',
-        customerPhone: previousSale.customerPhone || '',
-        items: previousSale.items,
-        notes: previousSale.notes || ''
-      },
-      newValue: {
-        totalPrice: updatedSale.totalPrice,
-        itemsCount: updatedSale.items?.length || 0,
-        paymentMethod: updatedSale.paymentMethod || 'نقدي',
-        discount: updatedSale.discount || 0,
-        customerName: updatedSale.customerName || 'عميل نقدي',
-        customerPhone: updatedSale.customerPhone || '',
-        items: updatedSale.items,
-        notes: updatedSale.notes || '',
-        stockAdjusted: restoreOrAdjustStock
-      },
-      reason: updatedSale.notes && updatedSale.notes !== previousSale.notes
-        ? `تعديل بنود وتفاصيل الفاتورة: ${updatedSale.notes}`
-        : 'تعديل تفاصيل الفاتورة والمبالغ والأصناف وطريقة الدفع من الإدارة',
-      approvedBy: currentUser?.displayName || 'الإدارة',
-      category: 'مبيعات',
-      relatedTransactionId: updatedSale.transactionId || updatedSale.id
-    });
-
-    pushTopNotification(
-      'invoice',
-      `تم تحديث الفاتورة #${updatedSale.id.slice(-6)} فورياً`,
-      `الإجمالي المعتمد: ${updatedSale.totalPrice.toLocaleString('ar-EG')} ${settings.currency} · ${updatedSale.paymentMethod || 'نقدي'}`,
-      'تحديث ذكي'
-    );
-
-    try {
-      await addSaleCloud(updatedSale, updatedProductsList.length > 0 ? updatedProductsList : undefined);
-    } catch (err) {
-      console.error('Error updating sale in Firestore:', err);
-    }
-  };
-
   const handleDeleteSale = async (
     saleId: string,
     restoreStock: boolean = true,
     reversalReason?: string,
-    mode: 'permanent' | 'reverse' = 'permanent'
+    _mode: 'permanent' | 'reverse' = 'reverse'
   ) => {
     const targetSale = sales.find(s => s.id === saleId);
     if (!targetSale) return;
-    if (mode === 'reverse' && targetSale.isReversed) return;
+    if (targetSale.isReversed) return;
+
+    const reasonText = reversalReason?.trim()
+      || 'إلغاء فاتورة بقيد عكسي مع الاحتفاظ بالسجل الأصلي للتدقيق (§41)';
+    const reversedByUser = currentUser?.displayName || 'د. محمد (المالك)';
+    const reversedAtIso = new Date().toISOString();
+    try {
+      const result = await reverseSaleCloud(
+        targetSale,
+        reasonText,
+        reversedByUser,
+        restoreStock && !targetSale.isReversed,
+        settings.commissionRate || 0.05,
+      );
+      if (result === 'already-reversed') return;
+    } catch (err) {
+      console.error('Firestore rejected the sale reversal transaction:', err);
+      setCloudMessage('لم يُعتمد العكس في Firestore؛ لم يتغير السجل المحلي.');
+      pushTopNotification('warning', 'لم يُعتمد العكس', 'تعذرت المعاملة الذرية؛ بقيت الفاتورة والمخزون كما هما.', 'لا يوجد نجاح سحابي');
+      return;
+    }
 
     const shouldRestoreStock = restoreStock && !targetSale.isReversed;
-    let restoredProductsList: Product[] = [];
 
     if (shouldRestoreStock && targetSale.items && targetSale.items.length > 0) {
       const restoreMap = new Map<string, number>();
@@ -2448,17 +2814,13 @@ const App: React.FC = () => {
 
         if (addBack > 0) {
           const updatedProd = { ...p, stock_grams: p.stock_grams + addBack };
-          restoredProductsList.push(updatedProd);
           return updatedProd;
         }
         return p;
       });
       setProducts(nextProducts);
       persistDataDurable('lamsa_products', nextProducts);
-      restoredProductsList.forEach(prod => {
-        saveProductCloud(prod).catch(console.error);
-      });
-    }
+      }
 
     // Reverse financial vaults impact if sale was not already reversed
     if (!targetSale.isReversed) {
@@ -2480,60 +2842,6 @@ const App: React.FC = () => {
       });
       setVaults(updatedVaults);
       persistDataDurable('lamsa_vaults_v1', updatedVaults);
-      saveAllVaultsCloud(updatedVaults).catch(console.error);
-    }
-
-    const reasonText =
-      reversalReason?.trim() ||
-      (mode === 'permanent'
-        ? 'حذف نهائي للفاتورة من السجل وإلغاء أثرها المالي والمخزني'
-        : 'إلغاء فاتورة بقيد عكسي مع الاحتفاظ بالسجل الأصلي للتدقيق (§41)');
-    const reversedByUser = currentUser?.displayName || 'د. محمد (المالك)';
-    const reversedAtIso = new Date().toISOString();
-
-    if (mode === 'permanent') {
-      // Record tombstone so cloud/IDB merge never resurrects this deleted invoice
-      addDeletedTombstone('sales', saleId);
-
-      setSales(prev => {
-        const next = prev.filter(s => s.id !== saleId);
-        persistDataDurable('lamsa_sales', next);
-        return next;
-      });
-
-      handleAddAuditLog({
-        id: `audit-del-${Date.now()}`,
-        timestamp: reversedAtIso,
-        user: reversedByUser,
-        action: 'إلغاء بيع',
-        entityType: 'sale',
-        entityId: saleId,
-        entityName: `فاتورة #${saleId.slice(-6)}`,
-        oldValue: { totalPrice: targetSale.totalPrice, itemsCount: targetSale.items?.length || 0 },
-        newValue: { deleted: true, restoreStock: shouldRestoreStock },
-        reason: reasonText,
-        approvedBy: reversedByUser,
-        category: 'مبيعات',
-      });
-
-      pushTopNotification(
-        'stock',
-        `تم حذف الفاتورة #${saleId.slice(-6)} نهائياً ✓`,
-        shouldRestoreStock
-          ? 'تم حذف الفاتورة من السجل واسترجاع جرامات الزيوت العطرية إلى المخزون'
-          : 'تم حذف الفاتورة نهائياً من السجل وتحديث الأرصدة المالية',
-        shouldRestoreStock ? 'حذف + استرجاع مخزون' : 'حذف نهائي'
-      );
-
-      try {
-        await deleteSaleAndRestoreInventoryCloud(
-          saleId,
-          restoredProductsList.length > 0 ? restoredProductsList : undefined
-        );
-      } catch (err) {
-        console.error('Error permanently deleting sale from Firestore:', err);
-      }
-      return;
     }
 
     const reversedSale: Sale = {
@@ -2574,11 +2882,6 @@ const App: React.FC = () => {
       restoreStock ? 'قيد عكسي + استرجاع' : 'قيد عكسي'
     );
 
-    try {
-      await addSaleCloud(reversedSale, restoredProductsList.length > 0 ? restoredProductsList : undefined);
-    } catch (err) {
-      console.error("Error saving reversed sale to Firestore:", err);
-    }
   };
 
   // Saved Mix handlers
@@ -2628,16 +2931,23 @@ const App: React.FC = () => {
         const oldP = prev.find(p => String(p.id) === String(nP.id));
         return !oldP || JSON.stringify(oldP) !== JSON.stringify(nP);
       });
+      const stockDeltas = new Map<string, number>();
+      changedProducts.forEach((product) => {
+        const oldProduct = prev.find((previous) => String(previous.id) === String(product.id));
+        if (!oldProduct) return;
+        const delta = Number(product.stock_grams) - Number(oldProduct.stock_grams);
+        if (Number.isFinite(delta) && delta !== 0) stockDeltas.set(String(product.id), delta);
+      });
 
       if (changedProducts.length > 0 && changedProducts.length <= 15) {
         changedProducts.forEach(p => {
           saveProductCloud({
             ...p,
             updatedAt: new Date().toISOString(),
-          }).catch(console.error);
+          }, stockDeltas.get(String(p.id)) ?? 0).catch(console.error);
         });
       } else if (changedProducts.length > 15) {
-        seedProductsCloud(next).catch(err => console.error(err));
+        seedProductsCloud(next, stockDeltas).catch(err => console.error(err));
       }
 
       return next;
@@ -2695,6 +3005,28 @@ const App: React.FC = () => {
   // Today's total gross profit for POS real-time badge (Live Production Sales only)
   const todayStr = new Date().toISOString().slice(0, 10);
   const currentClosure = dailyClosures.find(c => c.date === todayStr) || null;
+  const dashboardTodayStr = getBrowserLocalDateKey();
+  const dashboardCurrentClosure = dashboardServerData.closures.find((closure) =>
+    closure.date.startsWith(dashboardTodayStr)
+    && closure.dataClassification === 'PRODUCTION'
+    && !closure.isTestData
+  ) || null;
+  const dashboardProducts = dashboardServerData.products.filter((product) => !isInitialCatalogTemplate(product));
+  const excludedCatalogTemplateCount = dashboardServerData.products.length - dashboardProducts.length;
+  const dashboardSourceHealthForDisplay: DashboardDataSourceHealthMap = queuedSaleCount > 0
+    ? { ...dashboardFeedHealth, sales: { ...dashboardFeedHealth.sales, state: 'pending' } }
+    : dashboardFeedHealth;
+  const dashboardDataQualityNotes = [
+    ...(excludedCatalogTemplateCount > 0
+      ? [`استُبعد ${excludedCatalogTemplateCount} سجلًا يطابق بيانات كتالوج البداية ذات 1000 جم؛ لم يُحسب كمخزون مؤكد.`]
+      : []),
+    ...(dashboardServerData.products.length === 0 && dashboardFeedHealth.products.state === 'live'
+      ? ['لقطة الخادم للمنتجات فارغة؛ لا يوجد رصيد مخزون مؤكد للعرض.']
+      : []),
+    ...(dashboardCurrentClosure?.actualCashInDrawer === undefined
+      ? ['لم يُسجل جرد نقدي فعلي مؤكد لدرج اليوم؛ سيبقى هذا المؤشر غير متاح.']
+      : []),
+  ];
   const todaysGrossProfit = sales
     .filter(s => s.date.startsWith(todayStr) && isLiveProductionSale(s))
     .reduce((sum, s) => sum + s.totalProfit, 0);
@@ -2718,7 +3050,7 @@ const App: React.FC = () => {
               هذه الشاشة مخصصة لحساب المالك (د. محمد). تم توجيهك تلقائياً إلى مساحتك المخصصة.
             </p>
             <div className="p-3 rounded-2xl bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 text-[11px] font-mono border border-slate-200 dark:border-white/10">
-              المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'طارق'} ({effectiveUser?.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : effectiveUser?.role})</strong>
+              المستخدم الحالي: <strong>{effectiveUser?.displayName || effectiveUser?.fullName || 'مشغل'} ({effectiveUser?.role === 'STORE_MANAGER' ? 'مشغل مساحة التشغيل · قراءة فقط' : effectiveUser?.role})</strong>
             </div>
             <div className="pt-2 flex items-center justify-center gap-2">
               <button
@@ -2726,7 +3058,7 @@ const App: React.FC = () => {
                 onClick={() => setCurrentView(targetFallback)}
                 className="apple-btn px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all"
               >
-                الانتقال لمساحتي المخصصة (واجهة طارق)
+                الانتقال لمساحة التشغيل المخصصة
               </button>
             </div>
           </div>
@@ -2738,16 +3070,23 @@ const App: React.FC = () => {
       case View.DASHBOARD:
         return (
           <Dashboard 
-            sales={sales} 
-            products={products} 
-            expenses={expenses}
+            sales={dashboardServerData.sales}
+            products={dashboardProducts}
+            expenses={dashboardServerData.expenses}
             settings={settings}
-            vaults={vaults}
-            withdrawals={withdrawals}
-            currentClosure={currentClosure}
+            confirmedSettings={dashboardServerData.settings}
+            dataSourceHealth={dashboardSourceHealthForDisplay}
+            dataQualityNotes={dashboardDataQualityNotes}
+            hasPendingLocalSales={queuedSaleCount > 0}
+            vaults={dashboardServerData.vaults}
+            withdrawals={dashboardServerData.withdrawals}
+            currentClosure={dashboardCurrentClosure}
             currentUser={currentUser}
-            customCustomers={customCustomers}
+            customCustomers={dashboardServerData.customers}
             connectedDevices={connectedDevices}
+            deviceFeedStatus={deviceFeedStatus}
+            deviceFeedLastServerUpdate={deviceFeedLastServerUpdate}
+            isCloudConnected={isCloudConnected}
             onOpenConnectedDevices={() => setIsConnectedDevicesModalOpen(true)}
             onNavigate={setCurrentView} 
             onOpenDayOperations={() => setIsDayOpsModalOpen(true)}
@@ -2842,7 +3181,6 @@ const App: React.FC = () => {
             todaysGrossProfit={todaysGrossProfit}
             onSaveCustomCustomer={handleSaveCustomCustomer}
             onDeleteCustomCustomer={handleDeleteCustomCustomer}
-            onUpdateSale={handleUpdateSale}
             onSaveCustomerRequest={handleSaveCustomerRequest}
             onSelectCustomerForPOS={(cust) => {
               setPreselectedPosCustomer(cust);
@@ -2890,18 +3228,6 @@ const App: React.FC = () => {
             currentUser={effectiveUser}
             onSaveUser={handleSaveUser}
             onAddAuditLog={handleAddAuditLog}
-            onPreviewUserPermissions={(previewUser) => {
-              setPreviewModeUser(previewUser);
-              if (previewUser) {
-                pushTopNotification(
-                  'info',
-                  `🔍 وضع المعاينة نشط كـ: ${previewUser.name}`,
-                  'يمكنك الآن استكشاف القوائم الشاشات والأزرار المتاحة لهذا الموظف (العمليات الحقيقية معطلة)',
-                  'معاينة الصلاحيات'
-                );
-                setCurrentView(View.POS);
-              }
-            }}
           />
         );
       case View.AUDIT_LOGS:
@@ -2913,7 +3239,6 @@ const App: React.FC = () => {
             bottleSizes={bottleSizes}
             settings={settings}
             currentUser={effectiveUser}
-            onUpdateSale={handleUpdateSale}
             onDeleteSale={handleDeleteSale}
             onAddAuditLog={handleAddAuditLog}
             hasMoreLogs={hasMoreAuditLogs}
@@ -2992,7 +3317,6 @@ const App: React.FC = () => {
             products={products} 
             bottleSizes={bottleSizes}
             onDeleteSale={handleDeleteSale} 
-            onUpdateSale={handleUpdateSale}
             onDuplicateSale={handleSaleComplete}
             onNavigateToPOS={() => setCurrentView(View.POS)}
             settings={settings}
@@ -3037,12 +3361,6 @@ const App: React.FC = () => {
             customCustomers={customCustomers}
             onAddAuditLog={handleAddAuditLog}
             initialSection={settingsInitialSection}
-            onUpdateSale={handleUpdateSale}
-            onPreviewUserPermissions={(previewUser) => {
-              if (previewUser) {
-                pushTopNotification('info', `وضع معاينة صلاحيات: ${previewUser.displayName}`, 'صلاحيات مخصصة للواجهة');
-              }
-            }}
           />
         );
       case View.STORE_MANAGER:
@@ -3078,16 +3396,23 @@ const App: React.FC = () => {
       default:
         return (
           <Dashboard 
-            sales={sales} 
-            products={products} 
-            expenses={expenses}
+            sales={dashboardServerData.sales}
+            products={dashboardProducts}
+            expenses={dashboardServerData.expenses}
             settings={settings}
-            vaults={vaults}
-            withdrawals={withdrawals}
-            currentClosure={currentClosure}
+            confirmedSettings={dashboardServerData.settings}
+            dataSourceHealth={dashboardSourceHealthForDisplay}
+            dataQualityNotes={dashboardDataQualityNotes}
+            hasPendingLocalSales={queuedSaleCount > 0}
+            vaults={dashboardServerData.vaults}
+            withdrawals={dashboardServerData.withdrawals}
+            currentClosure={dashboardCurrentClosure}
             currentUser={currentUser}
-            customCustomers={customCustomers}
+            customCustomers={dashboardServerData.customers}
             connectedDevices={connectedDevices}
+            deviceFeedStatus={deviceFeedStatus}
+            deviceFeedLastServerUpdate={deviceFeedLastServerUpdate}
+            isCloudConnected={isCloudConnected}
             onOpenConnectedDevices={() => setIsConnectedDevicesModalOpen(true)}
             onNavigate={setCurrentView} 
             onOpenDayOperations={() => setIsDayOpsModalOpen(true)}
@@ -3100,15 +3425,25 @@ const App: React.FC = () => {
     }
   };
 
-  if (isScreenLocked || !currentUser) {
+  if (authStatus !== 'ready' || isScreenLocked || !currentUser) {
     return (
       <>
         <InteractiveTypingController settings={settings} />
         <AppleWelcomeLockScreen
-          users={users}
-          currentClosure={currentClosure}
-          onUnlock={handleLoginSuccess}
-          onUpdateUser={handleSaveUser}
+          authStatus={authStatus}
+          authEmail={authEmail}
+          authError={authError}
+          isSigningIn={isSigningIn}
+          isCloudConnected={isCloudConnected}
+          cloudMessage={cloudMessage}
+          accessRequestStatus={accessRequestStatus}
+          isSubmittingAccessRequest={isSubmittingAccessRequest}
+          isCheckingAccessRequest={isCheckingAccessRequest}
+          onGoogleSignIn={handleGoogleSignIn}
+          onRequestAccess={() => void handleRequestOperationalAccess()}
+          onCheckAccess={() => void handleCheckOperationalAccess()}
+          onLogout={() => void handleLogout()}
+          onUnlock={handleLocalUnlock}
           storeName={settings.storeName || 'لَمْسَةُ عِطْر'}
           storeSlogan={settings.storeSlogan || 'فخامة العطور الشرقية والفرنسية'}
         />
@@ -3116,29 +3451,15 @@ const App: React.FC = () => {
     );
   }
 
+  // Do not render the owner shell, POS, dashboards, financial state, or their local cached props for Tarek.
+  if (currentUser.role === 'STORE_MANAGER') {
+    return <TarekReadOnlyWorkspace onLogout={() => { void handleLogout(); }} />;
+  }
+
   return (
     <div className="apple-theme-shell min-h-screen max-w-full overflow-x-hidden bg-[#F5F5F7] text-[#1D1D1F] font-sans antialiased">
       {/* Interactive Typing Shake, Color Sparkle & Acoustic Controller */}
       <InteractiveTypingController settings={settings} />
-
-      {/* Owner Preview Mode Active Banner (Rule 8: معاينة الواجهة والصلاحيات دون تنفيذ عمليات مالية) */}
-      {previewModeUser && (
-        <div className="bg-[#FF9500] text-slate-950 px-4 py-2 text-xs font-black flex flex-wrap items-center justify-between gap-2 shadow-apple-md sticky top-0 z-50 animate-in slide-in-from-top duration-200" dir="rtl">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-ping shrink-0" />
-            <span>🔍 وضع معاينة الواجهة نشط · تعاين النظام الآن بصلاحيات الموظف: <strong>{previewModeUser.displayName || previewModeUser.fullName} ({previewModeUser.role === 'STORE_MANAGER' ? 'مسؤول مبيعات وكاشير' : previewModeUser.role})</strong></span>
-            <span className="bg-slate-950/15 text-slate-950 px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-950/20">العمليات المالية حقيقية معطلة لحماية البيانات</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setPreviewModeUser(null)}
-            className="px-3 py-1 rounded-xl bg-slate-950 text-white hover:bg-slate-800 text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm"
-          >
-            <span>إلغاء المعاينة والعودة لصلاحيات د. محمد</span>
-            <X size={14} />
-          </button>
-        </div>
-      )}
 
       {/* Apple Dynamic Island Top Notification Banner (Strictly at the Top) */}
       <AppleTopNotificationBanner
@@ -3177,16 +3498,17 @@ const App: React.FC = () => {
         {/* Unified Sleek Top Header Bar & Smart Color-Coded Notification Ticker */}
         <ExecutiveHeaderBar
           currentUser={effectiveUser}
-          users={users}
-          onSwitchUser={handleLoginSuccess}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           onOpenDayOperations={() => setIsDayOpsModalOpen(true)}
           onLockScreen={handleLockScreen}
-          sales={sales}
-          expenses={expenses}
+          sales={dashboardServerData.sales}
+          expenses={dashboardServerData.expenses}
           settings={settings}
-          products={products}
-          currentClosure={currentClosure}
+          confirmedSettings={dashboardServerData.settings}
+          dataSourceHealth={dashboardSourceHealthForDisplay}
+          hasPendingLocalSales={queuedSaleCount > 0}
+          products={dashboardProducts}
+          currentClosure={dashboardCurrentClosure}
           topNotifications={topNotifications}
           currentView={currentView}
           onNavigate={setCurrentView}
@@ -3197,10 +3519,67 @@ const App: React.FC = () => {
           onOpenThemeStudio={() => setIsThemeStudioModalOpen(true)}
           onOpenLiveAlertsRadar={() => setIsOwnerLiveRadarOpen(true)}
           onOpenPWAInstall={() => setIsPWAInstallModalOpen(true)}
-          connectedDevicesCount={connectedDevices.length}
+          connectedDevicesCount={deviceFeedStatus === 'live' ? connectedDevices.length : null}
           onOpenConnectedDevices={() => setIsConnectedDevicesModalOpen(true)}
           onUpdateSettings={handleSetSettings}
         />
+
+        {currentUser.role === 'OWNER' && <OwnerCommissionCounterBootstrap />}
+
+        {currentUser.role === 'OWNER' && currentView === View.SETTINGS && (
+          <section className="mx-4 sm:mx-6 mt-3 rounded-2xl border border-emerald-700/20 bg-emerald-50 p-4 text-emerald-950">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-black">تهيئة مساحة طارق للقراءة الآمنة</h2>
+                <p className="mt-1 max-w-3xl text-xs leading-5">
+                  يقرأ المنتجات والإعدادات من Firestore مباشرة وينشئ إسقاطات مخزون وتكاليف بلا أسعار بيع أو أرباح. لا يغيّر السجلات القديمة، ولا يفتح البيع أو POS.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isPreparingTarekCatalog}
+                onClick={() => void handlePrepareTarekCatalog()}
+                className="rounded-xl bg-emerald-800 px-4 py-2 text-xs font-black text-white disabled:opacity-50"
+              >
+                {isPreparingTarekCatalog ? 'جارٍ التجهيز…' : 'تهيئة الإسقاطات الآمنة'}
+              </button>
+            </div>
+            {tarekCatalogPrepStatus && <p role="status" className="mt-3 text-xs font-semibold">{tarekCatalogPrepStatus}</p>}
+          </section>
+        )}
+
+        {(queuedSaleCount > 0 || saleQueueNotice) && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`mx-4 sm:mx-6 mt-3 rounded-2xl border px-4 py-3 text-xs font-bold ${queuedSaleCount > 0 ? 'border-amber-500/35 bg-amber-50 text-amber-950' : 'border-emerald-500/30 bg-emerald-50 text-emerald-950'}`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                {queuedSaleCount > 0 && <strong>{queuedSaleCount} فاتورة بانتظار المزامنة — </strong>}
+                {saleQueueNotice}
+              </span>
+              {queuedSaleCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { void saleQueueRetryRef.current?.(); }}
+                  disabled={saleQueueSyncing || !navigator.onLine}
+                  className="rounded-xl bg-amber-800 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50"
+                >
+                  {saleQueueSyncing ? 'جارٍ التحقق…' : 'إعادة المحاولة الآن'}
+                </button>
+              )}
+            </div>
+            {queuedSaleCount > 0 && <span className="mt-1 block font-medium">لا تُحذف الفاتورة من الطابور إلا بعد نجاح تأكيد Firestore.</span>}
+          </div>
+        )}
+
+        {!isCloudConnected && (
+          <div role="status" aria-live="polite" className="mx-4 sm:mx-6 mt-3 rounded-2xl border border-amber-500/35 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-950">
+            <span>{cloudMessage}</span>
+            <span className="block mt-1 font-medium text-amber-900/80">لا تعرض الحالة المحلية على أنها مزامنة مؤكدة، ولا تعتمد على هذه النسخة كنسخة سحابية عند رفض Firestore.</span>
+          </div>
+        )}
 
         {/* Real-time Administrative Directives & Staff Alert Banner (تنبيهات وإشعارات الإدارة العامة للموظفين) */}
         {activeBroadcastForDisplay && (
@@ -3402,10 +3781,8 @@ const App: React.FC = () => {
       {/* Auth Modal for Login and User Switching */}
       {isAuthModalOpen && (
         <AuthModal
-          users={users}
-          currentUser={currentUser}
-          onLoginSuccess={handleLoginSuccess}
-          onUpdateUser={handleSaveUser}
+          email={authEmail}
+          onSignOut={handleLogout}
           onClose={() => setIsAuthModalOpen(false)}
         />
       )}
@@ -3417,7 +3794,6 @@ const App: React.FC = () => {
           onPasswordChanged={(updated) => {
             handleSaveUser(updated);
             setPasswordChangeUser(null);
-            handleLoginSuccess(updated);
           }}
           onClose={() => setPasswordChangeUser(null)}
         />
@@ -3511,15 +3887,18 @@ const App: React.FC = () => {
         isOpen={isConnectedDevicesModalOpen && effectiveUser?.role === 'OWNER'}
         onClose={() => setIsConnectedDevicesModalOpen(false)}
         devices={connectedDevices}
+        deviceFeedStatus={deviceFeedStatus}
+        deviceFeedLastServerUpdate={deviceFeedLastServerUpdate}
         isOwner={effectiveUser?.role === 'OWNER'}
         onTriggerInstantSync={async () => {
-          await publishDevicePresence(effectiveUser, currentView);
+          const latencyMs = await publishDevicePresence(effectiveUser);
           pushTopNotification(
-            'goal',
-            '⚡ تم التزامن اللحظي بنجاح',
-            `كافة الأجهزة المتصلة (${connectedDevices.length}) متطابقة 100% مع السيرفر السحابي`,
-            'مزامنة سريعة'
+            'info',
+            'تم تأكيد نبضة هذا الجهاز',
+            `أكد Firestore كتابة نبضة الاتصال خلال ${latencyMs} مللي ثانية؛ هذا لا يثبت مزامنة محتوى الأجهزة الأخرى.`,
+            'رادار الأجهزة'
           );
+          return latencyMs;
         }}
       />
     </div>

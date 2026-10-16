@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   Smartphone,
@@ -8,63 +8,71 @@ import {
   Sparkles,
   CheckCircle2,
   RefreshCw,
-  Clock,
+  Clock3,
   ShieldCheck,
   Zap,
   Radio,
   MonitorCheck,
   Activity,
   Layers,
-  Check
 } from 'lucide-react';
 import { ConnectedDeviceRecord, APP_SYSTEM_VERSION, APP_BUILD_DATE } from '../types';
-import { getLocalDeviceId, measureTurboSyncLatency } from '../services/firebase';
+import { getLocalDeviceId } from '../services/firebase';
 import { soundAlertService } from '../services/soundAlertService';
+
+type DeviceFeedStatus = 'connecting' | 'live' | 'cached' | 'error';
 
 interface ConnectedDevicesSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   devices: ConnectedDeviceRecord[];
+  deviceFeedStatus?: DeviceFeedStatus;
+  deviceFeedLastServerUpdate?: number | null;
   isOwner?: boolean;
-  onTriggerInstantSync?: () => Promise<void> | void;
+  onTriggerInstantSync?: () => Promise<number | void> | number | void;
 }
 
 export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps> = ({
   isOpen,
   onClose,
   devices = [],
+  deviceFeedStatus = 'connecting',
+  deviceFeedLastServerUpdate = null,
   isOwner = true,
   onTriggerInstantSync,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncResult, setLastSyncResult] = useState<{ latencyMs: number; time: string } | null>(null);
+  const [syncError, setSyncError] = useState('');
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const currentDeviceId = getLocalDeviceId();
 
   const handleInstantTurboSync = async () => {
+    if (!isOwner || !onTriggerInstantSync) return;
     setIsSyncing(true);
+    setSyncError('');
     soundAlertService.playActionChime();
     try {
-      const latency = await measureTurboSyncLatency();
-      if (onTriggerInstantSync) {
-        await onTriggerInstantSync();
-      }
+      const latency = await onTriggerInstantSync();
+      if (typeof latency !== 'number' || !Number.isFinite(latency)) throw new Error('heartbeat-not-confirmed');
       setLastSyncResult({
         latencyMs: latency,
         time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       });
       soundAlertService.playSaleChime();
     } catch {
-      setLastSyncResult({
-        latencyMs: 24,
-        time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      });
+      setSyncError('لم يتأكد إرسال نبضة الجهاز إلى Firestore؛ لم تُسجّل العملية كنجاح.');
     } finally {
-      setTimeout(() => {
-        setIsSyncing(false);
-      }, 500);
+      setIsSyncing(false);
     }
   };
 
@@ -80,12 +88,25 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
   };
 
   const formatLastSeen = (lastSeenMs: number) => {
-    const diffSec = Math.max(0, Math.round((Date.now() - lastSeenMs) / 1000));
-    if (diffSec < 5) return 'الآن (متزامن حياً)';
+    if (!Number.isFinite(lastSeenMs) || lastSeenMs <= 0) return 'وقت النبضة غير متاح';
+    const diffSec = Math.max(0, Math.floor((now - lastSeenMs) / 1000));
+    if (diffSec < 5) return 'منذ ثوانٍ قليلة';
     if (diffSec < 60) return `منذ ${diffSec} ثانية`;
-    const diffMin = Math.round(diffSec / 60);
+    const diffMin = Math.floor(diffSec / 60);
     return `منذ ${diffMin} دقيقة`;
   };
+
+  const feedLabel = {
+    connecting: 'جارٍ التحقق من مستمع الحضور…',
+    live: 'لقطة الأجهزة مؤكدة من Firestore الآن.',
+    cached: 'المعروض من ذاكرة الجهاز المحلية؛ لم يصل تأكيد حديث من الخادم.',
+    error: 'تعذر تشغيل مستمع الأجهزة؛ لا يمكن اعتبار القائمة الحالية مكتملة.',
+  }[deviceFeedStatus];
+  const feedTone = deviceFeedStatus === 'live'
+    ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/25'
+    : deviceFeedStatus === 'error'
+      ? 'bg-rose-500/10 text-rose-800 dark:text-rose-300 border-rose-500/25'
+      : 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/25';
 
   return (
     <div
@@ -103,21 +124,19 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
         <div className="p-4 sm:p-5 border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between gap-3 relative z-10">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center justify-center shadow-xs">
-              <Radio size={22} className="animate-pulse" />
+              <Radio size={22} className={deviceFeedStatus === 'live' ? 'animate-pulse' : ''} />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base sm:text-lg font-black tracking-tight text-[#0F172A] dark:text-white">
                   رادار الأجهزة المتصلة والتزامن اللحظي
                 </h3>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-black">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                  <span>{devices.length} أجهزة متصلة</span>
+                <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${feedTone}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${deviceFeedStatus === 'live' ? 'bg-emerald-500' : deviceFeedStatus === 'error' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                  <span>{deviceFeedStatus === 'live' ? 'مؤكد من الخادم' : deviceFeedStatus === 'cached' ? 'غير مؤكد' : deviceFeedStatus === 'error' ? 'غير متاح' : 'جارٍ الاتصال'}</span>
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-                تزامن فوري دقيق بنسبة 100% بين هاتف الكاشير ولابتوب المالك والتابلت
-              </p>
+              <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">{feedLabel}</p>
             </div>
           </div>
 
@@ -140,8 +159,8 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
                 <Activity size={18} />
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">حالة التزامن الحي</span>
-                <span className="text-xs font-black text-emerald-700 dark:text-emerald-400">متصل ومتزامن فوري ⚡</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">حالة مستمع الأجهزة</span>
+                <span className={`text-xs font-black ${deviceFeedStatus === 'live' ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-300'}`}>{deviceFeedStatus === 'live' ? 'لقطة خادمية مؤكدة' : deviceFeedStatus === 'cached' ? 'ذاكرة محلية فقط' : deviceFeedStatus === 'error' ? 'غير متاح' : 'جارٍ التحقق'}</span>
               </div>
             </div>
 
@@ -150,9 +169,9 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
                 <Zap size={18} />
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">زمن الاستجابة (Latency)</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">زمن تأكيد النبضة</span>
                 <span className="text-xs font-black font-mono text-[#0071E3]">
-                  {lastSyncResult ? `${lastSyncResult.latencyMs}ms فائقة السرعة` : '12 - 28 ms'}
+                  {lastSyncResult ? `${lastSyncResult.latencyMs}ms` : 'لم يُقَس بعد'}
                 </span>
               </div>
             </div>
@@ -162,7 +181,7 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
                 <ShieldCheck size={18} />
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">إصدار النظام ومحرك المزامنة</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">إصدار النظام</span>
                 <span className="text-xs font-mono font-black text-[#0F172A] dark:text-slate-200">
                   {APP_SYSTEM_VERSION}
                 </span>
@@ -170,34 +189,35 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
             </div>
           </div>
 
-          {/* Instant Turbo Sync Trigger Button */}
+          {/* Manual device-presence heartbeat; live data subscriptions remain automatic. */}
           <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-sky-500/10 to-transparent border border-emerald-500/25 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="space-y-0.5 text-center sm:text-right">
               <div className="flex items-center justify-center sm:justify-start gap-1.5">
                 <Sparkles size={14} className="text-emerald-600" />
-                <span className="text-xs font-black text-slate-900 dark:text-white">مزامنة فورية شاملة وتحديث الكاش</span>
+                <span className="text-xs font-black text-slate-900 dark:text-white">نبضة اتصال لهذا الجهاز فقط</span>
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-300">
-                إرسال نبضة مزامنة (Turbo Sync) للتأكد من تطابق كامل المبيعات والمخزون والخزائن على كافة الأجهزة.
+                تحديث قائمة الحضور يتم تلقائيًا عبر مستمع Firestore. هذا الزر يكتب نبضة واحدة للجهاز الحالي ولا يفرض مزامنة محتوى الأجهزة الأخرى.
               </p>
             </div>
 
             <button
               type="button"
-              disabled={isSyncing}
+              disabled={isSyncing || !isOwner || !onTriggerInstantSync}
               onClick={handleInstantTurboSync}
               className="apple-btn px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-2 shadow-xs cursor-pointer shrink-0 disabled:opacity-50"
             >
               <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-              <span>{isSyncing ? 'جارِ المزامنة السريعة...' : 'مزامنة سريعة وتحديث فوري'}</span>
+              <span>{isSyncing ? 'جارٍ إرسال النبضة…' : 'تحديث نبضة هذا الجهاز'}</span>
             </button>
           </div>
 
-          {lastSyncResult && (
+          {syncError && <div role="status" className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-800 dark:text-rose-300 text-xs font-bold">{syncError}</div>}
+          {lastSyncResult && !syncError && (
             <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={14} className="text-emerald-600" />
-                <span>تم تأكيد مزامنة كافة الأجهزة بنجاح خلال {lastSyncResult.latencyMs} مللي ثانية</span>
+                <span>تأكدت كتابة نبضة الجهاز الحالي فقط؛ ليست تأكيدًا لمزامنة بقية البيانات.</span>
               </div>
               <span className="text-[10px] font-mono opacity-75">{lastSyncResult.time}</span>
             </div>
@@ -208,17 +228,17 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                 <Layers size={13} className="text-[#0071E3]" />
-                <span>الأجهزة المتصلة حالياً ({devices.length})</span>
+                <span>الأجهزة ذات النبضات الحديثة ({devices.length})</span>
               </h4>
-              <span className="text-[11px] text-slate-400 font-medium">تحديث حي تلقائي عبر السيرفر</span>
+              <span className="text-[11px] text-slate-400 font-medium">نافذة الحضور: آخر 3 دقائق</span>
             </div>
 
             <div className="space-y-2">
               {devices.length === 0 ? (
                 <div className="p-6 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-dashed border-slate-300 text-center space-y-1">
                   <MonitorCheck size={28} className="mx-auto text-slate-400" />
-                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300">جارِ استقبال إشارات الأجهزة المتصلة...</p>
-                  <p className="text-[10px] text-slate-400">أي جهاز يفتح التطبيق يظهر هنا فوراً في الوقت الفعلي</p>
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300">{deviceFeedStatus === 'live' ? 'لا توجد نبضات حديثة مؤكدة.' : deviceFeedStatus === 'cached' ? 'لا يمكن تأكيد حالة الأجهزة من البيانات المخبأة وحدها.' : deviceFeedStatus === 'error' ? 'تعذر تحميل قائمة الأجهزة من الخادم.' : 'بانتظار أول لقطة من الخادم…'}</p>
+                  <p className="text-[10px] text-slate-400">القائمة تشمل الأجهزة التي نجحت في نشر نبضة ضمن الصلاحيات الحالية.</p>
                 </div>
               ) : (
                 devices.map((device, idx) => {
@@ -246,16 +266,11 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
                                 هذا الجهاز الحالي
                               </span>
                             )}
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
-                              {device.browser}
-                            </span>
                           </div>
                           <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                             <span className="font-bold text-[#0F172A] dark:text-slate-200">
-                              المستخدم: {device.userName}
+                              المستخدم: {device.userName || 'غير محدد'}
                             </span>
-                            <span>·</span>
-                            <span>الشاشة: {device.currentView || 'الرئيسية'}</span>
                           </div>
                         </div>
                       </div>
@@ -263,12 +278,13 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
                       <div className="flex items-center gap-2.5 sm:self-center mr-auto sm:mr-0">
                         <div className="text-left sm:text-right">
                           <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                            <span>متصل ومباشر</span>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <span>آخر نبضة</span>
                           </div>
-                          <span className="block text-[10px] text-slate-400 font-mono">
+                          <span className="block text-[10px] text-slate-500 dark:text-slate-400">
                             {formatLastSeen(device.lastSeenMs)}
                           </span>
+                          <span className="block text-[9px] text-slate-400 font-mono">{device.lastSeenMs ? new Date(device.lastSeenMs).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'وقت غير متاح'}</span>
                         </div>
                       </div>
                     </div>
@@ -278,21 +294,21 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
             </div>
           </div>
 
-          {/* Real-Time Sync Assurance Notice */}
+          {/* Explain the scope of presence and live data without overstating delivery guarantees. */}
           <div className="p-3.5 rounded-2xl bg-slate-100/70 dark:bg-white/[0.03] border border-black/[0.05] dark:border-white/[0.06] space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
             <div className="flex items-center gap-1.5 font-bold text-[#0F172A] dark:text-white">
               <ShieldCheck size={14} className="text-emerald-600" />
-              <span>ضمانات التزامن اللحظي في نظام لمسة عطر:</span>
+              <span>حدود التأكيد والخصوصية:</span>
             </div>
             <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-500 dark:text-slate-400 mr-2 leading-relaxed">
               <li>
-                <strong>تزامن المبيعات الفوري:</strong> أي فاتورة يتم إصدارها من هاتف الكاشير تُسجل فوراً في شاشة المالك خلال أجزاء من الثانية مع إشعار صوتي ومرئي.
+                لقطة مستمع الأجهزة من Firestore تؤكد اتصال هذا المستمع فقط؛ والنبضة تؤكد كتابة حضور الجهاز الذي أرسلها فقط.
               </li>
               <li>
-                <strong>تحديث المخزون التلقائي:</strong> خصم جرامات الزيوت والعبوات ينعكس لحظياً على كافة الأجهزة المفتوحة دون الحاجة لتحديث الصفحة.
+                تأكيد مزامنة المبيعات أو المخزون يتطلب نجاح العملية السحابية نفسها؛ لا يستنتج الرادار تطابق كل الأجهزة.
               </li>
               <li>
-                <strong>دعم العمل دون انقطاع (Offline-First):</strong> إذا انقطع الإنترنت عن جهاز الكاشير، تُحفظ الفواتير محلياً وتُرفع تلقائياً لحظة عودة الاتصال.
+                لا تُرسل أسماء الشاشات في النبضات الجديدة، ولا يُجمع GPS أو عنوان IP أو محتوى الشاشة، ولا يوجد تحكم عن بُعد.
               </li>
             </ul>
           </div>
@@ -301,6 +317,9 @@ export const ConnectedDevicesSyncModal: React.FC<ConnectedDevicesSyncModalProps>
         {/* Modal Footer */}
         <div className="p-3.5 sm:p-4 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between gap-3 bg-slate-50/80 dark:bg-white/[0.02]">
           <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono">
+            <Clock3 size={12} />
+            <span>آخر تأكيد خادمي: {deviceFeedLastServerUpdate ? new Date(deviceFeedLastServerUpdate).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'غير متاح'}</span>
+            <span>·</span>
             <span>{APP_BUILD_DATE}</span>
             <span>·</span>
             <span>{APP_SYSTEM_VERSION}</span>
