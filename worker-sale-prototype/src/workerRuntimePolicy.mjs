@@ -2,6 +2,7 @@ const LOCAL_CORS_ORIGINS = new Set([
   'http://127.0.0.1:3000',
   'http://localhost:3000',
 ]);
+const PRODUCTION_PROJECT_ID = 'gen-lang-client-0515786951';
 
 export const LAMSA_SALES_CUTOVER_DATE_KEY = '2026-10-17';
 
@@ -40,6 +41,14 @@ export function isProductionLamsaRouteEnabled(env) {
     && isExactHttpsOrigin(env?.CORS_ALLOWED_ORIGIN);
 }
 
+/** Server time is non-sensitive and read-only; keep it behind its own explicit flag and exact origin. */
+export function isTrustedServerTimeRouteEnabled(env) {
+  return env?.ENVIRONMENT === 'production'
+    && env?.SERVER_TIME_ENDPOINT_ENABLED === 'true'
+    && env?.PROJECT_ID === PRODUCTION_PROJECT_ID
+    && isExactHttpsOrigin(env?.CORS_ALLOWED_ORIGIN);
+}
+
 export function isAllowedLamsaRequestOrigin(env, origin) {
   if (env?.ENVIRONMENT === 'local-emulator') {
     return !origin || LOCAL_CORS_ORIGINS.has(origin);
@@ -49,6 +58,19 @@ export function isAllowedLamsaRequestOrigin(env, origin) {
     && origin === env.CORS_ALLOWED_ORIGIN;
 }
 
+export function isAllowedTrustedServerTimeOrigin(env, origin) {
+  if (env?.ENVIRONMENT === 'local-emulator') {
+    return !origin || LOCAL_CORS_ORIGINS.has(origin);
+  }
+  return isTrustedServerTimeRouteEnabled(env)
+    && typeof origin === 'string'
+    && origin === env.CORS_ALLOWED_ORIGIN;
+}
+
 export function resolveLamsaCorsOrigin(env, origin) {
   return isAllowedLamsaRequestOrigin(env, origin) && origin ? origin : null;
+}
+
+export function resolveTrustedServerTimeCorsOrigin(env, origin) {
+  return isAllowedTrustedServerTimeOrigin(env, origin) && origin ? origin : null;
 }

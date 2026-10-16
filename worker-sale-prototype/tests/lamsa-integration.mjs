@@ -70,6 +70,12 @@ async function restSet(path, data) {
   });
   if (!response.ok) throw new Error(`REST write ${path} failed (${response.status}): ${await response.text()}`);
 }
+async function restDelete(path) {
+  const response = await fetch(`${fsRoot}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+    method: 'DELETE', headers: adminHeaders,
+  });
+  if (!response.ok && response.status !== 404) throw new Error(`REST delete ${path} failed (${response.status}): ${await response.text()}`);
+}
 async function call(token, body) {
   const response = await fetch(`${workerUrl}/api/lamsa/sales`, {
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -278,6 +284,50 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
     assert.equal(repeated.body.status, 'already-ready');
     assert.equal(repeated.body.historyScanned, false);
     assert.equal(repeated.body.sprayBottlesSold, 8);
+  });
+
+  await check('counter missing: Tarek quote and sale still update stock atomically, hold commission for owner review, and reverse without counter writes', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const counterPath = `commission_day_counters/${today}`;
+    const counterBefore = await restDoc(counterPath);
+    assert.ok(counterBefore, 'baseline counter should be ready before the isolated missing-counter simulation');
+    const stockBefore = (await restDoc('tarek_products/lamsa-normal')).stock_grams;
+    const commissionVaultBefore = (await restDoc('vaults/commissions')).currentBalance;
+    const saleId = 'lamsa-counter-review-0001';
+    const body = operatorV3(intent(saleId, line({ productId: 'lamsa-normal' })));
+    await restDelete(counterPath);
+    try {
+      const quote = await callQuote(sellerToken, body);
+      assert.equal(quote.status, 200, JSON.stringify(quote.body));
+      assertNoTarekFinancialFields(quote.body.sale);
+      const committed = await call(sellerToken, body);
+      assert.equal(committed.status, 200, JSON.stringify(committed.body));
+      assertNoTarekFinancialFields(committed.body.sale);
+      const saved = await restDoc(`sales/${saleId}`);
+      assert.equal(saved.commissionTimingStatus, 'needs_owner_review');
+      assert.equal(saved.commissionReviewReason, 'counter-not-ready');
+      assert.equal(saved.commissionAmount, 0);
+      assert.equal(saved.totalCommission, 0);
+      assert.equal(saved.totalProfit, 0);
+      assert.equal(await restDoc(`sale_financials/${saleId}`), null);
+      assert.equal(await restDoc(counterPath), null);
+      assert.equal((await restDoc('tarek_products/lamsa-normal')).stock_grams, stockBefore - 15);
+      assert.equal((await restDoc('vaults/commissions')).currentBalance, commissionVaultBefore);
+
+      const retry = await call(sellerToken, body);
+      assert.equal(retry.status, 200, JSON.stringify(retry.body));
+      assert.equal(retry.body.status, 'already-committed');
+      assert.equal((await restDoc('tarek_products/lamsa-normal')).stock_grams, stockBefore - 15);
+
+      const reversed = await callReverse(ownerToken, saleId, { reason: 'اختبار محلي: مراجعة عمولة معلّقة' });
+      assert.equal(reversed.status, 200, JSON.stringify(reversed.body));
+      assert.equal(reversed.body.status, 'reversed');
+      assert.equal((await restDoc('tarek_products/lamsa-normal')).stock_grams, stockBefore);
+      assert.equal((await restDoc('vaults/commissions')).currentBalance, commissionVaultBefore);
+      assert.equal(await restDoc(counterPath), null);
+    } finally {
+      await restSet(counterPath, counterBefore);
+    }
   });
 
   await check('split Tarek catalogue is authoritative even when legacy product, bottle, and settings disagree', async () => {
@@ -728,13 +778,20 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
     assert.equal(freeQuote.status, 200, JSON.stringify(freeQuote.body));
     assert.equal(freeQuote.body.sale.totalPrice, 300);
     assertNoTarekFinancialFields(freeQuote.body.sale);
+    const commitStartedAt = Date.now();
     const freeCommit = await call(managerToken, freeGift);
+    const commitFinishedAt = Date.now();
     assert.equal(freeCommit.status, 200, JSON.stringify(freeCommit.body));
     assert.equal(freeCommit.body.sale.totalPrice, 300);
     assertNoTarekFinancialFields(freeCommit.body.sale);
     const freeOwnerRecord = await restDoc('sales/lamsa-v3-package-free-01');
     assert.equal(freeOwnerRecord.packagingCostEgp, 10);
     assert.equal(freeOwnerRecord.packagingRevenueEgp, undefined);
+    const committedAtMs = Date.parse(freeOwnerRecord.date);
+    assert.equal(committedAtMs >= commitStartedAt && committedAtMs <= commitFinishedAt, true,
+      'invoice date comes from the Worker commit time, not from 03:00 or a client-supplied date');
+    assert.equal(freeOwnerRecord.timestamp, freeOwnerRecord.date);
+    assert.equal(freeOwnerRecord.recordedAt, freeOwnerRecord.date);
 
     const paidPackaging = makeV3('lamsa-v3-package-paid-01', singleLine('line-package-paid'), 'luxury_box', true);
     const paidQuote = await callQuote(managerToken, paidPackaging);

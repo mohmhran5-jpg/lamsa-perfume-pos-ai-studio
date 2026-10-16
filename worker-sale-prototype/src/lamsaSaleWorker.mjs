@@ -245,6 +245,11 @@ function readReadyCommissionCounter(docs, dateKey) {
   catch { throw new LamsaWorkerError(503, 'sale/commission-counter-not-ready'); }
 }
 
+function readOptionalReadyCommissionCounter(docs, dateKey) {
+  try { return readReadyCommissionCounter(docs, dateKey); }
+  catch { return null; }
+}
+
 export const LAMSA_FRESH_START_DATE_KEY = '2026-10-17';
 
 /** Keep the agreed zero-baseline cutover fail-closed if any same-day history exists. */
@@ -419,7 +424,7 @@ export function calculateCommission(lines, netRatio, priorSprays, settings) {
   return { total: roundMoney(total), lineCommissions };
 }
 
-function buildSale({ request, requestHash, user, role, docs, priorSprayBottlesSold, now }) {
+function buildSale({ request, requestHash, user, role, docs, priorSprayBottlesSold, commissionCounterReady, now }) {
   docs = resolveSeparatedSaleDocuments(request, docs);
   const settings = docs.get('settings/store');
   if (!settings) throw new LamsaWorkerError(503, 'sale/separated-settings-not-ready');
@@ -542,24 +547,26 @@ function buildSale({ request, requestHash, user, role, docs, priorSprayBottlesSo
   if (discount >= subtotal) throw new LamsaWorkerError(409, 'sale/non-positive-total');
   const totalPrice = roundMoney(subtotal - discount);
   const netRatio = totalPrice / subtotal;
-  const commission = calculateCommission(pricingLines, netRatio, priorSprayBottlesSold, settings);
+  const commission = calculateCommission(pricingLines, netRatio,
+    commissionCounterReady ? priorSprayBottlesSold : Number.MAX_SAFE_INTEGER, settings);
   const allRollOn = pricingLines.every((line) => line.isRollOn);
   const minimumContribution = 10;
   const effectiveRate = allRollOn ? 0 : commissionRate;
   const minSafeNet = Math.ceil((productCost + minimumContribution) / Math.max(0.1, 1 - effectiveRate));
   const maxDiscount = Math.max(0, subtotal - minSafeNet);
-  const profit = roundMoney(totalPrice - productCost - commission.total);
-  if (![subtotal, productCost, discount, totalPrice, commission.total, profit, maxDiscount].every(Number.isFinite)) {
+  const profitEstimate = roundMoney(totalPrice - productCost - commission.total);
+  const profit = commissionCounterReady ? profitEstimate : 0;
+  if (![subtotal, productCost, discount, totalPrice, commission.total, profitEstimate, maxDiscount].every(Number.isFinite)) {
     throw new LamsaWorkerError(409, 'sale/non-finite-calculation');
   }
   if (request.schema === 'lamsa.sale-intent/v2'
       && (Math.abs(request.previewTotalPriceEgp - totalPrice) > 0.009
         || Math.abs(request.previewTotalCostEgp - productCost) > 0.009
         || Math.abs(request.previewCommissionEgp - commission.total) > 0.009
-        || Math.abs(request.previewTotalProfitEgp - profit) > 0.009)) {
+        || Math.abs(request.previewTotalProfitEgp - profitEstimate) > 0.009)) {
     throw new LamsaWorkerError(409, 'sale/authoritative-preview-mismatch');
   }
-  if (discount > maxDiscount || totalPrice <= productCost || profit < minimumContribution) {
+  if (discount > maxDiscount || totalPrice <= productCost || profitEstimate < minimumContribution) {
     throw new LamsaWorkerError(409, 'sale/discount-exceeds-safe-margin');
   }
 
@@ -576,7 +583,7 @@ function buildSale({ request, requestHash, user, role, docs, priorSprayBottlesSo
       essenceGrams: line.essenceGramsPerBottle * line.quantity,
       cost: line.lineCost,
       sellingPrice: line.linePrice,
-      profit: lineProfit,
+      profit: commissionCounterReady ? lineProfit : 0,
       quantity: line.quantity,
       isColoredBottle: line.isColoredBottle,
       isRollOn: line.isRollOn,
@@ -618,8 +625,12 @@ function buildSale({ request, requestHash, user, role, docs, priorSprayBottlesSo
     ...(packageRevenue > 0 ? { packagingRevenueEgp: packageRevenue } : {}),
     ...(packageCost > 0 ? { packagingCostEgp: packageCost } : {}),
     ...(packaging?.replacesBasicBag ? { isBasicBagReplacedByLuxury: true } : {}),
-    commissionAmount: commission.total,
-    totalCommission: commission.total,
+    commissionAmount: commissionCounterReady ? commission.total : 0,
+    totalCommission: commissionCounterReady ? commission.total : 0,
+    commissionTimingStatus: commissionCounterReady ? 'verified' : 'needs_owner_review',
+    commissionEventTime: now,
+    commissionCandidateDayKey: utcDateKey(new Date(now)),
+    ...(!commissionCounterReady ? { commissionReviewReason: 'counter-not-ready' } : {}),
     transactionType: 'بيع_طبيعي',
     dataClassification: 'PRODUCTION',
     isTestData: false,
@@ -834,7 +845,7 @@ export async function handleLamsaSaleQuote(request, env, helpers) {
         throw new LamsaWorkerError(409, existingSale.requestHash === requestHash
           ? 'sale/already-committed' : 'sale/idempotency-conflict');
       }
-      const commissionCounter = readReadyCommissionCounter(initial.docs, transactionDate);
+      const commissionCounter = readOptionalReadyCommissionCounter(initial.docs, transactionDate);
       if (role !== 'OWNER') {
         const grant = initial.docs.get(`role_assignments/${user.email}`);
         if (!grant || grant.email !== user.email || grant.active !== true
@@ -853,7 +864,8 @@ export async function handleLamsaSaleQuote(request, env, helpers) {
         if (existingQuote.status !== 'ready' || existingQuote.expiresAt <= Date.now()) {
           throw new LamsaWorkerError(409, 'sale/quote-expired');
         }
-        if (existingQuote.commissionCounterGeneration !== commissionCounter.generation) {
+        if (existingQuote.commissionCounterReady !== Boolean(commissionCounter)
+            || existingQuote.commissionCounterGeneration !== (commissionCounter?.generation ?? null)) {
           throw new LamsaWorkerError(409, 'sale/quote-stale');
         }
         return json({
@@ -872,7 +884,8 @@ export async function handleLamsaSaleQuote(request, env, helpers) {
         user,
         role,
         docs: initial.docs,
-        priorSprayBottlesSold: commissionCounter.sprayBottlesSold,
+        priorSprayBottlesSold: commissionCounter?.sprayBottlesSold ?? Number.MAX_SAFE_INTEGER,
+        commissionCounterReady: Boolean(commissionCounter),
         now,
       });
       for (const productId of stockDeductions.keys()) {
@@ -893,7 +906,8 @@ export async function handleLamsaSaleQuote(request, env, helpers) {
         issuedAt: now,
         expiresAt,
         status: 'ready',
-        commissionCounterGeneration: commissionCounter.generation,
+        commissionCounterReady: Boolean(commissionCounter),
+        commissionCounterGeneration: commissionCounter?.generation ?? null,
         summary,
       };
       await commitWrites(env, transactionId, [makeWrite(env, quotePath, quote, { exists: false })]);
@@ -962,7 +976,7 @@ export async function handleLamsaSale(request, env, helpers) {
         if (existing.requestHash !== requestHash) throw new LamsaWorkerError(409, 'sale/idempotency-conflict');
         return json(publicResult(role, existing, true));
       }
-      const commissionCounter = readReadyCommissionCounter(initial.docs, transactionDate);
+      const commissionCounter = readOptionalReadyCommissionCounter(initial.docs, transactionDate);
       if (role !== 'OWNER') {
         const grant = initial.docs.get(`role_assignments/${user.email}`);
         if (!grant || grant.email !== user.email || grant.active !== true || !['SALES_OPERATOR', 'STORE_MANAGER'].includes(grant.role)) {
@@ -981,7 +995,8 @@ export async function handleLamsaSale(request, env, helpers) {
         if (typeof quote.expiresAt !== 'number' || quote.expiresAt <= Date.now()) {
           throw new LamsaWorkerError(409, 'sale/quote-expired');
         }
-        if (quote.commissionCounterGeneration !== commissionCounter.generation) {
+        if (quote.commissionCounterReady !== Boolean(commissionCounter)
+            || quote.commissionCounterGeneration !== (commissionCounter?.generation ?? null)) {
           throw new LamsaWorkerError(409, 'sale/quote-stale');
         }
       }
@@ -989,7 +1004,8 @@ export async function handleLamsaSale(request, env, helpers) {
       const now = new Date().toISOString();
       const { sale, stockDeductions } = buildSale({
         request: intent, requestHash, user, role, docs,
-        priorSprayBottlesSold: commissionCounter.sprayBottlesSold,
+        priorSprayBottlesSold: commissionCounter?.sprayBottlesSold ?? Number.MAX_SAFE_INTEGER,
+        commissionCounterReady: Boolean(commissionCounter),
         now,
       });
       if (quote && quote.snapshotHash !== await hashCanonical(quoteSummary(sale))) {
@@ -1011,6 +1027,7 @@ export async function handleLamsaSale(request, env, helpers) {
       };
       const vaultWrites = [];
       for (const [vaultId, delta] of Object.entries(deltas)) {
+        if (delta === 0) continue;
         const vault = docs.get(`vaults/${vaultId}`);
         if (!vault) throw new LamsaWorkerError(503, `sale/vault-missing-${vaultId}`);
         const currentBalance = roundBalance(vault.currentBalance);
@@ -1022,34 +1039,42 @@ export async function handleLamsaSale(request, env, helpers) {
         }, { mask: ['currentBalance', 'totalInflow', 'updatedAt'] }));
       }
 
-      let saleSprayCount;
-      try { saleSprayCount = countSaleSprays(sale); }
-      catch { throw new LamsaWorkerError(503, 'sale/commission-counter-sale-ambiguous'); }
-      const nextCounter = nextCommissionCounter(commissionCounter, {
-        dateKey: transactionDate,
-        saleId: sale.id,
-        sprayCount: saleSprayCount,
-        action: 'sale',
-        now,
-      });
-      sale.commissionDayKey = transactionDate;
-      sale.commissionSprayBottleCount = saleSprayCount;
-      sale.commissionCounterGeneration = nextCounter.generation;
-      sale.commissionCounterAction = 'sale';
+      let nextCounter;
+      if (commissionCounter) {
+        let saleSprayCount;
+        try { saleSprayCount = countSaleSprays(sale); }
+        catch { throw new LamsaWorkerError(503, 'sale/commission-counter-sale-ambiguous'); }
+        nextCounter = nextCommissionCounter(commissionCounter, {
+          dateKey: transactionDate,
+          saleId: sale.id,
+          sprayCount: saleSprayCount,
+          action: 'sale',
+          now,
+        });
+        sale.commissionDayKey = transactionDate;
+        sale.commissionSprayBottleCount = saleSprayCount;
+        sale.commissionCounterGeneration = nextCounter.generation;
+        sale.commissionCounterAction = 'sale';
+      } else {
+        sale.commissionTimingStatus = 'needs_owner_review';
+        sale.commissionReviewReason = 'counter-not-ready';
+        sale.commissionCandidateDayKey = transactionDate;
+      }
+      sale.serverAcceptedAt = now;
 
       const writes = [
         makeWrite(env, `sales/${intent.saleId}`, sale, { exists: false }),
-        makeWrite(env, counterPath, nextCounter, {
+        ...(nextCounter ? [makeWrite(env, counterPath, nextCounter, {
           mask: ['sprayBottlesSold', 'generation', 'lastAppliedSaleId', 'lastAppliedAction', 'updatedAt'],
           exists: true,
-        }),
+        })] : []),
         makeWrite(env, dailyLockPath, {
           generation: (Number(docs.get(dailyLockPath)?.generation) || 0) + 1,
           updatedAt: now,
         }, { mask: ['generation', 'updatedAt'], exists: Boolean(docs.get(dailyLockPath)) }),
         makeWrite(env, `sale_operations/${intent.saleId}`, projectOperationalSale(sale), { exists: false }),
         makeWrite(env, `sale_costs/${intent.saleId}`, projectSaleCosts(sale), { exists: false }),
-        makeWrite(env, `sale_financials/${intent.saleId}`, projectSaleFinancials(sale), { exists: false }),
+        ...(commissionCounter ? [makeWrite(env, `sale_financials/${intent.saleId}`, projectSaleFinancials(sale), { exists: false })] : []),
         ...[...stockAfter].flatMap(([id, stock_grams]) => [
           makeWrite(env, `tarek_products/${id}`, { stock_grams, updatedAt: now }, { mask: ['stock_grams', 'updatedAt'], exists: true }),
           ...(docs.has(`product_operations/${id}`)
@@ -1129,7 +1154,8 @@ export async function handleLamsaSaleReversal(request, saleId, env, helpers) {
       if (sale.transactionType !== 'بيع_طبيعي'
           || typeof sale.requestHash !== 'string' || !/^[a-f0-9]{64}$/.test(sale.requestHash)
           || !sale.stockDeductions || typeof sale.stockDeductions !== 'object' || Array.isArray(sale.stockDeductions)
-          || !initial.docs.get(operationKey) || !initial.docs.get(costsKey) || !initial.docs.get(financialsKey)) {
+          || !initial.docs.get(operationKey) || !initial.docs.get(costsKey)
+          || (sale.commissionTimingStatus !== 'needs_owner_review' && !initial.docs.get(financialsKey))) {
         throw new LamsaWorkerError(409, 'sale/unsupported-reversal-record');
       }
       if ((sale.loyaltyPointsRedeemed || 0) > 0
@@ -1138,27 +1164,32 @@ export async function handleLamsaSaleReversal(request, saleId, env, helpers) {
         throw new LamsaWorkerError(409, 'sale/reversal-side-effects-not-supported');
       }
 
-      const dateKey = sale.commissionDayKey || (typeof sale.date === 'string' ? sale.date.slice(0, 10) : '');
+      const timingReview = sale.commissionTimingStatus === 'needs_owner_review';
+      const dateKey = sale.commissionDayKey || sale.commissionCandidateDayKey
+        || (typeof sale.date === 'string' ? sale.date.slice(0, 10) : '');
       if (!isValidDateKey(dateKey) || (typeof sale.date !== 'string' || sale.date.slice(0, 10) !== dateKey)) {
         throw new LamsaWorkerError(503, 'sale/commission-counter-sale-date-ambiguous');
       }
-      let saleSprayCount;
-      try { saleSprayCount = countSaleSprays(sale); }
-      catch { throw new LamsaWorkerError(503, 'sale/commission-counter-sale-ambiguous'); }
-      if (sale.commissionSprayBottleCount !== undefined && sale.commissionSprayBottleCount !== saleSprayCount) {
-        throw new LamsaWorkerError(503, 'sale/commission-counter-sale-count-mismatch');
-      }
-      const counterPath = commissionCounterPath(dateKey);
-      const counterRead = await batchGet(env, [counterPath], transactionId);
-      transactionId = counterRead.transactionId;
-      const counter = readReadyCommissionCounter(counterRead.docs, dateKey);
       let nextCounter;
-      try {
-        nextCounter = nextCommissionCounter(counter, {
-          dateKey, saleId, sprayCount: saleSprayCount, action: 'reversal', now: new Date().toISOString(),
-        });
-      } catch {
-        throw new LamsaWorkerError(503, 'sale/commission-counter-reversal-underflow');
+      let counterPath;
+      let saleSprayCount = 0;
+      if (!timingReview) {
+        try { saleSprayCount = countSaleSprays(sale); }
+        catch { throw new LamsaWorkerError(503, 'sale/commission-counter-sale-ambiguous'); }
+        if (sale.commissionSprayBottleCount !== undefined && sale.commissionSprayBottleCount !== saleSprayCount) {
+          throw new LamsaWorkerError(503, 'sale/commission-counter-sale-count-mismatch');
+        }
+        counterPath = commissionCounterPath(dateKey);
+        const counterRead = await batchGet(env, [counterPath], transactionId);
+        transactionId = counterRead.transactionId;
+        const counter = readReadyCommissionCounter(counterRead.docs, dateKey);
+        try {
+          nextCounter = nextCommissionCounter(counter, {
+            dateKey, saleId, sprayCount: saleSprayCount, action: 'reversal', now: new Date().toISOString(),
+          });
+        } catch {
+          throw new LamsaWorkerError(503, 'sale/commission-counter-reversal-underflow');
+        }
       }
 
       const deductions = Object.entries(sale.stockDeductions);
@@ -1176,7 +1207,7 @@ export async function handleLamsaSaleReversal(request, saleId, env, helpers) {
       transactionId = stockRead.transactionId;
 
       const now = new Date().toISOString();
-      nextCounter.updatedAt = now;
+      if (nextCounter) nextCounter.updatedAt = now;
       const stockWrites = [];
       if (restoreInventory) {
         for (const [id, grams] of deductions) {
@@ -1197,6 +1228,7 @@ export async function handleLamsaSaleReversal(request, saleId, env, helpers) {
 
       const vaultWrites = [];
       for (const [vaultId, amount] of [['restock', totalCost], ['commissions', commission]]) {
+        if (amount === 0) continue;
         const vault = initial.docs.get(`vaults/${vaultId}`);
         if (!vault) throw new LamsaWorkerError(503, `sale/reversal-vault-missing-${vaultId}`);
         const currentBalance = requiredNumber(vault, 'currentBalance', { min: 0 });
@@ -1217,27 +1249,35 @@ export async function handleLamsaSaleReversal(request, saleId, env, helpers) {
         timestamp: now,
         details: `${reason} | إعادة المخزون: ${restoreInventory ? 'نعم' : 'لا'}`,
       };
+      const counterFields = nextCounter ? {
+        commissionDayKey: dateKey,
+        commissionSprayBottleCount: saleSprayCount,
+        commissionCounterGeneration: nextCounter.generation,
+        commissionCounterAction: 'reversal',
+      } : {};
+      const counterMask = nextCounter
+        ? ['commissionDayKey', 'commissionSprayBottleCount', 'commissionCounterGeneration', 'commissionCounterAction']
+        : [];
       const writes = [
         makeWrite(env, saleKey, {
           isReversed: true, reversalReason: reason, reversedBy: user.email, reversedAt: now,
           inventoryRestored: restoreInventory,
-          commissionDayKey: dateKey,
-          commissionSprayBottleCount: saleSprayCount,
-          commissionCounterGeneration: nextCounter.generation,
-          commissionCounterAction: 'reversal',
+          ...counterFields,
           auditTrail: [...(Array.isArray(sale.auditTrail) ? sale.auditTrail : []), auditEntry],
         }, { mask: ['isReversed', 'reversalReason', 'reversedBy', 'reversedAt', 'inventoryRestored',
-          'commissionDayKey', 'commissionSprayBottleCount', 'commissionCounterGeneration', 'commissionCounterAction', 'auditTrail'], exists: true }),
+          ...counterMask, 'auditTrail'], exists: true }),
         makeWrite(env, operationKey, {
           isReversed: true, reversalReason: reason, reversedBy: user.email, reversedAt: now,
           inventoryRestored: restoreInventory,
         }, { mask: ['isReversed', 'reversalReason', 'reversedBy', 'reversedAt', 'inventoryRestored'], exists: true }),
         makeWrite(env, costsKey, { isReversed: true, reversedAt: now }, { mask: ['isReversed', 'reversedAt'], exists: true }),
-        makeWrite(env, financialsKey, { isReversed: true, reversedAt: now }, { mask: ['isReversed', 'reversedAt'], exists: true }),
-        makeWrite(env, counterPath, nextCounter, {
+        ...(initial.docs.get(financialsKey)
+          ? [makeWrite(env, financialsKey, { isReversed: true, reversedAt: now }, { mask: ['isReversed', 'reversedAt'], exists: true })]
+          : []),
+        ...(nextCounter && counterPath ? [makeWrite(env, counterPath, nextCounter, {
           mask: ['sprayBottlesSold', 'generation', 'lastAppliedSaleId', 'lastAppliedAction', 'updatedAt'],
           exists: true,
-        }),
+        })] : []),
         ...stockWrites,
         ...vaultWrites,
       ];

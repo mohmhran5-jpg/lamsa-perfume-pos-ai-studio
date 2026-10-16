@@ -39,6 +39,7 @@ test('all Worker routes remain blocked when the synthetic pinned target is set',
     new Request('http://worker.local/api/lamsa/sales/quote', { method: 'POST', body: '{}' }),
     new Request('http://worker.local/api/lamsa/sales', { method: 'POST', body: '{}' }),
     new Request('http://worker.local/api/lamsa/sales/sale-1234/reverse', { method: 'POST', body: '{}' }),
+    new Request('http://worker.local/api/lamsa/server-time', { method: 'POST', body: '{}' }),
     new Request('http://worker.local/api/sales', { method: 'POST', body: '{}' }),
   ];
 

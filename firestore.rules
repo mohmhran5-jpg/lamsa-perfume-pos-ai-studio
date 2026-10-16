@@ -199,6 +199,23 @@ service cloud.firestore {
             && getAfter(salePath).data.isReversed == true));
     }
 
+    function validNeedsOwnerReviewSale(data) {
+      return data.get('commissionTimingStatus', '') == 'needs_owner_review'
+        && data.get('commissionReviewReason', '') in [
+          'missing-time-sample', 'stale-time-sample', 'device-clock-drift',
+          'invalid-event-time', 'event-clock-drift', 'counter-not-ready', 'counter-stale'
+        ]
+        && 'serverAcceptedAt' in data
+        && data.serverAcceptedAt == request.time
+        && data.get('commissionAmount', 0) == 0
+        && data.get('totalCommission', 0) == 0
+        && data.get('totalProfit', 0) == 0
+        && !('commissionDayKey' in data)
+        && !('commissionSprayBottleCount' in data)
+        && !('commissionCounterGeneration' in data)
+        && !('commissionCounterAction' in data);
+    }
+
     function validSale(documentId) {
       let data = request.resource.data;
       return data is map
@@ -211,7 +228,9 @@ service cloud.firestore {
         && isNonNegativeNumber(data.totalPrice)
         && data.date is string
         && data.date.size() > 0
-        && hasMatchingCommissionCounterAfter(documentId, 'sale')
+        && (data.get('commissionTimingStatus', 'verified') == 'needs_owner_review'
+          ? validNeedsOwnerReviewSale(data)
+          : hasMatchingCommissionCounterAfter(documentId, 'sale'))
         && (data.totalPrice > 0
           || ('transactionType' in data
             && data.transactionType in ['هدية', 'تعويض', 'تصفية', 'إتلاف', 'عينات_مجانية']));
@@ -231,7 +250,12 @@ service cloud.firestore {
         && request.resource.data.reversedAt is string
         && changed.hasOnly(['isReversed', 'reversalReason', 'reversedBy', 'reversedAt', 'inventoryRestored', 'auditTrail',
           'commissionDayKey', 'commissionSprayBottleCount', 'commissionCounterGeneration', 'commissionCounterAction'])
-        && hasMatchingCommissionCounterAfter(documentId, 'reversal')
+        && (resource.data.get('commissionTimingStatus', 'verified') == 'needs_owner_review'
+          ? !('commissionDayKey' in request.resource.data)
+            && !('commissionSprayBottleCount' in request.resource.data)
+            && !('commissionCounterGeneration' in request.resource.data)
+            && !('commissionCounterAction' in request.resource.data)
+          : hasMatchingCommissionCounterAfter(documentId, 'reversal'))
         && (!('inventoryRestored' in request.resource.data) || request.resource.data.inventoryRestored is bool)
         && (!('auditTrail' in request.resource.data) || request.resource.data.auditTrail is list);
     }

@@ -8,7 +8,9 @@ import {
 import {
   bootstrapCommissionCounterOnConfiguredWorker,
   bootstrapCommissionCounterOnLocalEmulatorWorker,
+  fetchTrustedServerTimeFromConfiguredWorker,
   getConfiguredCommissionCounterBootstrapEndpoint,
+  getConfiguredTrustedServerTimeEndpoint,
   getConfiguredTarekSaleWorkerEndpoint,
   quoteTarekSaleToWorker,
   quoteTarekSaleToLocalEmulatorWorker,
@@ -16,6 +18,7 @@ import {
   submitTarekSaleToWorker,
   submitTarekSaleToLocalEmulatorWorker,
 } from '../services/workerSaleClient.ts';
+import { getCommissionCounterBootstrapPlan } from '../services/commissionCounterSchedule.ts';
 import {
   assertFreshStartDateHasNoSales,
   LAMSA_FRESH_START_DATE_KEY,
@@ -418,6 +421,37 @@ test('configured Worker bootstrap uses only the explicit HTTPS production origin
   assert.equal(networkCalls, 0);
 });
 
+test('trusted server-time request is authenticated and restricted to the configured Worker origin', async () => {
+  const config = { mode: 'production', enabled: true, workerUrl: 'https://lamsa-sales-worker.example.workers.dev' };
+  assert.equal(getConfiguredTrustedServerTimeEndpoint(config),
+    'https://lamsa-sales-worker.example.workers.dev/api/lamsa/server-time');
+  let sentUrl;
+  let sentToken;
+  const serverTime = '2026-10-17T00:00:01.000Z';
+  const result = await fetchTrustedServerTimeFromConfiguredWorker(
+    async () => 'owner-id-token',
+    async (url, init) => {
+      sentUrl = String(url);
+      sentToken = new Headers(init?.headers).get('authorization');
+      assert.deepEqual(JSON.parse(String(init?.body)), {});
+      return new Response(JSON.stringify({ ok: true, serverTime }), { status: 200 });
+    },
+    config,
+  );
+  assert.equal(result, serverTime);
+  assert.equal(sentUrl, 'https://lamsa-sales-worker.example.workers.dev/api/lamsa/server-time');
+  assert.equal(sentToken, 'Bearer owner-id-token');
+  await assert.rejects(fetchTrustedServerTimeFromConfiguredWorker(
+    async () => 'must-not-run', async () => { throw new Error('network must not be used'); },
+    { ...config, enabled: false },
+  ), /worker-sale\/not-enabled/);
+  await assert.rejects(fetchTrustedServerTimeFromConfiguredWorker(
+    async () => 'owner-id-token',
+    async () => new Response(JSON.stringify({ ok: true, serverTime: 'not-a-date' }), { status: 200 }),
+    config,
+  ), /worker-sale\/invalid-server-time-response/);
+});
+
 test('the approved registration cutover is 2026-10-17 03:00 Cairo / 00:00 UTC', () => {
   const cairoCutover = new Date('2026-10-17T03:00:00+03:00');
   const utcCutover = new Date('2026-10-17T00:00:00.000Z');
@@ -434,6 +468,39 @@ test('the approved registration cutover is 2026-10-17 03:00 Cairo / 00:00 UTC', 
     (error) => error.code === 'sale/fresh-start-date-not-empty',
   );
   assert.doesNotThrow(() => assertFreshStartDateHasNoSales('2026-10-18', { uniqueSaleCount: 1 }));
+});
+
+test('owner bootstrap runs at cutover when open, and late reopen initializes only the current UTC day', () => {
+  const beforeCutover = getCommissionCounterBootstrapPlan(
+    new Date('2026-10-16T23:59:59.999Z'), true, true,
+  );
+  assert.deepEqual(beforeCutover, {
+    action: 'wait-for-cutover', dateKey: '2026-10-16', delayMs: 1001,
+  });
+
+  assert.deepEqual(getCommissionCounterBootstrapPlan(
+    new Date('2026-10-17T00:00:00.000Z'), true, true,
+  ), { action: 'bootstrap-current-day', dateKey: '2026-10-17' });
+
+  const reopenedLaterSameDay = getCommissionCounterBootstrapPlan(
+    new Date('2026-10-17T10:30:00.000Z'), true, true,
+  );
+  assert.deepEqual(reopenedLaterSameDay, { action: 'bootstrap-current-day', dateKey: '2026-10-17' });
+
+  const reopenedNextDay = getCommissionCounterBootstrapPlan(
+    new Date('2026-10-18T08:00:00.000Z'), true, true,
+  );
+  assert.deepEqual(reopenedNextDay, { action: 'bootstrap-current-day', dateKey: '2026-10-18' });
+  assert.notEqual(reopenedNextDay.dateKey, '2026-10-17', 'late opening does not create a prior-day counter');
+
+  const readyToday = getCommissionCounterBootstrapPlan(
+    new Date('2026-10-17T10:30:00.000Z'), true, true, '2026-10-17',
+  );
+  assert.equal(readyToday.action, 'already-ready-today');
+  if (readyToday.action === 'already-ready-today') assert.equal(readyToday.delayMs, Date.parse('2026-10-18T00:00:02.000Z') - Date.parse('2026-10-17T10:30:00.000Z'));
+
+  assert.deepEqual(getCommissionCounterBootstrapPlan(new Date('2026-10-17T00:00:00.000Z'), false, true), { action: 'disabled' });
+  assert.deepEqual(getCommissionCounterBootstrapPlan(new Date(Number.NaN), true, true), { action: 'invalid-clock' });
 });
 
 test('Tarek Worker build URL is disabled by default, HTTPS-only in production, and local-only in development', () => {

@@ -46,11 +46,12 @@ async function waitUntil(predicate, timeoutMs = 1200) {
 
 beforeEach(() => {
   saveOfflineQueue([]);
+  localStorage.removeItem('lamsa_offline_queue_v1');
 });
 
 test('a valid queued invoice is retained when an unrelated older row has an unknown shape', async () => {
   const legacyRow = { id: 'legacy-opaque-row', legacyPayload: { keep: true } };
-  localStorage.setItem('lamsa_offline_queue_v1', JSON.stringify([legacyRow, queuedSale('malformed-neighbor-0001')]));
+  localStorage.setItem('lamsa_offline_queue_v2', JSON.stringify([legacyRow, queuedSale('malformed-neighbor-0001')]));
   const result = await flushPendingSaleQueue(async () => {
     throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
   });
@@ -61,6 +62,18 @@ test('a valid queued invoice is retained when an unrelated older row has an unkn
   assert.equal(afterRetry[1].status, 'فشل');
 });
 
+test('the historical v1 queue stays byte-for-byte untouched and is never replayed by the new outbox', async () => {
+  const legacy = [queuedSale('pre-cutover-sale-0001'), { id: 'opaque-old-row', payload: { preserve: true } }];
+  const serialized = JSON.stringify(legacy);
+  localStorage.setItem('lamsa_offline_queue_v1', serialized);
+  let syncCalls = 0;
+  const result = await flushPendingSaleQueue(async () => { syncCalls += 1; });
+  assert.deepEqual(result, { attempted: 0, synced: 0, failed: 0, syncedIds: [] });
+  assert.equal(syncCalls, 0);
+  assert.equal(localStorage.getItem('lamsa_offline_queue_v1'), serialized);
+  assert.deepEqual(getOfflineQueue(), []);
+});
+
 test('repeated local submit for one sale ID reuses one durable outbox row', () => {
   const sale = saleFixture();
   const first = enqueueOfflineAction('sale', sale);
@@ -69,6 +82,8 @@ test('repeated local submit for one sale ID reuses one durable outbox row', () =
   assert.equal(getOfflineQueue().length, 1);
   assert.equal(getOfflineQueue()[0].payload.id, sale.id);
   assert.equal(getOfflineQueue()[0].status, 'معلق');
+  assert.ok(localStorage.getItem('lamsa_offline_queue_v2'));
+  assert.equal(localStorage.getItem('lamsa_offline_queue_v1'), null);
 });
 
 test('a pending sale remains in local storage while server acknowledgement is unresolved', async () => {

@@ -9,6 +9,7 @@ FIRESTORE_DATABASE_ID = "demo-named-firestore-db"
 OWNER_EMAIL = "owner@example.test"
 FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"
 SALE_WORKER_PRODUCTION_ENABLED = "false"
+SERVER_TIME_ENDPOINT_ENABLED = "false"
 CORS_ALLOWED_ORIGIN = "https://mohmhran5-jpg.github.io"
 FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
 # Emulator-only admin bypass. This literal is not a production credential.
@@ -25,5 +26,6 @@ GCP_SERVICE_ACCOUNT_EMAIL = "firestore-store-worker@gen-lang-client-0515786951.i
 OWNER_EMAIL = "moh.mhran@gmail.com"
 FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"
 SALE_WORKER_PRODUCTION_ENABLED = "false"
+SERVER_TIME_ENDPOINT_ENABLED = "false"
 CORS_ALLOWED_ORIGIN = "https://mohmhran5-jpg.github.io"
 # Never place GCP_SERVICE_ACCOUNT_PRIVATE_KEY here; it must be a runtime secret if separately approved.

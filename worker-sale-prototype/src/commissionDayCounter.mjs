@@ -26,6 +26,7 @@ export function isExplicitTestSale(sale, id = sale?.id) {
  */
 export function countSaleSprays(sale, { allowLegacyDefaultQuantity = true } = {}) {
   if (!sale || typeof sale !== 'object' || Array.isArray(sale)) throw new Error('commission-counter/history-ambiguous-sale');
+  if (sale.commissionTimingStatus === 'needs_owner_review') return 0;
   if (sale.isReversed === true) return 0;
   if (sale.isReversed !== undefined && typeof sale.isReversed !== 'boolean') {
     throw new Error('commission-counter/history-ambiguous-reversal');

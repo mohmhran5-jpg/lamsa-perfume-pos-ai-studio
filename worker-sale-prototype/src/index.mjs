@@ -18,9 +18,12 @@ import {
 } from './productionConfig.mjs';
 import {
   isAllowedLamsaRequestOrigin,
+  isAllowedTrustedServerTimeOrigin,
   isLamsaSalesCutoverReached,
   isProductionLamsaRouteEnabled,
+  isTrustedServerTimeRouteEnabled,
   resolveLamsaCorsOrigin,
+  resolveTrustedServerTimeCorsOrigin,
 } from './workerRuntimePolicy.mjs';
 
 const MAX_SALE_ITEMS = 100;
@@ -50,6 +53,18 @@ function json(data, status = 200) {
 
 function withWorkerCors(response, request, env) {
   const origin = resolveLamsaCorsOrigin(env, request.headers.get('origin'));
+  if (!origin) return response;
+  const headers = new Headers(response.headers);
+  headers.set('access-control-allow-origin', origin);
+  headers.set('access-control-allow-methods', 'POST, OPTIONS');
+  headers.set('access-control-allow-headers', 'authorization, content-type');
+  headers.set('access-control-max-age', '300');
+  headers.append('vary', 'Origin');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function withTrustedServerTimeCors(response, request, env) {
+  const origin = resolveTrustedServerTimeCorsOrigin(env, request.headers.get('origin'));
   if (!origin) return response;
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', origin);
@@ -115,6 +130,17 @@ export function assertLamsaRequestAllowed(request, env, now = new Date()) {
   assertProductionFirestoreConfig(env);
   if (!isLamsaSalesCutoverReached(now)) throw new ApiError(503, 'sale/cutover-not-started');
   if (!isAllowedLamsaRequestOrigin(env, request.headers.get('origin'))) {
+    throw new ApiError(403, 'worker/origin-not-allowed');
+  }
+}
+
+export function assertTrustedServerTimeRequestAllowed(request, env) {
+  if (env?.ENVIRONMENT === 'local-emulator') {
+    assertEmulatorOnly(env);
+  } else if (!isTrustedServerTimeRouteEnabled(env)) {
+    throw new ApiError(503, 'worker/server-time-disabled');
+  }
+  if (!isAllowedTrustedServerTimeOrigin(env, request.headers.get('origin'))) {
     throw new ApiError(403, 'worker/origin-not-allowed');
   }
 }
@@ -705,9 +731,14 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/lamsa/sales')
-        || url.pathname.startsWith('/api/lamsa/commission-counter'))) {
+        || url.pathname.startsWith('/api/lamsa/commission-counter')
+        || url.pathname === '/api/lamsa/server-time')) {
       try {
         if (!request.headers.get('origin')) throw new ApiError(403, 'worker/origin-not-allowed');
+        if (url.pathname === '/api/lamsa/server-time') {
+          assertTrustedServerTimeRequestAllowed(request, env);
+          return withTrustedServerTimeCors(new Response(null, { status: 204 }), request, env);
+        }
         assertLamsaRequestAllowed(request, env);
         return withWorkerCors(new Response(null, { status: 204 }), request, env);
       } catch (error) {
@@ -723,6 +754,21 @@ export default {
         return json({ ok: true });
       }
       catch { return json({ ok: false }, 503); }
+    }
+    if (request.method === 'POST' && url.pathname === '/api/lamsa/server-time') {
+      try {
+        assertTrustedServerTimeRequestAllowed(request, env);
+        const user = await authenticate(request, env);
+        const ownerEmail = String(env.OWNER_EMAIL || '').trim().toLowerCase();
+        if (!ownerEmail || String(user.email || '').trim().toLowerCase() !== ownerEmail) {
+          throw new ApiError(403, 'role/owner-required');
+        }
+        return withTrustedServerTimeCors(json({ ok: true, serverTime: new Date().toISOString() }), request, env);
+      } catch (error) {
+        const status = error instanceof ApiError ? error.status : (Number.isInteger(error?.status) ? error.status : 502);
+        const code = error instanceof ApiError ? error.code : (error?.code || 'worker/server-time-unexpected-error');
+        return withTrustedServerTimeCors(json({ ok: false, error: code }, status), request, env);
+      }
     }
     if (request.method === 'POST' && url.pathname === '/api/lamsa/commission-counter/bootstrap') {
       try {

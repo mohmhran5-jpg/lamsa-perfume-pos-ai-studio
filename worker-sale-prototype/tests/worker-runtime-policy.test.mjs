@@ -3,14 +3,45 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   isAllowedLamsaRequestOrigin,
+  isAllowedTrustedServerTimeOrigin,
   isExactHttpsOrigin,
   isLamsaSalesCutoverReached,
   isProductionLamsaRouteEnabled,
+  isTrustedServerTimeRouteEnabled,
   resolveLamsaCorsOrigin,
+  resolveTrustedServerTimeCorsOrigin,
 } from '../src/workerRuntimePolicy.mjs';
-import { assertLamsaRequestAllowed } from '../src/index.mjs';
+import { assertLamsaRequestAllowed, assertTrustedServerTimeRequestAllowed } from '../src/index.mjs';
 
 const PAGES_ORIGIN = 'https://mohmhran5-jpg.github.io';
+
+test('trusted server time uses an explicit project/origin gate without opening sale or Firestore routes', () => {
+  const base = {
+    ENVIRONMENT: 'production',
+    PROJECT_ID: 'gen-lang-client-0515786951',
+    CORS_ALLOWED_ORIGIN: PAGES_ORIGIN,
+    SERVER_TIME_ENDPOINT_ENABLED: 'false',
+  };
+  assert.equal(isTrustedServerTimeRouteEnabled(base), false);
+  const enabled = { ...base, SERVER_TIME_ENDPOINT_ENABLED: 'true' };
+  assert.equal(isTrustedServerTimeRouteEnabled(enabled), true);
+  assert.equal(isProductionLamsaRouteEnabled(enabled), false);
+  assert.equal(isAllowedTrustedServerTimeOrigin(enabled, PAGES_ORIGIN), true);
+  assert.equal(isAllowedTrustedServerTimeOrigin(enabled, 'https://evil.example'), false);
+  assert.equal(resolveTrustedServerTimeCorsOrigin(enabled, PAGES_ORIGIN), PAGES_ORIGIN);
+  assert.equal(resolveTrustedServerTimeCorsOrigin(enabled, undefined), null);
+  assert.throws(
+    () => assertTrustedServerTimeRequestAllowed(new Request('https://worker.test/api/lamsa/server-time', { method: 'POST', headers: { origin: PAGES_ORIGIN } }), base),
+    (error) => error.code === 'worker/server-time-disabled',
+  );
+  assert.doesNotThrow(() => assertTrustedServerTimeRequestAllowed(
+    new Request('https://worker.test/api/lamsa/server-time', { method: 'POST', headers: { origin: PAGES_ORIGIN } }), enabled,
+  ));
+  assert.throws(() => assertTrustedServerTimeRequestAllowed(
+    new Request('https://worker.test/api/lamsa/server-time', { method: 'POST', headers: { origin: 'https://evil.example' } }), enabled,
+  ), (error) => error.code === 'worker/origin-not-allowed');
+  assert.equal(isTrustedServerTimeRouteEnabled({ ...enabled, PROJECT_ID: 'wrong-project' }), false);
+});
 
 test('production routes stay disabled unless both explicit flags and one exact HTTPS origin are present', () => {
   assert.equal(isProductionLamsaRouteEnabled({
@@ -103,6 +134,7 @@ test('checked-in Wrangler config pins the app project/database and keeps both pr
   assert.match(productionVars, /OWNER_EMAIL = "moh\.mhran@gmail\.com"/);
   assert.match(productionVars, /FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"/);
   assert.match(productionVars, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
+  assert.match(productionVars, /SERVER_TIME_ENDPOINT_ENABLED = "false"/);
   assert.doesNotMatch(wrangler, /^\s*GCP_SERVICE_ACCOUNT_PRIVATE_KEY\s*=/m);
   assert.doesNotMatch(wrangler, /-----BEGIN PRIVATE KEY-----/);
 });

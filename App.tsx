@@ -1882,8 +1882,9 @@ const App: React.FC = () => {
     return subscribeToOfflineQueue(updateQueuedSales);
   }, [authStatus, currentUser?.id, currentUser?.role, ownerSessionGeneration]);
 
-  // The legacy full-Sale outbox is owner-only. Employee sales must use the
-  // separate minimal v3 Tarek outbox; never route them through addSaleCloud.
+  // The new full-Sale v2 outbox is owner-only; historical v1 is never loaded or
+  // replayed. Employee sales use the separate minimal v3 Tarek outbox.
+  // Never route employee sales through addSaleCloud.
   useEffect(() => {
     const gate = ownerPrivateSessionRef.current;
     const generation = ownerSessionGeneration;

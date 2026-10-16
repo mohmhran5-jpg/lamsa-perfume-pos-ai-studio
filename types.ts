@@ -255,6 +255,14 @@ export interface Sale {
   commissionSprayBottleCount?: number;
   commissionCounterGeneration?: number;
   commissionCounterAction?: 'sale' | 'reversal';
+  /** Server-offset timing evidence; unresolved entries stay out of automatic commission totals. */
+  commissionTimingStatus?: 'verified' | 'needs_owner_review' | 'owner_reconciled';
+  commissionEventTime?: string;
+  commissionCandidateDayKey?: string;
+  commissionReviewReason?: 'missing-time-sample' | 'stale-time-sample' | 'device-clock-drift' | 'invalid-event-time' | 'event-clock-drift' | 'counter-not-ready' | 'counter-stale';
+  commissionClockDriftMs?: number;
+  /** Firestore serverTimestamp written at acceptance; never substitutes for the original sale date. */
+  serverAcceptedAt?: string | { seconds: number; nanoseconds: number };
   timestamp?: string; // Alias for date
   // Non-deletion & Offline transaction tracking
   transactionId?: string;

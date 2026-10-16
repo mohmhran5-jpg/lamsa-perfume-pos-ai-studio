@@ -51,6 +51,7 @@ import {
   View
 } from '../types';
 import { canViewProfits, canViewCosts } from '../services/authService';
+import { createCommissionTimeEvidence, getTrustedServerTimeEstimate, subscribeTrustedServerTime } from '../services/commissionTimeEvidence';
 import { getAuthorizedSalePrice } from '../services/workerSaleContract';
 import { soundAlertService } from '../services/soundAlertService';
 import { dispatchSaleTelegramAlert, dispatchLowStockTelegramAlert } from '../services/telegramNotificationService';
@@ -945,13 +946,15 @@ const POS: React.FC<POSProps> = ({
   }, [customerPhone, customerName, salesHistory, customCustomers]);
 
   // Filter products by search and category
-  const [todayIso, setTodayIso] = useState(() => new Date().toISOString().slice(0, 10));
+  const [todayIso, setTodayIso] = useState(() => getTrustedServerTimeEstimate()?.dateKey ?? new Date().toISOString().slice(0, 10));
   useEffect(() => {
-    const refreshUtcDay = () => setTodayIso(new Date().toISOString().slice(0, 10));
-    const timer = setInterval(refreshUtcDay, 30_000);
+    const refreshUtcDay = () => setTodayIso(getTrustedServerTimeEstimate()?.dateKey ?? new Date().toISOString().slice(0, 10));
+    const unsubscribeClock = subscribeTrustedServerTime(refreshUtcDay);
+    const timer = setInterval(refreshUtcDay, 60_000);
     if (typeof window !== 'undefined') window.addEventListener('focus', refreshUtcDay);
     return () => {
       clearInterval(timer);
+      unsubscribeClock();
       if (typeof window !== 'undefined') window.removeEventListener('focus', refreshUtcDay);
     };
   }, []);
@@ -2052,7 +2055,9 @@ const POS: React.FC<POSProps> = ({
 
   // §27: Non-Retroactive Tiered Commission (First 10 spray bottles today = 5%, 11th+ spray bottle = 7%, Roll-ons = 0%, Exception/Non-normal = 0%)
   const priorSprayBottlesSoldToday = useMemo(() => {
-    return commissionCounterReady ? commissionCounterState.sprayBottlesSold || 0 : 0;
+    // If the counter is unavailable, use the higher approved tier and hold this
+    // commission for owner review rather than crediting an uncertain lower rate.
+    return commissionCounterReady ? commissionCounterState.sprayBottlesSold || 0 : Number.MAX_SAFE_INTEGER;
   }, [commissionCounterReady, commissionCounterState.sprayBottlesSold]);
 
   const tieredCommissionResult = useMemo(() => {
@@ -2166,11 +2171,13 @@ const POS: React.FC<POSProps> = ({
     setShowSuggestions(false);
   };
 
-    // Final checkout confirmation with pre-sale verification and counter-safe date bounds
+  // Final checkout confirmation with pre-sale verification and counter-safe date bounds
   const handleConfirmOrder = async (skipDuplicateCheck = false) => {
     if (cart.length === 0) return;
-    if (!commissionCounterReady || !Number.isSafeInteger(commissionCounterState.generation)) {
-      setCheckoutError('لم يُعتمد البيع: عداد العمولة اليومي غير جاهز أو تعذر التحقق منه. انتظر تهيئته على المحاكي ثم أعد المحاولة.');
+    const trustedClock = getTrustedServerTimeEstimate();
+    const estimatedNowMs = trustedClock?.serverNowMs ?? Date.now();
+    if (estimatedNowMs < Date.UTC(2026, 9, 17, 0, 0, 0)) {
+      setCheckoutError('لم يبدأ تسجيل المبيعات الجديدة بعد؛ يبدأ عند 03:00 صباحاً بتوقيت القاهرة يوم 17 أكتوبر.');
       return;
     }
 
@@ -2199,17 +2206,24 @@ const POS: React.FC<POSProps> = ({
       return;
     }
 
-    // Determine actual sale date & time vs system recording time
-    let effectiveSaleIso = new Date().toISOString();
+    // Use the authenticated Worker estimate for the sale day; retain the device event separately.
+    const deviceEventIso = new Date().toISOString();
+    let effectiveSaleIso = trustedClock ? new Date(trustedClock.serverNowMs).toISOString() : deviceEventIso;
     let isBackdated = false;
     if (isBackdatedSaleMode && canRecordBackdated && customSaleDate) {
       const parsed = new Date(`${customSaleDate}T${customSaleTime || '12:00'}:00`);
       if (!isNaN(parsed.getTime())) {
         effectiveSaleIso = parsed.toISOString();
-        isBackdated = effectiveSaleIso.slice(0, 10) < new Date().toISOString().slice(0, 10);
+        isBackdated = effectiveSaleIso.slice(0, 10) < todayIso;
       }
     }
 
+    const timingEvidence = createCommissionTimeEvidence(
+      effectiveSaleIso,
+      undefined,
+      Date.now(),
+      commissionCounterReady && Number.isSafeInteger(commissionCounterState.generation),
+    );
     const targetDateStr = effectiveSaleIso.slice(0, 10);
     if (targetDateStr !== todayIso) {
       setCheckoutError('لم يُعتمد البيع: لا يوجد عداد عمولة مهيأ لهذا التاريخ؛ البيع خارج يوم UTC الحالي متوقف حتى تهيئة تاريخية معتمدة.');
@@ -2289,7 +2303,7 @@ const POS: React.FC<POSProps> = ({
         essenceGrams: item.essenceGrams * (item.quantity || 1),
         cost: item.cost * (item.quantity || 1),
         sellingPrice: item.sellingPrice * (item.quantity || 1),
-        profit: item.profit * (item.quantity || 1),
+        profit: timingEvidence.commissionTimingStatus === 'verified' ? item.profit * (item.quantity || 1) : 0,
         quantity: item.quantity || 1,
         isColoredBottle: item.isColoredBottle,
         isRollOn: item.isRollOn,
@@ -2300,7 +2314,7 @@ const POS: React.FC<POSProps> = ({
       })),
       totalPrice: cartFinalTotal,
       totalCost: cartTotalCost,
-      totalProfit: cartTotalNetProfit,
+      totalProfit: timingEvidence.commissionTimingStatus === 'verified' ? cartTotalNetProfit : 0,
       ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
       ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
       paymentMethod,
@@ -2321,11 +2335,21 @@ const POS: React.FC<POSProps> = ({
       ...(packagingAccounting.replacesBasicBag
         ? { isBasicBagReplacedByLuxury: true }
         : {}),
-      commissionAmount: cartTotalCommission,
-      totalCommission: cartTotalCommission,
-      commissionDayKey: todayIso,
-      commissionSprayBottleCount: tieredCommissionResult.sprayBottlesInThisSale,
-      commissionCounterGeneration: commissionCounterState.generation,
+      commissionAmount: timingEvidence.commissionTimingStatus === 'verified' ? cartTotalCommission : 0,
+      totalCommission: timingEvidence.commissionTimingStatus === 'verified' ? cartTotalCommission : 0,
+      commissionTimingStatus: timingEvidence.commissionTimingStatus,
+      ...(timingEvidence.commissionEventTime ? { commissionEventTime: timingEvidence.commissionEventTime } : {}),
+      ...(timingEvidence.commissionCandidateDayKey ? { commissionCandidateDayKey: timingEvidence.commissionCandidateDayKey } : {}),
+      ...(timingEvidence.commissionReviewReason ? { commissionReviewReason: timingEvidence.commissionReviewReason } : {}),
+      ...(timingEvidence.commissionClockDriftMs !== undefined ? { commissionClockDriftMs: timingEvidence.commissionClockDriftMs } : {}),
+      ...(timingEvidence.commissionTimingStatus === 'verified' && commissionCounterReady
+        && Number.isSafeInteger(commissionCounterState.generation)
+        ? {
+            commissionDayKey: timingEvidence.commissionCandidateDayKey ?? todayIso,
+            commissionSprayBottleCount: tieredCommissionResult.sprayBottlesInThisSale,
+            commissionCounterGeneration: commissionCounterState.generation,
+          }
+        : {}),
       ...(activePromotionalSavings ? { promotionalSavings: activePromotionalSavings } : {}),
       ...(activePromotionalSavings?.promotionId ? { promotionId: activePromotionalSavings.promotionId } : {}),
       transactionType: ownerOverrideGranted
@@ -2727,10 +2751,10 @@ const POS: React.FC<POSProps> = ({
           className="fixed top-20 left-1/2 -translate-x-1/2 z-[154] w-[94vw] max-w-lg px-4 py-3 rounded-2xl bg-amber-950/95 border border-amber-400/45 text-white text-xs font-bold shadow-xl"
         >
           {commissionCounterState.status === 'loading'
-            ? 'جارٍ التحقق من عداد عمولة اليوم… البيع متوقف مؤقتاً.'
+            ? 'جارٍ التحقق من عداد العمولة؛ يمكن تسجيل البيع بعد بدء التاريخ، وتُعلّق العمولة للمراجعة عند عدم الجاهزية.'
             : commissionCounterState.status === 'missing'
-              ? 'عداد عمولة اليوم غير مهيأ؛ يلزم bootstrap المالك قبل البيع.'
-              : 'تعذر التحقق من عداد عمولة اليوم؛ البيع متوقف حتى عودة اتصال موثوق وإعادة التحقق.'}
+              ? 'عداد عمولة اليوم غير مهيأ؛ المبيعات والمخزون يستمران، لكن العمولة والربح لا يُعتمدان آلياً حتى مراجعة المالك.'
+              : 'تعذر التحقق من عداد العمولة؛ سيُسجل البيع والمخزون ذرياً مع عمولة صفرية للمراجعة، ولن يُحتسب استحقاق تلقائي.'}
         </div>
       )}
       {checkoutError && (

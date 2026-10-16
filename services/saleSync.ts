@@ -1,4 +1,4 @@
-import { doc, runTransaction, type DocumentData, type DocumentSnapshot, type Firestore, type Transaction } from 'firebase/firestore';
+import { doc, runTransaction, serverTimestamp, type DocumentData, type DocumentSnapshot, type Firestore, type Transaction } from 'firebase/firestore';
 import type { Sale } from '../types';
 import {
   projectOperationalSale,
@@ -62,6 +62,10 @@ function readyCommissionCounter(snapshot: DocumentSnapshot<DocumentData>, dayKey
 function cleanForFirestore<T>(value: T): T {
   if (Array.isArray(value)) return value.map((entry) => cleanForFirestore(entry)) as T;
   if (value && typeof value === 'object') {
+    if (value instanceof Date) return value;
+    const timestamp = value as { seconds?: unknown; nanoseconds?: unknown; toDate?: unknown; toMillis?: unknown };
+    if (typeof timestamp.seconds === 'number' && typeof timestamp.nanoseconds === 'number'
+        && typeof timestamp.toDate === 'function' && typeof timestamp.toMillis === 'function') return value;
     const cleaned: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
       if (entry !== undefined) cleaned[key] = cleanForFirestore(entry);
@@ -248,16 +252,54 @@ function withoutCommissionCounterFields(sale: Sale): Record<string, unknown> {
     commissionSprayBottleCount: _sprayCount,
     commissionCounterGeneration: _generation,
     commissionCounterAction: _action,
+    serverAcceptedAt: _serverAcceptedAt,
     ...businessFields
   } = sale;
   return businessFields;
 }
 
 function sameCommittedSale(existing: Sale, incoming: Sale): boolean {
+  const reviewMode = existing.commissionTimingStatus === 'needs_owner_review'
+    || incoming.commissionTimingStatus === 'needs_owner_review';
+  const comparable = (sale: Sale) => {
+    const source = withoutCommissionCounterFields(sale) as Record<string, unknown>;
+    delete source.commissionTimingStatus;
+    delete source.commissionCandidateDayKey;
+    delete source.commissionReviewReason;
+    delete source.commissionClockDriftMs;
+    delete source.commissionEventTime;
+    if (!reviewMode) return source;
+    delete source.commissionAmount;
+    delete source.totalCommission;
+    source.totalProfit = 0;
+    if (Array.isArray(source.items)) {
+      source.items = (source.items as Array<Record<string, unknown>>).map((item) => ({ ...item, profit: 0 }));
+    }
+    return source;
+  };
   return sameCanonicalRecord(
-    withoutCommissionCounterFields(existing),
-    cleanForFirestore(withoutCommissionCounterFields(incoming)),
+    comparable(existing),
+    cleanForFirestore(comparable(incoming)),
   );
+}
+
+function holdSaleForOwnerReview(sale: Sale, reason: NonNullable<Sale['commissionReviewReason']>): Sale {
+  const {
+    commissionDayKey: _dayKey,
+    commissionSprayBottleCount: _sprayCount,
+    commissionCounterGeneration: _generation,
+    commissionCounterAction: _action,
+    ...withoutCounter
+  } = sale;
+  return {
+    ...withoutCounter,
+    commissionTimingStatus: 'needs_owner_review',
+    commissionReviewReason: reason,
+    commissionAmount: 0,
+    totalCommission: 0,
+    totalProfit: 0,
+    items: sale.items.map((item) => ({ ...item, profit: 0 })),
+  };
 }
 
 function sameCanonicalRecord(existing: unknown, expected: unknown): boolean {
@@ -273,7 +315,8 @@ function hasCompleteSaleCostProjection(sale: Sale): boolean {
 }
 
 function hasCompleteSaleFinancialProjection(sale: Sale): boolean {
-  return Number.isFinite(sale.totalProfit) && sale.items.every((item) => Number.isFinite(item.profit));
+  return sale.commissionTimingStatus !== 'needs_owner_review'
+    && Number.isFinite(sale.totalProfit) && sale.items.every((item) => Number.isFinite(item.profit));
 }
 
 function saleProjectionWriteCount(sale: Sale): number {
@@ -339,43 +382,59 @@ export async function commitSaleAndInventory(db: Firestore, sale: Sale): Promise
     }
     if (existingOperationalSale.exists()) throw new Error('sale-sync/operational-sale-id-conflict');
 
-    const dayKey = commissionDayKeyForSale(sale);
-    const sprayBottleCount = countCommissionableSprayBottles(sale);
-    const counterRef = doc(db, COMMISSION_COUNTER_COLLECTION, dayKey);
-    const counterSnapshot = await transaction.get(counterRef);
-    const counter = readyCommissionCounter(counterSnapshot, dayKey);
-    if (sale.commissionDayKey !== dayKey
-        || sale.commissionCounterGeneration !== counter.generation
-        || sale.commissionSprayBottleCount !== sprayBottleCount) {
-      throw new Error('sale-sync/commission-counter-stale');
+    let counterRef: ReturnType<typeof doc> | undefined;
+    let counterUpdate: Record<string, unknown> | undefined;
+    let committedSale: Sale = sale.commissionTimingStatus === 'needs_owner_review'
+      ? holdSaleForOwnerReview(sale, sale.commissionReviewReason ?? 'missing-time-sample')
+      : sale;
+    if (sale.commissionTimingStatus !== 'needs_owner_review') {
+      try {
+        const dayKey = commissionDayKeyForSale(sale);
+        const sprayBottleCount = countCommissionableSprayBottles(sale);
+        counterRef = doc(db, COMMISSION_COUNTER_COLLECTION, dayKey);
+        const counterSnapshot = await transaction.get(counterRef);
+        const counter = readyCommissionCounter(counterSnapshot, dayKey);
+        if (sale.commissionDayKey !== dayKey
+            || sale.commissionCounterGeneration !== counter.generation
+            || sale.commissionSprayBottleCount !== sprayBottleCount) {
+          throw new Error('sale-sync/commission-counter-stale');
+        }
+        const nextSprayBottlesSold = counter.sprayBottlesSold + sprayBottleCount;
+        const nextGeneration = counter.generation + 1;
+        if (!Number.isSafeInteger(nextSprayBottlesSold) || !Number.isSafeInteger(nextGeneration)) {
+          throw new Error('sale-sync/commission-counter-overflow');
+        }
+        committedSale = {
+          ...sale,
+          commissionTimingStatus: 'verified',
+          commissionDayKey: dayKey,
+          commissionSprayBottleCount: sprayBottleCount,
+          commissionCounterGeneration: nextGeneration,
+          commissionCounterAction: 'sale',
+        };
+        counterUpdate = {
+          sprayBottlesSold: nextSprayBottlesSold,
+          generation: nextGeneration,
+          lastAppliedSaleId: sale.id,
+          lastAppliedAction: 'sale',
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        const reason = code.includes('stale') ? 'counter-stale' : 'counter-not-ready';
+        committedSale = holdSaleForOwnerReview(sale, reason);
+        counterRef = undefined;
+        counterUpdate = undefined;
+      }
     }
-    const nextSprayBottlesSold = counter.sprayBottlesSold + sprayBottleCount;
-    const nextGeneration = counter.generation + 1;
-    if (!Number.isSafeInteger(nextSprayBottlesSold) || !Number.isSafeInteger(nextGeneration)) {
-      throw new Error('sale-sync/commission-counter-overflow');
-    }
-    const committedAt = new Date().toISOString();
-    const committedSale: Sale = {
-      ...sale,
-      commissionDayKey: dayKey,
-      commissionSprayBottleCount: sprayBottleCount,
-      commissionCounterGeneration: nextGeneration,
-      commissionCounterAction: 'sale',
-    };
 
     const snapshots = await readStockSnapshots(transaction, productRefs);
     const operationSnapshots = await readStockSnapshots(transaction, operationRefs);
     const nextStocks = validateNextStocks(snapshots, deductions);
-    assertTransactionWriteBudget(2 + saleProjectionWriteCount(committedSale), productRefs.size, operationSnapshots);
+    assertTransactionWriteBudget(1 + Number(Boolean(counterUpdate)) + saleProjectionWriteCount(committedSale), productRefs.size, operationSnapshots);
 
-    transaction.set(saleRef, cleanForFirestore(committedSale));
-    transaction.set(counterRef, {
-      sprayBottlesSold: nextSprayBottlesSold,
-      generation: nextGeneration,
-      lastAppliedSaleId: sale.id,
-      lastAppliedAction: 'sale',
-      updatedAt: committedAt,
-    }, { merge: true });
+    transaction.set(saleRef, { ...cleanForFirestore(committedSale), serverAcceptedAt: serverTimestamp() });
+    if (counterUpdate && counterRef) transaction.set(counterRef, counterUpdate, { merge: true });
     writeSynchronizedProductStock(transaction, productRefs, snapshots, nextStocks);
     writeOptionalOperationalStock(transaction, operationRefs, operationSnapshots, nextStocks);
     writeOwnerSaleProjections(transaction, db, committedSale);
@@ -487,7 +546,7 @@ async function commitSaleReversal(
     let counterRef: ReturnType<typeof doc> | undefined;
     let counterUpdate: Record<string, unknown> | undefined;
     let reversalCommissionFields: Pick<Sale, 'commissionDayKey' | 'commissionSprayBottleCount' | 'commissionCounterGeneration' | 'commissionCounterAction'> | undefined;
-    if (!deleteSale && !alreadyReversed) {
+    if (!deleteSale && !alreadyReversed && sale.commissionTimingStatus !== 'needs_owner_review') {
       const dayKey = commissionDayKeyForSale(sale);
       const sprayBottleCount = sale.commissionSprayBottleCount ?? countCommissionableSprayBottles(sale);
       if (!Number.isSafeInteger(sprayBottleCount) || sprayBottleCount < 0
@@ -553,7 +612,7 @@ async function commitSaleReversal(
       };
       transaction.set(saleRef, cleanForFirestore(reversedSale));
       writeOwnerSaleProjections(transaction, db, reversedSale);
-      transaction.set(counterRef!, counterUpdate!, { merge: true });
+      if (counterRef && counterUpdate) transaction.set(counterRef, counterUpdate, { merge: true });
     } else {
       writeOwnerSaleProjections(transaction, db, sale);
     }

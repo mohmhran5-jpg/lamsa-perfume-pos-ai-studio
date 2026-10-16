@@ -60,6 +60,7 @@ export interface TarekSaleWorkerBuildConfig {
 
 export const LOCAL_LAMSA_SALE_ENDPOINT = 'http://127.0.0.1:8787/api/lamsa/sales';
 export const LOCAL_LAMSA_COMMISSION_COUNTER_BOOTSTRAP_ENDPOINT = 'http://127.0.0.1:8787/api/lamsa/commission-counter/bootstrap';
+export const LOCAL_LAMSA_SERVER_TIME_ENDPOINT = 'http://127.0.0.1:8787/api/lamsa/server-time';
 const LOCAL_WORKER_ORIGINS = new Set([
   'http://127.0.0.1:8787',
   'http://localhost:8787',
@@ -95,6 +96,16 @@ export function getConfiguredCommissionCounterBootstrapEndpoint(
   if (!saleEndpoint) return null;
   const url = new URL(saleEndpoint);
   url.pathname = '/api/lamsa/commission-counter/bootstrap';
+  return url.toString();
+}
+
+export function getConfiguredTrustedServerTimeEndpoint(
+  config: TarekSaleWorkerBuildConfig = runtimeTarekSaleWorkerBuildConfig(),
+): string | null {
+  const saleEndpoint = resolveTarekSaleWorkerEndpoint(config);
+  if (!saleEndpoint) return null;
+  const url = new URL(saleEndpoint);
+  url.pathname = '/api/lamsa/server-time';
   return url.toString();
 }
 
@@ -158,7 +169,7 @@ async function postJson<T>(
   body: unknown,
   getIdToken: TokenProvider,
   fetcher: FetchLike,
-  responseLabel: 'sale' | 'quote' | 'bootstrap',
+  responseLabel: 'sale' | 'quote' | 'bootstrap' | 'server-time',
 ): Promise<T> {
   const token = await getIdToken();
   if (!token?.trim()) throw new Error('worker-sale/firebase-id-token-required');
@@ -180,6 +191,21 @@ async function postJson<T>(
     throw new Error(`worker-sale/${code}`);
   }
   return payload as T;
+}
+
+/** Reads a Worker-generated server timestamp with the current Firebase ID token; no Firestore access occurs. */
+export async function fetchTrustedServerTimeFromConfiguredWorker(
+  getIdToken: TokenProvider,
+  fetcher: FetchLike = fetch,
+  config: TarekSaleWorkerBuildConfig = runtimeTarekSaleWorkerBuildConfig(),
+): Promise<string> {
+  const endpoint = getConfiguredTrustedServerTimeEndpoint(config);
+  if (!endpoint) throw new Error('worker-sale/not-enabled');
+  const payload = await postJson<Record<string, unknown>>(new URL(endpoint), {}, getIdToken, fetcher, 'server-time');
+  if (typeof payload.serverTime !== 'string' || !Number.isFinite(Date.parse(payload.serverTime))) {
+    throw new Error('worker-sale/invalid-server-time-response');
+  }
+  return payload.serverTime;
 }
 
 async function submitIntent(

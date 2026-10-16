@@ -1,7 +1,10 @@
 import type { OfflineQueueItem, Sale } from '../types.ts';
 
-const OFFLINE_QUEUE_KEY = 'lamsa_offline_queue_v1';
-const OFFLINE_QUEUE_EVENT = 'lamsa:offline-queue-changed';
+// v1 is a historical queue that must remain untouched and must never be replayed.
+// New owner POS outbox records use a separate key so they cannot be confused with
+// pre-cutover invoices whose dates and commission evidence are untrusted.
+const OFFLINE_QUEUE_KEY = 'lamsa_offline_queue_v2';
+const OFFLINE_QUEUE_EVENT = 'lamsa:offline-queue-changed:v2';
 const DEFAULT_RETRY_INTERVAL_MS = 30_000;
 
 export type SaleFlushResult = {

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { deleteApp, initializeApp } from 'firebase/app';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, connectFirestoreEmulator, deleteDoc, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, orderBy, query, setDoc, where, writeBatch } from 'firebase/firestore';
+import { collection, connectFirestoreEmulator, deleteDoc, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
 import {
   commitSaleAndInventory,
   deleteSaleAndRestoreInventory,
@@ -13,6 +13,7 @@ import {
   updateSaleAndInventory,
 } from '../services/saleSync.ts';
 import { enqueueOfflineAction, flushPendingSaleQueue, getOfflineQueue, saveOfflineQueue } from '../services/offlineSyncService.ts';
+import { calculateExactDailyCommission, DEFAULT_COMMISSION_POLICY } from '../services/staffEntitlementsService.ts';
 
 const PROJECT_ID = 'demo-lamsa-auth-security';
 const NAMED_DATABASE_ID = JSON.parse(await readFile(new URL('../firebase-applet-config.json', import.meta.url), 'utf8')).firestoreDatabaseId;
@@ -81,6 +82,22 @@ test('Firebase CLI Firestore rules target only the named database used by the ap
   assert.deepEqual(firebaseConfig.firestore.map((entry) => ({ database: entry.database, rules: entry.rules })), [
     { database: NAMED_DATABASE_ID, rules: 'firestore.rules' },
   ]);
+});
+
+test('Firestore serverTimestamp is readable after commit while original occurredAt remains unchanged', async () => {
+  const occurredAt = '2026-10-15T10:00:00.000Z';
+  const ref = doc(ownerDb, 'test', `server-time-${randomUUID()}`);
+  let timestampVisibleBeforeCommit;
+  await assertSucceeds(runTransaction(ownerDb, async (transaction) => {
+    const beforeWrite = await transaction.get(ref);
+    timestampVisibleBeforeCommit = beforeWrite.data()?.serverAcceptedAt;
+    transaction.set(ref, { occurredAt, serverAcceptedAt: serverTimestamp() });
+  }));
+  assert.equal(timestampVisibleBeforeCommit, undefined);
+  const saved = (await getDoc(ref)).data();
+  assert.equal(saved.occurredAt, occurredAt);
+  assert.ok(saved.serverAcceptedAt instanceof Timestamp);
+  assert.ok(saved.serverAcceptedAt.toDate() instanceof Date);
 });
 
 function validWritePayload(collection, id) {
@@ -715,6 +732,64 @@ test('Tarek queued sale remains local when Firestore denies it, then owner retri
     await assertSucceeds(commitSaleAndInventory(ownerDeviceTwoDb, queuedSaleItem.payload));
     assert.equal((await getDoc(doc(ownerDb, 'products', 'oil-retry-1'))).data().stock_grams, 100);
     assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-retry-1'))).data().stock_grams, 88);
+    const storedSale = (await getDoc(doc(ownerDb, 'sales', sale.id))).data();
+    assert.equal(storedSale.id, sale.id);
+    assert.equal(storedSale.date, sale.date);
+    assert.equal(storedSale.commissionDayKey, sale.commissionDayKey);
+    const matchingSales = await getDocs(query(collection(ownerDb, 'sales'), where('id', '==', sale.id)));
+    assert.equal(matchingSales.size, 1);
+  });
+});
+
+test('simulated offline owner sale replays with the same invoice ID, original date and one counter update', async () => {
+  await withMemoryLocalStorage(async () => {
+    const sale = {
+      id: 'emulator-offline-owner-retry-1',
+      date: '2026-10-15T10:00:00.000Z',
+      items: [{ id: 'line-1', productId: 'oil-offline-owner', productName: 'Oil', bottleSize: 10, essenceGrams: 12, sellingPrice: 120, quantity: 1 }],
+      totalPrice: 120,
+      totalCost: 40,
+      totalProfit: 80,
+      transactionType: 'بيع_طبيعي',
+      commissionDayKey: '2026-10-15',
+      commissionSprayBottleCount: 1,
+      commissionCounterGeneration: 0,
+    };
+    await seedProduct(ownerDb, 'oil-offline-owner', productFixture('oil-offline-owner', 100));
+    const queued = enqueueOfflineAction('sale', sale);
+    const originalDeviceTimestamp = queued.payload.deviceTimestamp;
+
+    const offline = await flushPendingSaleQueue(async () => {
+      throw Object.assign(new Error('simulated offline'), { code: 'unavailable' });
+    });
+    assert.deepEqual(offline, { attempted: 1, synced: 0, failed: 1, syncedIds: [] });
+    const stillQueued = getOfflineQueue()[0];
+    assert.equal(stillQueued.id, queued.id);
+    assert.equal(stillQueued.payload.id, sale.id);
+    assert.equal(stillQueued.payload.date, sale.date);
+    assert.equal(stillQueued.payload.deviceTimestamp, originalDeviceTimestamp);
+    assert.equal((await getDoc(doc(ownerDb, 'sales', sale.id))).exists(), false);
+
+    const reconnected = await flushPendingSaleQueue((pendingSale) => commitSaleAndInventory(ownerDb, pendingSale));
+    assert.deepEqual(reconnected, { attempted: 1, synced: 1, failed: 0, syncedIds: [queued.id] });
+    assert.deepEqual(getOfflineQueue(), []);
+
+    const stored = (await getDoc(doc(ownerDb, 'sales', sale.id))).data();
+    assert.equal(stored.id, sale.id);
+    assert.equal(stored.date, sale.date);
+    assert.equal(stored.commissionDayKey, sale.commissionDayKey);
+    assert.equal(stored.deviceTimestamp, originalDeviceTimestamp);
+    assert.equal(stored.isOfflineCreated, true);
+    const matches = await getDocs(query(collection(ownerDb, 'sales'), where('id', '==', sale.id)));
+    assert.equal(matches.size, 1);
+
+    await assertSucceeds(commitSaleAndInventory(ownerDeviceTwoDb, queued.payload));
+    assert.equal((await getDoc(doc(ownerDb, 'products', 'oil-offline-owner'))).data().stock_grams, 100);
+    assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-offline-owner'))).data().stock_grams, 88);
+    assert.equal((await getDoc(doc(ownerDb, 'product_operations', 'oil-offline-owner'))).data().stock_grams, 88);
+    const counter = (await getDoc(doc(ownerDb, 'commission_day_counters', sale.commissionDayKey))).data();
+    assert.equal(counter.sprayBottlesSold, 1);
+    assert.equal(counter.generation, 1);
   });
 });
 
@@ -1107,29 +1182,58 @@ test('invoice financial edits are denied; owner reversal remains atomic and idem
   assert.equal((await getDoc(doc(ownerDb, 'vaults', 'restock'))).data().currentBalance, 60);
 });
 
-test('owner sale fails closed and leaves inventory untouched when the daily counter is missing', async () => {
+test('owner sale commits inventory atomically without automatic commission when the daily counter is missing', async () => {
   const sale = saleFixture('sale-missing-counter', 'oil-missing-counter', 12, { date: '2026-10-16T10:00:00.000Z' });
   await seedProduct(ownerDb, 'oil-missing-counter', productFixture('oil-missing-counter', 100));
-  await assert.rejects(commitSaleAndInventory(ownerDb, sale), /sale-sync\/commission-counter-not-ready/);
-  assert.equal((await getDoc(doc(ownerDb, 'sales', sale.id))).exists(), false);
-  assert.equal((await getDoc(doc(ownerDb, 'products', 'oil-missing-counter'))).data().stock_grams, 100);
-  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-missing-counter'))).data().stock_grams, 100);
+  await assertSucceeds(commitSaleAndInventory(ownerDb, sale));
+  const saved = (await getDoc(doc(ownerDb, 'sales', sale.id))).data();
+  assert.equal(saved.commissionTimingStatus, 'needs_owner_review');
+  assert.equal(saved.commissionReviewReason, 'counter-not-ready');
+  assert.equal(saved.commissionAmount, 0);
+  assert.equal(saved.totalProfit, 0);
+  assert.ok(saved.serverAcceptedAt instanceof Timestamp);
+  assert.equal((await getDoc(doc(ownerDb, 'products', 'oil-missing-counter'))).data().stock_grams, 100,
+    'the legacy product record remains owner-private and is not the shared operational stock source');
+  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-missing-counter'))).data().stock_grams, 88);
+  assert.equal((await getDoc(doc(ownerDb, 'commission_day_counters', '2026-10-16'))).exists(), false);
+  assert.equal((await getDoc(doc(ownerDb, 'sale_financials', sale.id))).exists(), false);
+  const commission = calculateExactDailyCommission([saved], 'طارق', '2026-10-16', DEFAULT_COMMISSION_POLICY);
+  assert.equal(commission.totalCommissionEgp, 0);
+  assert.equal(commission.eligibleSalesCount, 0);
 });
 
-test('owner sale rejects a stale counter generation even when its product stock is independent', async () => {
+test('owner sale with a stale counter generation commits as owner-review and does not change the counter', async () => {
   const first = saleFixture('owner-counter-first', 'oil-counter-first', 10);
   const stale = saleFixture('owner-counter-stale', 'oil-counter-stale', 10);
   await seedProduct(ownerDb, 'oil-counter-first', productFixture('oil-counter-first', 100));
   await seedProduct(ownerDb, 'oil-counter-stale', productFixture('oil-counter-stale', 100));
 
   await commitSaleAndInventory(ownerDb, first);
-  await assert.rejects(commitSaleAndInventory(ownerDb, stale), /sale-sync\/commission-counter-stale/);
+  await assertSucceeds(commitSaleAndInventory(ownerDb, stale));
   assert.equal((await getDoc(doc(ownerDb, 'sales', first.id))).exists(), true);
-  assert.equal((await getDoc(doc(ownerDb, 'sales', stale.id))).exists(), false);
-  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-counter-stale'))).data().stock_grams, 100);
+  const pending = (await getDoc(doc(ownerDb, 'sales', stale.id))).data();
+  assert.equal(pending.commissionTimingStatus, 'needs_owner_review');
+  assert.equal(pending.commissionReviewReason, 'counter-stale');
+  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-counter-stale'))).data().stock_grams, 90);
   const counter = (await getDoc(doc(ownerDb, 'commission_day_counters', '2026-10-15'))).data();
   assert.equal(counter.sprayBottlesSold, 1);
   assert.equal(counter.generation, 1);
+});
+
+test('owner can reverse an owner-review sale and restore inventory without changing any commission counter', async () => {
+  const sale = saleFixture('sale-review-reversal', 'oil-review-reversal', 12, { date: '2026-10-16T10:00:00.000Z' });
+  await seedProduct(ownerDb, 'oil-review-reversal', productFixture('oil-review-reversal', 100));
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'vaults', 'restock'), { id: 'restock', currentBalance: 100 });
+  });
+  await assertSucceeds(commitSaleAndInventory(ownerDb, sale));
+  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-review-reversal'))).data().stock_grams, 88);
+  await assertSucceeds(reverseSaleAndInventory(ownerDb, sale.id, 'owner review correction', 'owner', true));
+  const reversed = (await getDoc(doc(ownerDb, 'sales', sale.id))).data();
+  assert.equal(reversed.isReversed, true);
+  assert.equal(reversed.commissionTimingStatus, 'needs_owner_review');
+  assert.equal((await getDoc(doc(ownerDb, 'tarek_products', 'oil-review-reversal'))).data().stock_grams, 100);
+  assert.equal((await getDoc(doc(ownerDb, 'commission_day_counters', '2026-10-16'))).exists(), false);
 });
 
 test('permanent invoice deletion is blocked without changing sale or stock', async () => {

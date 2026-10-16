@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { auth } from '../services/firebase';
 import {
   bootstrapCommissionCounterOnConfiguredWorker,
+  fetchTrustedServerTimeFromConfiguredWorker,
   type CommissionCounterBootstrapResult,
 } from '../services/workerSaleClient';
+import { getCommissionCounterBootstrapPlan } from '../services/commissionCounterSchedule';
+import { getTrustedServerTimeEstimate, recordTrustedServerTimeSample } from '../services/commissionTimeEvidence';
 
-const CUTOVER_DATE_KEY = '2026-10-17';
-const CUTOVER_AT_UTC_MS = Date.UTC(2026, 9, 17, 0, 0, 0);
 const OWNER_EMAIL = 'moh.mhran@gmail.com';
 
 let inFlightBootstrap: Promise<CommissionCounterBootstrapResult> | null = null;
@@ -17,10 +18,6 @@ function ensureConfiguredBootstrap(getIdToken: () => Promise<string>): Promise<C
       .finally(() => { inFlightBootstrap = null; });
   }
   return inFlightBootstrap;
-}
-
-function utcDateKey(now: Date): string {
-  return now.toISOString().slice(0, 10);
 }
 
 export default function OwnerCommissionCounterBootstrap() {
@@ -46,49 +43,52 @@ export default function OwnerCommissionCounterBootstrap() {
       timer = window.setTimeout(() => { void run(); }, Math.max(500, delayMs));
     };
 
-    const scheduleNextUtcDay = () => {
-      const now = new Date();
-      const nextUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 2);
-      scheduleRun(nextUtcMidnight - now.getTime());
-    };
-
     const run = async () => {
       if (cancelled || running) return;
-      const now = new Date();
-      const dateKey = utcDateKey(now);
-      if (productionEnabled && dateKey < CUTOVER_DATE_KEY) {
-        setFailed(false);
-        setBusy(false);
-        setMessage('سيُهيّأ العداد تلقائياً بعد بدء 17 أكتوبر 2026، الساعة 03:00 بتوقيت القاهرة؛ البيع يبقى مغلقاً حتى ذلك الموعد.');
-        scheduleRun(CUTOVER_AT_UTC_MS - now.getTime() + 1000);
-        return;
-      }
-      if (productionEnabled && dateKey === readyDateKey) {
-        scheduleNextUtcDay();
-        return;
-      }
-
-      const user = auth.currentUser;
-      if (!user) {
-        setFailed(true);
-        setMessage('لم تتوفر جلسة Google للمالك؛ سيظل البيع مغلقاً حتى التحقق.');
-        return;
-      }
-      if (productionEnabled && (user.email?.trim().toLowerCase() !== OWNER_EMAIL
-          || user.emailVerified !== true
-          || !user.providerData.some((provider) => provider.providerId === 'google.com'))) {
-        setFailed(true);
-        setMessage('يلزم تسجيل دخول Google موثّق بحساب المالك لتهيئة عداد اليوم.');
-        return;
-      }
-
       running = true;
       setBusy(true);
-      setFailed(false);
-      setMessage(productionEnabled
-        ? 'جارٍ التحقق من عداد اليوم على Worker؛ لا تُحفظ مبيعات بهذه الخطوة.'
-        : 'جارٍ التحقق من عداد اليوم على المحاكي المحلي…');
       try {
+        const user = auth.currentUser;
+        if (!user) throw new Error('auth/owner-google-session-required');
+        if (productionEnabled && (user.email?.trim().toLowerCase() !== OWNER_EMAIL
+            || user.emailVerified !== true
+            || !user.providerData.some((provider) => provider.providerId === 'google.com'))) {
+          throw new Error('role/owner-required');
+        }
+        const serverTime = await fetchTrustedServerTimeFromConfiguredWorker(() => {
+          const currentUser = auth.currentUser;
+          if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
+          if (productionEnabled && (currentUser.email?.trim().toLowerCase() !== OWNER_EMAIL
+              || currentUser.emailVerified !== true
+              || !currentUser.providerData.some((provider) => provider.providerId === 'google.com'))) {
+            throw new Error('role/owner-required');
+          }
+          return currentUser.getIdToken();
+        });
+        if (!recordTrustedServerTimeSample(serverTime)) throw new Error('worker-sale/invalid-server-time-response');
+        const timeEstimate = getTrustedServerTimeEstimate();
+        if (!timeEstimate) throw new Error('worker-sale/stale-server-time-sample');
+        const plan = getCommissionCounterBootstrapPlan(
+          new Date(timeEstimate.serverNowMs), enabled, productionEnabled, readyDateKey,
+        );
+        if (plan.action === 'disabled') return;
+        if (plan.action === 'invalid-clock') throw new Error('worker-sale/invalid-server-clock');
+        if (plan.action === 'wait-for-cutover') {
+          setFailed(false);
+          setMessage('وقت الخادم موثوق. سيُهيّأ العداد تلقائياً عند 17 أكتوبر 2026، 03:00 القاهرة (00:00 UTC)، دون الاعتماد على ساعة الجهاز.');
+          scheduleRun(plan.delayMs);
+          return;
+        }
+        if (plan.action === 'already-ready-today') {
+          setFailed(false);
+          setMessage(`وقت الخادم مؤكد والعداد جاهز ليوم ${plan.dateKey}.`);
+          scheduleRun(plan.delayMs);
+          return;
+        }
+        setFailed(false);
+        setMessage(productionEnabled
+          ? 'جارٍ التحقق من عداد اليوم على Worker؛ لا تُحفظ مبيعات بهذه الخطوة.'
+          : 'جارٍ التحقق من عداد اليوم على المحاكي المحلي…');
         const result = await ensureConfiguredBootstrap(() => {
           const currentUser = auth.currentUser;
           if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
@@ -104,13 +104,20 @@ export default function OwnerCommissionCounterBootstrap() {
         setMessage(result.historyScanned
           ? `تمت تهيئة عداد ${result.dateKey}: ${result.sprayBottlesSold} عبوة رش بعد فحص ${result.historicalSaleIdsScanned ?? 0} فاتورة.`
           : `العداد جاهز مسبقاً ليوم ${result.dateKey}: ${result.sprayBottlesSold} عبوة رش.`);
-        if (productionEnabled) scheduleNextUtcDay();
+        if (productionEnabled) {
+          const currentEstimate = getTrustedServerTimeEstimate();
+          if (currentEstimate) {
+            const nextMidnight = Date.UTC(new Date(currentEstimate.serverNowMs).getUTCFullYear(),
+              new Date(currentEstimate.serverNowMs).getUTCMonth(), new Date(currentEstimate.serverNowMs).getUTCDate() + 1, 0, 0, 2);
+            scheduleRun(Math.max(1000, nextMidnight - currentEstimate.serverNowMs));
+          }
+        }
       } catch (error: unknown) {
         if (cancelled) return;
         const code = error instanceof Error ? error.message : 'bootstrap-failed';
         setFailed(true);
-        setMessage(`تعذر تهيئة العداد؛ البيع/الاقتباس سيظلان مغلقين حتى الإصلاح. (${code})`);
-        if (productionEnabled && code === 'sale/cutover-not-started') scheduleRun(15_000);
+        setMessage(`تعذر التحقق من وقت الخادم أو تهيئة العداد. لن تُعتمد العمولة آلياً حتى عودة التحقق. (${code})`);
+        if (productionEnabled) scheduleRun(60_000);
       } finally {
         running = false;
         if (!cancelled) setBusy(false);
@@ -119,11 +126,8 @@ export default function OwnerCommissionCounterBootstrap() {
 
     const onVisibilityChange = () => {
       if (!productionEnabled || document.visibilityState !== 'visible') return;
-      const dateKey = utcDateKey(new Date());
-      if (dateKey >= CUTOVER_DATE_KEY && dateKey !== readyDateKey) {
-        if (timer !== undefined) window.clearTimeout(timer);
-        void run();
-      }
+      if (timer !== undefined) window.clearTimeout(timer);
+      void run();
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -160,7 +164,7 @@ export default function OwnerCommissionCounterBootstrap() {
           </button>
         )}
       </div>
-      <p className="mt-1 opacity-80">تُجرى قراءة التاريخ فقط عند غياب عداد اليوم، وبحد أعلى ٥٬٠٠٠ سجل لكل مجموعة (`sales` و`sale_operations`). لا تُسجّل هذه الخطوة بيعاً ولا تمسح طابور المبيعات القديم؛ يرفض الخادم البيع قبل موعد القطع وبعده إذا لم يكن العداد جاهزاً.</p>
+      <p className="mt-1 opacity-80">وقت اليوم يُقدّر من Worker موثوق؛ قراءة التاريخ لا تُجرى إلا عند غياب العداد وبحد أعلى ٥٬٠٠٠ سجل لكل مجموعة (`sales` و`sale_operations`). لا تُسجّل هذه الخطوة بيعاً ولا تمسح طابور المبيعات القديم.</p>
     </section>
   );
 }

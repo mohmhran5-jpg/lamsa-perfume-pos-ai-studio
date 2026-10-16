@@ -5,6 +5,7 @@ import { submitSaleToLocalEmulatorWorker, submitTarekSaleToLocalEmulatorWorker }
 import { normalizeLamsaSaleIntent } from '../src/lamsaSaleContract.mjs';
 import { PRESET_PROMOTIONS } from '../src/lamsaSaleWorker.mjs';
 import { TAREK_SALE_PRESET_OFFERS } from '../../services/tarekSalePresets.ts';
+import { countSaleSprays } from '../src/commissionDayCounter.mjs';
 
 test('Tarek POS preset IDs, sizes and exact quantities match the Worker policy', () => {
   const ui = Object.fromEntries(TAREK_SALE_PRESET_OFFERS.map((offer) => [offer.id, offer]));
@@ -13,6 +14,14 @@ test('Tarek POS preset IDs, sizes and exact quantities match the Worker policy',
     assert.equal(ui[id].sizeMl, offer.sizeMl, `${id} bottle size drift`);
     assert.equal(ui[id].quantity, offer.quantity, `${id} quantity drift`);
   }
+});
+
+test('owner-review sales never enter the automatic daily commission counter', () => {
+  assert.equal(countSaleSprays({
+    commissionTimingStatus: 'needs_owner_review',
+    transactionType: 'بيع_طبيعي',
+    items: [{ bottleSize: 50, quantity: 4 }],
+  }), 0);
 });
 
 function saleWith(items, overrides = {}) {
@@ -99,6 +108,7 @@ test('Worker parser rejects client totals and line-level finance as authority fi
   assert.throws(() => normalizeLamsaSaleIntent({ ...intent, totalProfitEgp: 500 }), /unexpected-field/);
   const alteredLine = { ...intent.lines[0], sellingPriceEgp: 0.01 };
   assert.throws(() => normalizeLamsaSaleIntent({ ...intent, lines: [alteredLine] }), /unexpected-field/);
+  assert.throws(() => normalizeLamsaSaleIntent({ ...intent, date: '2026-10-17T03:00:00.000Z' }), /unexpected-field/);
   assert.equal(normalizeLamsaSaleIntent(intent).intent.lines[0].mixComponents.reduce((sum, c) => sum + c.gramsPerBottle, 0), 15);
 });
 
