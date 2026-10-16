@@ -1,6 +1,6 @@
 ## الحالة المحلية — 2026-10-16
 
-تغييرات القطع وbootstrap العداد أُضيفت محلياً على فرع مراجعة PR #6؛ لم تُدمج أو تُنشر. لم تُنشأ مفاتيح/أسرار، ولم تُكتب مبيعات أو بيانات إنتاج، ولم تتغير Firestore Rules الحية أو إعدادات Billing. الاستعلامات الإدارية السابقة كانت للقراءة فقط.
+تغييرات القطع وbootstrap العداد والتوقيت الموثوق ودعم سر JSON الكامل أُعدّت على فرع مراجعة PR #6؛ PR مفتوح ولم يُدمج أو يُنشر. لم تُنشأ مفاتيح/أسرار، ولم تُكتب مبيعات أو بيانات إنتاج، ولم تتغير Firestore Rules الحية أو إعدادات Billing. التحقق الحي الوارد أدناه كان قراءةً فقط.
 
 ### ما أصبح جاهزاً محلياً
 
@@ -11,10 +11,10 @@
 
 ### تحقق الإدارة الحية والمانع
 
-- لقطات الفحص السابقة تُظهر حساب Cloudflare `Offers` وخطة Workers Free — Active، وعاملاً قائماً واحداً اسمه `offers`؛ لا يوجد عامل لمسة، ولم تُجر كتابة إلى Cloudflare. لا يُستبدل `offers`.
-- لقطة شاشة IAM المؤرخة 2026-10-16 06:25 أظهرت حساب الخدمة مربوطاً بالدور `Firestore Store Read/Write (No Delete)` على مستوى المشروع، وبالصلاحيات الخمس: `datastore.databases.get`, `datastore.entities.get`, `datastore.entities.list`, `datastore.entities.create`, `datastore.entities.update`؛ لا تتضمن `datastore.entities.delete`. لم يُسجل تغيير لاحق للدور. التنبيه السابق عن `delete` كان false positive من جمع أحداث منفصلة؛ نعتمد التحقق السابق ولا نطلب تأكيداً جديداً.
-- صفحة مفاتيح حساب الخدمة لم تُحمّل في الفحص السابق؛ لم يُنشأ مفتاح جديد، ولا يُدّعى أن قائمة المفاتيح الحية خالية.
-- آخر تحقق سابق وجد Wrangler غير مصادق محلياً؛ الخطة المجانية مؤكدة من اللقطة السابقة، لكن لم يُجر تحقق حي جديد في هذه الجولة. لا يوجد Worker إنتاجي أو سر اعتماد الخدمة، وإعدادا الإنتاج ما زالا `false`؛ لذا لا يوجد تشغيل حي أو تكلفة جديدة. الإطلاق يحتاج موافقة نهائية صريحة على إنشاء المفتاح وتخزينه في Cloudflare Secret والنشر بعد مراجعة التهيئة المحددة.
+- لوحة Cloudflare الحالية تُظهر حساب `Offers` وخطة **Workers Free — Active**. قراءة قائمة Workers عبر API أعادت `offers` فقط؛ لا يوجد عامل لمسة، ولم تُجر كتابة إلى Cloudflare. لن يُستبدل `offers`.
+- صفحة IAM الحالية للمشروع `gen-lang-client-0515786951` تُظهر الحساب `firestore-store-worker@gen-lang-client-0515786951.iam.gserviceaccount.com` مربوطاً بالدور `Firestore Store Read/Write (No Delete)`. وصف الدور يحدد قراءة/قائمة وإنشاء/تحديث مستندات فقط؛ وتحقق الدور السابق وثّق الصلاحيات الخمس `datastore.databases.get`, `datastore.entities.get`, `datastore.entities.list`, `datastore.entities.create`, `datastore.entities.update`، بلا `datastore.entities.delete`.
+- صفحة Service Accounts الحالية تُظهر **No keys** لهذا الحساب الخدمي؛ لم يُنشأ مفتاح. لا يوجد مفتاح أو سر في المشروع.
+- بوابتا الإنتاج ما زالتا `false` في `wrangler.toml`، وواجهة البناء غير مهيأة بعد. PR لا يملك فحوص CI مُبلّغاً عنها. تعذرت قراءة متغيرات GitHub Actions عبر API (403)، ولا يتوفر `gcloud` محلياً. عُدّل Worker محلياً لقبول ملف الاعتماد JSON كاملاً كسرّ Cloudflare `GCP_SERVICE_ACCOUNT_KEY_JSON` مع مطابقة المشروع والبريد، لكن لم يُنشأ المفتاح أو يُحفظ؛ ولن يُرسل المفتاح في الشيفرة أو متغير عادي. لم يُنشر Worker/Pages أو القواعد. خطة Workers Free مؤكدة من اللوحة؛ لم يُفعل Billing/Blaze.
 - عولج توقيت البيع محلياً: POS المالك يأخذ عينة وقت من Worker موثوق، ويستخدم الساعة monotonic لتقدير وقت الخادم؛ دليل الانحراف أو غياب العينة/العداد يضع العمولة في مراجعة المالك، مع حفظ وقت قبول Firestore وعدم إيقاف البيع أو المخزون. Worker يعيد تقييم السعر/العمولة من بياناته ويترك المبيعات ذات العداد المفقود للمراجعة دون أي كتابة للعداد أو خزينة العمولة.
 - الطابور التاريخي `lamsa_offline_queue_v1` يبقى بايتاً كما هو ولا يقرأه التطبيق الجديد أو يعيد إرساله. المبيعات الجديدة للمالك تستخدم `lamsa_offline_queue_v2`، وطارق يستخدم outbox منفصلاً؛ لا تُنقل السجلات القديمة ولا تُعاد وسمها أو تشغيلها.
 
@@ -23,8 +23,8 @@
 - `npm run lint`: ناجح.
 - `npm run test:security`: **77/77**.
 - `npm run test:firestore`: **157/157** على Firebase Emulator، بما فيها غياب العداد، review/reversal، idempotent retries، وserverTimestamp. يستخدم runner محلياً حزمة esbuild مؤقتة لدعم enum في TypeScript ثم يحذفها.
-- `npm run test:app-contract`: **35/35**.
-- `npm run test:prototype`: **35/35** عقود Worker، **18/18** تكامل Firestore Emulator، و**15/15** auth/stream.
+- `npm run test:app-contract`: **36/36**.
+- `npm run test:prototype`: **36/36** عقود Worker، **18/18** تكامل Firestore Emulator، و**15/15** auth/stream.
 - `npm run build`: ناجح؛ يوجد تحذير Vite عن chunk أكبر من 500 KiB. لا تثبت المحاكيات عمل IAM أو OAuth أو المزامنة الحية، ولم يُختبر بيع حقيقي.
 
 ### خطوات محمد قبل أول بيع بعد الإطلاق

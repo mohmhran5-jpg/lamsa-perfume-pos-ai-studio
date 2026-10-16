@@ -12,6 +12,48 @@ export class GoogleServiceAccountAuthError extends Error {
   }
 }
 
+export function resolveServiceAccountCredentials(env, {
+  expectedServiceAccountEmail,
+  expectedProjectId,
+} = {}) {
+  let email = typeof env?.GCP_SERVICE_ACCOUNT_EMAIL === 'string'
+    ? env.GCP_SERVICE_ACCOUNT_EMAIL.trim().toLowerCase() : '';
+  let privateKey = '';
+  const keyJson = typeof env?.GCP_SERVICE_ACCOUNT_KEY_JSON === 'string'
+    ? env.GCP_SERVICE_ACCOUNT_KEY_JSON.trim() : '';
+
+  if (keyJson) {
+    let credential;
+    try { credential = JSON.parse(keyJson); }
+    catch { throw new GoogleServiceAccountAuthError('google/service-account-config-invalid'); }
+    if (!credential || typeof credential !== 'object' || Array.isArray(credential)
+        || credential.type !== 'service_account') {
+      throw new GoogleServiceAccountAuthError('google/service-account-config-invalid');
+    }
+    const jsonEmail = typeof credential.client_email === 'string'
+      ? credential.client_email.trim().toLowerCase() : '';
+    const jsonProjectId = typeof credential.project_id === 'string' ? credential.project_id.trim() : '';
+    if (!jsonEmail || !jsonProjectId || (email && email !== jsonEmail)
+        || (expectedProjectId && jsonProjectId !== expectedProjectId)) {
+      throw new GoogleServiceAccountAuthError('google/service-account-config-invalid');
+    }
+    email = jsonEmail;
+    privateKey = typeof credential.private_key === 'string' ? credential.private_key : '';
+  } else {
+    privateKey = typeof env?.GCP_SERVICE_ACCOUNT_PRIVATE_KEY === 'string'
+      ? env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY : '';
+  }
+
+  privateKey = privateKey.replace(/\\n/g, '\n').trim();
+  if (!email || !/^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/.test(email)
+      || (expectedServiceAccountEmail && email !== expectedServiceAccountEmail.toLowerCase())
+      || !privateKey.startsWith('-----BEGIN PRIVATE KEY-----')
+      || !privateKey.includes('-----END PRIVATE KEY-----')) {
+    throw new GoogleServiceAccountAuthError('google/service-account-config-invalid');
+  }
+  return { email, privateKey };
+}
+
 /**
  * Creates a short-lived OAuth access-token provider for Firestore REST.
  * The private key is read only from the supplied runtime binding; this module
@@ -21,20 +63,15 @@ export function createGoogleServiceAccountTokenProvider({
   fetchImpl = (...args) => globalThis.fetch(...args),
   now = () => Date.now(),
   expectedServiceAccountEmail,
+  expectedProjectId,
 } = {}) {
   const stateByEmail = new Map();
 
   return async function getGoogleServiceAccountAccessToken(env) {
-    const email = typeof env?.GCP_SERVICE_ACCOUNT_EMAIL === 'string'
-      ? env.GCP_SERVICE_ACCOUNT_EMAIL.trim().toLowerCase() : '';
-    const privateKey = typeof env?.GCP_SERVICE_ACCOUNT_PRIVATE_KEY === 'string'
-      ? env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY.replace(/\\n/g, '\n').trim() : '';
-    if (!email || !/^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/.test(email)
-        || (expectedServiceAccountEmail && email !== expectedServiceAccountEmail.toLowerCase())
-        || !privateKey.startsWith('-----BEGIN PRIVATE KEY-----')
-        || !privateKey.includes('-----END PRIVATE KEY-----')) {
-      throw new GoogleServiceAccountAuthError('google/service-account-config-invalid');
-    }
+    const { email, privateKey } = resolveServiceAccountCredentials(env, {
+      expectedServiceAccountEmail,
+      expectedProjectId,
+    });
 
     const nowMs = now();
     const cached = stateByEmail.get(email);

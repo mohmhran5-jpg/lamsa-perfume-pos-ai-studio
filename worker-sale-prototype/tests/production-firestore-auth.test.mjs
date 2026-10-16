@@ -79,6 +79,52 @@ test('OAuth JWT is RS256, scoped to Firestore, exchange is mocked, and access to
   assert.equal(exchangeCount, 1);
 });
 
+test('OAuth accepts the complete service-account JSON secret and pins its project and identity', async () => {
+  let exchangeCount = 0;
+  const keyJson = JSON.stringify({
+    type: 'service_account',
+    project_id: PRODUCTION_FIRESTORE_PROJECT_ID,
+    private_key_id: 'ephemeral-test-key-id',
+    private_key: testPrivateKey,
+    client_email: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
+    client_id: '1234567890',
+  });
+  const env = productionEnv({ GCP_SERVICE_ACCOUNT_PRIVATE_KEY: '', GCP_SERVICE_ACCOUNT_KEY_JSON: keyJson });
+  const fetchImpl = async (url, init) => {
+    assert.equal(String(url), GOOGLE_OAUTH_TOKEN_URL);
+    exchangeCount += 1;
+    await verifyOAuthAssertion(new URLSearchParams(init.body));
+    return oauthResponse();
+  };
+  const getToken = createGoogleServiceAccountTokenProvider({
+    fetchImpl,
+    expectedServiceAccountEmail: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
+    expectedProjectId: PRODUCTION_FIRESTORE_PROJECT_ID,
+  });
+  assert.equal(await getToken(env), 'mock-google-access-token');
+  assert.equal(assertProductionFirestoreConfig(env), `projects/${PRODUCTION_FIRESTORE_PROJECT_ID}/databases/${PRODUCTION_FIRESTORE_DATABASE_ID}/documents`);
+  assert.equal(exchangeCount, 1);
+
+  const wrongProject = productionEnv({
+    GCP_SERVICE_ACCOUNT_PRIVATE_KEY: '',
+    GCP_SERVICE_ACCOUNT_KEY_JSON: JSON.stringify({
+      type: 'service_account',
+      project_id: 'other-project',
+      private_key: testPrivateKey,
+      client_email: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
+    }),
+  });
+  assert.throws(() => assertProductionFirestoreConfig(wrongProject),
+    (error) => error.code === 'prototype/production-transport-not-approved');
+  const rejectWrongProjectToken = createGoogleServiceAccountTokenProvider({
+    fetchImpl: async () => { throw new Error('wrong project must fail before network'); },
+    expectedServiceAccountEmail: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
+    expectedProjectId: PRODUCTION_FIRESTORE_PROJECT_ID,
+  });
+  await assert.rejects(rejectWrongProjectToken(wrongProject),
+    (error) => error.code === 'google/service-account-config-invalid');
+});
+
 test('OAuth fails closed for missing or unexpected service-account credentials without network access', async () => {
   let networkCalls = 0;
   const getToken = createGoogleServiceAccountTokenProvider({
@@ -251,4 +297,5 @@ test('Wrangler pins the production environment safely without storing credential
   assert.match(productionVars, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
   assert.doesNotMatch(wrangler, /^\s*GCP_SERVICE_ACCOUNT_PRIVATE_KEY\s*=/m);
   assert.doesNotMatch(wrangler, /-----BEGIN PRIVATE KEY-----/);
+  assert.doesNotMatch(wrangler, /^\s*GCP_SERVICE_ACCOUNT_KEY_JSON\s*=/m);
 });

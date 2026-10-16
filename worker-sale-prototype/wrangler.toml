@@ -28,4 +28,6 @@ FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"
 SALE_WORKER_PRODUCTION_ENABLED = "false"
 SERVER_TIME_ENDPOINT_ENABLED = "false"
 CORS_ALLOWED_ORIGIN = "https://mohmhran5-jpg.github.io"
-# Never place GCP_SERVICE_ACCOUNT_PRIVATE_KEY here; it must be a runtime secret if separately approved.
+FIRESTORE_EMULATOR_HOST = ""
+FIRESTORE_EMULATOR_ADMIN_TOKEN = ""
+# Never put a service-account key in this file; the complete JSON belongs only in Cloudflare secret GCP_SERVICE_ACCOUNT_KEY_JSON.

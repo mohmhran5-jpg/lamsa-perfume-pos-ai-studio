@@ -4,7 +4,11 @@ import {
   FirebaseCertificatesUnavailable,
   FirebaseTokenError,
 } from './firebaseIdTokenVerifier.mjs';
-import { createGoogleServiceAccountTokenProvider, GoogleServiceAccountAuthError } from './googleServiceAccountAuth.mjs';
+import {
+  createGoogleServiceAccountTokenProvider,
+  GoogleServiceAccountAuthError,
+  resolveServiceAccountCredentials,
+} from './googleServiceAccountAuth.mjs';
 import {
   handleLamsaCommissionCounterBootstrap,
   handleLamsaSale,
@@ -34,6 +38,7 @@ const enc = new TextEncoder();
 const verifyFirebaseIdToken = createFirebaseIdTokenVerifier();
 const googleServiceAccountAccessToken = createGoogleServiceAccountTokenProvider({
   expectedServiceAccountEmail: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
+  expectedProjectId: PRODUCTION_FIRESTORE_PROJECT_ID,
 });
 
 class ApiError extends Error {
@@ -107,10 +112,15 @@ export function assertProductionFirestoreConfig(env, { requireTransportEnabled =
       || env.PROJECT_ID !== PRODUCTION_FIRESTORE_PROJECT_ID
       || env.FIRESTORE_DATABASE_ID !== PRODUCTION_FIRESTORE_DATABASE_ID
       || String(env.GCP_SERVICE_ACCOUNT_EMAIL || '').trim().toLowerCase() !== PRODUCTION_FIRESTORE_SERVICE_ACCOUNT
-      || typeof env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY !== 'string'
-      || !env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY.trim().startsWith('-----BEGIN PRIVATE KEY-----')
-      || !env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY.includes('-----END PRIVATE KEY-----')
       || env.FIRESTORE_EMULATOR_HOST || env.FIRESTORE_EMULATOR_ADMIN_TOKEN || env.FIREBASE_TEST_CERTS_URL) {
+    throw new ApiError(503, 'prototype/production-transport-not-approved');
+  }
+  try {
+    resolveServiceAccountCredentials(env, {
+      expectedServiceAccountEmail: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
+      expectedProjectId: PRODUCTION_FIRESTORE_PROJECT_ID,
+    });
+  } catch {
     throw new ApiError(503, 'prototype/production-transport-not-approved');
   }
   return firestoreDocumentsPath(env.PROJECT_ID, env.FIRESTORE_DATABASE_ID);
