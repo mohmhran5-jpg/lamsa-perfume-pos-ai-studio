@@ -18,8 +18,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_LAMSA_SALE_WORKER_URL: ${{ vars.VITE_LAMSA_SALE_WORKER_URL }}
-      VITE_LAMSA_SALE_WORKER_ENABLED: ${{ vars.VITE_LAMSA_SALE_WORKER_ENABLED }}
+      # Public, owner-approved production endpoint; not a credential.
+      VITE_LAMSA_SALE_WORKER_URL: 'https://lamsa-sales-worker.kusharyramadan.workers.dev'
+      VITE_LAMSA_SALE_WORKER_ENABLED: 'true'
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -33,7 +34,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Require the production sales Worker configuration
         run: |
-          test -n "$VITE_LAMSA_SALE_WORKER_URL" || { echo 'VITE_LAMSA_SALE_WORKER_URL is required'; exit 1; }
+          test "$VITE_LAMSA_SALE_WORKER_URL" = 'https://lamsa-sales-worker.kusharyramadan.workers.dev' || { echo 'VITE_LAMSA_SALE_WORKER_URL must match the approved production Worker'; exit 1; }
           test "$VITE_LAMSA_SALE_WORKER_ENABLED" = 'true' || { echo 'VITE_LAMSA_SALE_WORKER_ENABLED must be true'; exit 1; }
       - name: Type-check
         run: bun run lint
