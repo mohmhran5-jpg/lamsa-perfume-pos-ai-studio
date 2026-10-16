@@ -702,6 +702,84 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
     assert.equal((await restDoc('sales/lamsa-v3-niche-0001')).items[0].sellingPrice, 450);
   });
 
+  await check('Tarek v3 quotes and commits mixes plus free/paid packaging with server-only costs', async () => {
+    const makeV3 = (saleId, line, packagingOptionId = 'basic_bag', packagingPaid = false) => ({
+      schema: 'lamsa.sale-intent/v3',
+      saleId,
+      quoteId: `quote-${saleId}`,
+      lines: [line],
+      manualDiscountEgp: 0,
+      paymentMethod: 'نقدي',
+      packagingOptionId,
+      packagingPaid,
+    });
+    const singleLine = (lineId) => ({
+      lineId,
+      productId: 'lamsa-prodtransport',
+      bottleSizeId: 'bottle-50-spray',
+      bottleSizeMl: 50,
+      quantity: 1,
+      essenceGramsPerBottle: 15,
+      isColoredBottle: false,
+    });
+
+    const freeGift = makeV3('lamsa-v3-package-free-01', singleLine('line-package-free'), 'luxury_box', false);
+    const freeQuote = await callQuote(managerToken, freeGift);
+    assert.equal(freeQuote.status, 200, JSON.stringify(freeQuote.body));
+    assert.equal(freeQuote.body.sale.totalPrice, 300);
+    assertNoTarekFinancialFields(freeQuote.body.sale);
+    const freeCommit = await call(managerToken, freeGift);
+    assert.equal(freeCommit.status, 200, JSON.stringify(freeCommit.body));
+    assert.equal(freeCommit.body.sale.totalPrice, 300);
+    assertNoTarekFinancialFields(freeCommit.body.sale);
+    const freeOwnerRecord = await restDoc('sales/lamsa-v3-package-free-01');
+    assert.equal(freeOwnerRecord.packagingCostEgp, 10);
+    assert.equal(freeOwnerRecord.packagingRevenueEgp, undefined);
+
+    const paidPackaging = makeV3('lamsa-v3-package-paid-01', singleLine('line-package-paid'), 'luxury_box', true);
+    const paidQuote = await callQuote(managerToken, paidPackaging);
+    assert.equal(paidQuote.status, 200, JSON.stringify(paidQuote.body));
+    assert.equal(paidQuote.body.sale.totalPrice, 310);
+    const paidCommit = await call(managerToken, paidPackaging);
+    assert.equal(paidCommit.status, 200, JSON.stringify(paidCommit.body));
+    assert.equal(paidCommit.body.sale.totalPrice, 310);
+    assertNoTarekFinancialFields(paidCommit.body.sale);
+    const paidOwnerRecord = await restDoc('sales/lamsa-v3-package-paid-01');
+    assert.equal(paidOwnerRecord.packagingCostEgp, 10);
+    assert.equal(paidOwnerRecord.packagingRevenueEgp, 10);
+    assert.equal((await restDoc('sale_operations/lamsa-v3-package-paid-01')).packagingRevenueEgp, 10);
+
+    const mix = makeV3('lamsa-v3-mix-01', {
+      lineId: 'line-v3-mix-01',
+      bottleSizeId: 'bottle-50-spray',
+      bottleSizeMl: 50,
+      quantity: 1,
+      essenceGramsPerBottle: 15,
+      isColoredBottle: false,
+      customFormulaName: 'ميكس اختباري',
+      mixComponents: [
+        { productId: 'lamsa-mix-normal', gramsPerBottle: 10 },
+        { productId: 'lamsa-niche', gramsPerBottle: 5 },
+      ],
+    });
+    const mixQuote = await callQuote(managerToken, mix);
+    assert.equal(mixQuote.status, 200, JSON.stringify(mixQuote.body));
+    assert.equal(mixQuote.body.sale.totalPrice, 350);
+    assertNoTarekFinancialFields(mixQuote.body.sale);
+    const mixCommit = await call(managerToken, mix);
+    assert.equal(mixCommit.status, 200, JSON.stringify(mixCommit.body));
+    assert.equal(mixCommit.body.sale.totalPrice, 350);
+    assertNoTarekFinancialFields(mixCommit.body.sale);
+    const mixOperational = await restDoc('sale_operations/lamsa-v3-mix-01');
+    assert.deepEqual(mixOperational.items[0].mixComponents.map((component) => component.grams), [10, 5]);
+    assert.equal('componentOilCost' in mixOperational.items[0].mixComponents[0], false);
+    const stockAfterMix = (await restDoc('tarek_products/lamsa-mix-normal')).stock_grams;
+    const retryMix = await call(managerToken, mix);
+    assert.equal(retryMix.status, 200, JSON.stringify(retryMix.body));
+    assert.equal(retryMix.body.status, 'already-committed');
+    assert.equal((await restDoc('tarek_products/lamsa-mix-normal')).stock_grams, stockAfterMix);
+  });
+
   await check('application Tarek client quotes and commits through Firebase-authenticated Worker Emulator with idempotent outbox replay', async () => {
     const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     const values = new Map();

@@ -13,7 +13,7 @@ import {
 // Each unique product updates both canonical and operational stock documents.
 // Keep enough headroom for the sale projections, lock, vaults and quote within Firestore's 500-write limit.
 const MAX_STOCK_DOCS = 240;
-const PACKAGING = {
+export const PACKAGING = {
   basic_bag: { cost: 0, price: 0, replacesBasicBag: false },
   luxury_box: { cost: 10, price: 10, replacesBasicBag: false },
   luxury_bag: { cost: 10, price: 10, replacesBasicBag: true },

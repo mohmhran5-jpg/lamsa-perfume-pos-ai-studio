@@ -4,6 +4,7 @@ import test from 'node:test';
 import { transform } from 'esbuild';
 import {
   PRESET_PROMOTIONS,
+  PACKAGING,
   approvedPrice,
   calculateCommission,
   derivedSingleCost,
@@ -16,10 +17,11 @@ async function loadAppTypeScript(relativePath) {
   return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 }
 
-const [appMath, appPromotions, appPresets] = await Promise.all([
+const [appMath, appPromotions, appPresets, appTarekSafePosPolicy] = await Promise.all([
   loadAppTypeScript('../../types.ts'),
   loadAppTypeScript('../../services/promotionPolicy.ts'),
   loadAppTypeScript('../../services/tarekSalePresets.ts'),
+  loadAppTypeScript('../../services/tarekSafePosPolicy.ts'),
 ]);
 
 const settings = {
@@ -103,6 +105,20 @@ test("Worker sale math matches the application's authoritative pricing, mix, com
   });
   assert.equal(workerCommission.total, appCommission.totalCommissionEgp);
 
+  const packagedSubtotal = 300 + PACKAGING.luxury_box.price;
+  const packagedDiscountRatio = (packagedSubtotal - 17) / packagedSubtotal;
+  const workerPackagedCommission = calculateCommission(
+    [{ unitPrice: 300, quantity: 1, isRollOn: false }], packagedDiscountRatio, priorSprays, settings,
+  );
+  const appPackagedCommission = appMath.calculateNonRetroactiveTieredCommission({
+    items: [{ netUnitSellingPrice: Math.round(300 * packagedDiscountRatio), quantity: 1, isRollOn: false }],
+    priorSprayBottlesSoldToday: priorSprays,
+    baseRate: settings.commissionRate,
+    tieredRate: settings.tieredCommissionRate,
+    tierThreshold: settings.tieredCommissionBottleThreshold,
+  });
+  assert.equal(workerPackagedCommission.total, appPackagedCommission.totalCommissionEgp, 'packaging revenue participates in discount allocation consistently');
+
   const appPresetMap = new Map(appPresets.TAREK_SALE_PRESET_OFFERS.map((offer) => [offer.id, offer]));
   assert.deepEqual([...appPresetMap.keys()].sort(), Object.keys(PRESET_PROMOTIONS).sort());
   for (const [id, workerOffer] of Object.entries(PRESET_PROMOTIONS)) {
@@ -116,5 +132,23 @@ test("Worker sale math matches the application's authoritative pricing, mix, com
       ? Math.round((1375 * workerOffer.value) / 100)
       : Math.min(1375, workerOffer.value);
     assert.equal(appTotals.savedAmount, workerDiscount, `${id}: discount rounding`);
+  }
+
+  // Tarek's browser receives only the label and customer-facing price; authoritative packaging costs stay in the Worker.
+  const uiPackaging = new Map(appTarekSafePosPolicy.TAREK_SAFE_PACKAGING_OPTIONS.map((option) => [option.id, option]));
+  assert.deepEqual([...uiPackaging.keys()].sort(), appMath.DEFAULT_PACKAGING_OPTIONS.map((option) => option.id).sort());
+  for (const appOption of appMath.DEFAULT_PACKAGING_OPTIONS) {
+    const uiOption = uiPackaging.get(appOption.id);
+    const workerOption = PACKAGING[appOption.id];
+    const accounting = appMath.calculatePackagingAccounting({
+      packagingId: appOption.id,
+      isPaidByCustomer: true,
+      hasCartItems: true,
+    });
+    assert.equal(uiOption.customerPriceEgp, appOption.price, `${appOption.id}: customer-facing price`);
+    assert.equal(workerOption.price, appOption.price, `${appOption.id}: Worker customer price`);
+    assert.equal(workerOption.cost, accounting.extraStoreCostEgp, `${appOption.id}: server-only extra cost`);
+    assert.equal(workerOption.replacesBasicBag, Boolean(appOption.replacesBasicBag), `${appOption.id}: replacement rule`);
+    assert.equal('cost' in uiOption, false, `${appOption.id}: client packaging table must not include cost`);
   }
 });
