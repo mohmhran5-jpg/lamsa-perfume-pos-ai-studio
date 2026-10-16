@@ -15,6 +15,8 @@ import type {
 export const SEPARATED_COLLECTIONS = {
   productOperations: 'product_operations',
   productCosts: 'product_costs',
+  tarekOperationalCosts: 'tarek_operational_costs',
+  tarekOperationalCostsMeta: 'tarek_operational_costs_meta',
   tarekProducts: 'tarek_products',
   mixOperations: 'mix_operations',
   mixCosts: 'mix_costs',
@@ -350,6 +352,26 @@ export function projectProductCost(product: Product): ProductCostRecord {
     schemaVersion: 1,
     productId: String(product.id),
     ...copyDefined(product, ['customGramCostEgp', 'updatedAt']),
+  };
+}
+
+/** Tarek API DTO: only the explicitly permitted per-gram product cost is returned. */
+export function projectTarekProductCostDTO(
+  value: Record<string, unknown>,
+  fallbackProductId: string,
+): ProductCostRecord | null {
+  const productId = typeof value.productId === 'string' && value.productId.trim()
+    ? value.productId.trim()
+    : fallbackProductId;
+  if (!productId) return null;
+  const unitCost = value.customGramCostEgp;
+  return {
+    schemaVersion: 1,
+    productId,
+    ...(typeof unitCost === 'number' && Number.isFinite(unitCost) && unitCost >= 0
+      ? { customGramCostEgp: unitCost }
+      : {}),
+    ...(typeof value.updatedAt === 'string' ? { updatedAt: value.updatedAt } : {}),
   };
 }
 

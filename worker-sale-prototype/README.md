@@ -1,26 +1,26 @@
 # تحضير محلي لمسار مبيعات لمسة عبر Cloudflare Worker
 
-**الحالة:** أُنجز إعداد مسار النقل الإنتاجي واختُبر محلياً باستخدام مفتاح اختبار مولّد مؤقتاً وFirestore Emulator فقط؛ **ليس منشوراً، ولا يمكن للمسارات العامة الاتصال بالإنتاج**. لم يحدث اتصال حي بـGoogle/Firebase/Cloudflare، ولم يُنشأ أو يُخزّن مفتاح خدمة أو سر، ولم يحدث deploy أو push أو تغيير بيانات إنتاج. لا يزال الكود والإعدادات يحتاجان مراجعة قبل أي تفعيل حي.
+**الحالة:** أُنجز تحضير مسار البيع الإنتاجي واختُبر محلياً باستخدام مفتاح اختبار مولّد مؤقتاً وFirestore Emulator فقط؛ **الإعداد الحالي مغلق وغير منشور**. لم يحدث اتصال حي بـGoogle/Firebase/Cloudflare، ولم يُنشأ أو يُخزّن مفتاح خدمة أو سر، ولم يحدث deploy أو push أو تغيير بيانات إنتاج. لا يزال الكود والإعدادات يحتاجان مراجعة قبل أي تفعيل حي.
 
 ## ما أُنجز محلياً
 
 - استبدال `TEST_PUBLIC_JWK` بتحقق Firebase ID token الفعلي: RS256، مطالبات Firebase/Google، وفحص `iat` و`auth_time`؛ الشهادات العامة تُخزّن مؤقتاً وفق `Cache-Control`. الاختبارات تستخدم خادم X.509 محلياً.
 - إضافة OAuth 2.0 بحساب خدمة لـFirestore REST. العامل يوقّع JWT قصير العمر من binding وقت التشغيل، يطلب نطاق `https://www.googleapis.com/auth/datastore`، ويخزّن access token مؤقتاً في الذاكرة. لا يُحفظ المفتاح داخل المشروع.
 - تثبيت الهدف المتوقع في `src/productionConfig.mjs`: المشروع `demo-gen-project-test`، قاعدة Firestore المسماة `demo-named-firestore-db`، وهوية الخدمة `worker-test-account@demo-gen-project-test.iam.gserviceaccount.com`.
-- إضافة علم داخلي `FIRESTORE_PRODUCTION_TRANSPORT_ENABLED`؛ قيمته في `wrangler.toml` هي `false`. إعداد الإنتاج لا يعمل إلا إذا طابق الهوية والمشروع والقاعدة الثوابت أعلاه، ووجد binding المفتاح، وغابت إعدادات Emulator. هذا **لا يفتح HTTP routes**: جميع المسارات العامة ما زالت تتطلب `assertEmulatorOnly`.
+- إعداد الإنتاج مقفول افتراضياً بعلمين مستقلين: `FIRESTORE_PRODUCTION_TRANSPORT_ENABLED=false` و`SALE_WORKER_PRODUCTION_ENABLED=false`. مسارات Lamsa لا تقبل إلا Origin HTTPS واحداً مضبوطاً تماماً؛ وتظل كذلك مشروطة بهوية/مشروع/قاعدة الاختبار الاصطناعية ومفتاح وقت التشغيل. مسار `/api/sales` القديم وصحة Worker ما زالا على الحارس المحلي. لا توجد بيئة إنتاج ولا سر.
 - اختبار quote وcommit كامليْن عبر `createFirestoreTransport`: مولّد RSA خاص بالاختبار، تبادل OAuth مموّه، وتحويل داخلي لطلبات Firestore REST ذات الهدف المثبّت إلى Emulator على loopback. تحقّق الاختبار من عدم أثر quote على المخزون، خصم المخزون مرة واحدة، سلامة إعادة المحاولة، وتخزين OAuth token المؤقت. لم يستدع الاختبار Google أو Firestore أو Cloudflare الحية.
-- إعداد Wrangler الحالي يظل على `ENVIRONMENT=local-emulator` و`PROJECT_ID=demo-worker-sale` والقاعدة المسماة محلياً؛ لا يوجد قسم إنتاج أو مفتاح/سر في `wrangler.toml`.
+- إعداد Wrangler الحالي يظل على `ENVIRONMENT=local-emulator` و`PROJECT_ID=demo-worker-sale` والقاعدة المسماة محلياً، مع علمي الإنتاج `false`. يحدد `CORS_ALLOWED_ORIGIN` أصل Pages الدقيق `https://mohmhran5-jpg.github.io` للاستخدام المستقبلي فقط؛ لا يوجد قسم إنتاج أو مفتاح/سر في `wrangler.toml`.
 - Worker يعتمد في البيع على إسقاطات السعر والتكلفة المنفصلة: `tarek_sale_products`, `tarek_sale_bottle_sizes`, `tarek_products`, `product_costs`, `cost_catalog/store-cost-inputs`, `operational_settings/store`, و`financial_admin/store`، لا على `products`, `bottleSizes` أو `settings/store` القديمة كمصادر موثوقة للبيع.
 - بيع المالك يكتب ذرياً `sales`, و`sale_operations`, و`sale_costs`, و`sale_financials` **وعداد اليوم** مع تحديث المخزون. الإسقاط التشغيلي لا يحتوي التكلفة/الربح/العمولة. كاتبات المنتجات والإعدادات والعبوات تحدّث الإسقاطات المطلوبة مع الحفاظ على المخزون canonical عبر معاملات.
 - POS المالك يستمع إلى `commission_day_counters/{UTC-date}` بدلاً من جمع فواتير اليوم لتسعير العمولة. المعاملة تقارن `commissionCounterGeneration` الحالية وتحدّث العداد مع البيع أو العكس؛ أي generation قديمة أو عداد غير جاهز ترفض البيع قبل الكتابة/خصم المخزون. سجل counter owner-only، والموظف لا يقرأه ولا يكتبه.
 - bootstrap التاريخي للمالك مطلوب مرة عند غياب counter لكل يوم UTC: يقارن سجلّي `sales` و`sale_operations` ويزيل التكرار، ويقبل حتى 5,000 مستند في كل مجموعة؛ البيانات الملتبسة أو الأكبر تغلق المسار. حالياً زر/نداء bootstrap يعمل في معاينة التطوير المحلية فقط، مثل سائر Worker routes؛ لا يوجد مسار bootstrap إنتاجي.
 - POS المالك يرفض الآن عمداً أي فاتورة مؤرخة خارج يوم UTC الحالي؛ لا توجد تهيئة تاريخية آمنة لإعادة ترتيب عمولة الأيام السابقة، لذا هذه القدرة متوقفة fail-closed إلى أن تُصمم وتُختبر.
-- `TarekSafePOS` مركّب في مساحة طارق عند وجود منحة بيع فعالة. يستخدم عقد v3 الذي لا يرسل سعر/تكلفة/ربح/عمولة من العميل، ويطلب quote خادمياً قبل الاعتماد. عميل التطبيق لا يقبل إلا Worker المحلي؛ هذه الواجهة ليست متصلة بإنتاج.
+- `TarekSafePOS` مركّب في مساحة طارق عند وجود منحة بيع فعالة. يستخدم عقد v3 الذي لا يرسل سعر/تكلفة/ربح/عمولة من العميل، ويحصل على Firebase ID token قبل quote/commit. عنوان الخادم يأتي من `VITE_LAMSA_SALE_WORKER_URL` ويحتاج `VITE_LAMSA_SALE_WORKER_ENABLED=true` في build الإنتاج؛ في التطوير لا يقبل إلا Worker المحاكي المحلي. القيم في `.env.example` فارغة/معطّلة، لذلك لا يوجد endpoint إنتاجي في النسخة الحالية.
 - سجل البيع التشغيلي الذي يراه الموظف منفصل عن بيانات التكلفة والمالية. العكس للمالك فقط مع سجل غير حاذف، وقواعد Firestore تمنع الحذف النهائي والتحديثات غير المسموحة.
 
 ## مفاتيح التشغيل المتوقعة مستقبلاً — ليست مفعّلة
 
-يلزم إعداد هذه القيم في بيئة Worker إنتاجية **بعد مراجعة مستقلة وموافقة منفصلة**؛ لا تضفها الآن إلى `wrangler.toml`:
+هذه **مفاتيح إعداد مستقبلية فقط**؛ لا تضفها إلى Cloudflare أو إعداد Pages الآن. يجب أولاً مراجعة الكود وموانع الحصة والقاعدة المسماة، ثم موافقة منفصلة:
 
 ```text
 ENVIRONMENT=production
@@ -29,9 +29,15 @@ FIRESTORE_DATABASE_ID=demo-named-firestore-db
 GCP_SERVICE_ACCOUNT_EMAIL=worker-test-account@demo-gen-project-test.iam.gserviceaccount.com
 GCP_SERVICE_ACCOUNT_PRIVATE_KEY=<Cloudflare runtime secret؛ لم يُنشأ>
 FIRESTORE_PRODUCTION_TRANSPORT_ENABLED=true
+SALE_WORKER_PRODUCTION_ENABLED=true
+CORS_ALLOWED_ORIGIN=https://mohmhran5-jpg.github.io
+
+# Vite build settings; worker URL is a public endpoint, not a secret
+VITE_LAMSA_SALE_WORKER_URL=<Worker HTTPS origin؛ غير معروف/غير منشور>
+VITE_LAMSA_SALE_WORKER_ENABLED=true
 ```
 
-القيمة الحساسة الوحيدة هنا هي المفتاح الخاص؛ يجب أن تكون runtime secret لا ملفاً أو متغيراً مكشوفاً. هذا التنفيذ يتطلب مفتاح حساب خدمة طويل العمر؛ **لم يُنشأ مفتاح**، ولم يُنفذ مسار keyless/Workload Identity Federation. كما أن هذا العلم لا يجيز النشر: يجب مراجعة حارس HTTP وCORS وسياسة المصادقة/المنح على واجهة الإنتاج على نحو منفصل. CORS الحالي يقتصر على `localhost:3000` و`127.0.0.1:3000`، ولا يتضمن نطاق الموقع الحي.
+كل معرّفات المشروع والقاعدة والخدمة أعلاه **اختبارية اصطناعية** وليست إعداداً صالحاً للموقع. المفتاح الخاص وحده سر، ويجب ألا يكون إلا runtime secret؛ **لم يُنشأ مفتاح أو سر** ولم يُنفذ keyless/WIF. عنوان Pages الذي تحققنا منه هو `https://mohmhran5-jpg.github.io`; المسار `/lamsa-perfume-pos-ai-studio/` مسار للموقع ولا يدخل في Origin الخاص بـCORS. الإنتاج يتطلب العلمين، هوية ومشروعاً وقاعدة موثقة، المفتاح، وقيمة Worker URL صحيحة؛ جميعها ما زالت غير مفعّلة. اسم عامل/عنوان حي غير متوفر، ولا يجيز هذا الإعداد النشر.
 
 وفق سياق المهمة، هوية الخدمة أُنشئت وربطت بدور مخصص، لكن ذلك **لم يُتحقق منه عبر Google** في هذه الجلسة. نطاق IAM الموثق للدور:
 
@@ -46,10 +52,10 @@ FIRESTORE_PRODUCTION_TRANSPORT_ENABLED=true
 ## الواجهة وما لا يزال غير مدعوم
 
 - الواجهة الحالية تُظهر منتجاً/عبوة/كمية، عبوة ملوّنة عند إعداد سعر لها، خصماً يدوياً آمناً، أربعة عروض ثابتة، وطرق الدفع: نقدي/بطاقة/محفظة/تحويل. الأسعار تظهر للموظف بعد رد quote فقط.
-- **ليست حية:** endpoint ثابت محلي (`127.0.0.1:8787`)، العلم `VITE_PREVIEW_SAFE_MODE` لا يفعّل إلا معاينة التطوير؛ لا توجد قيمة Worker إنتاجية في العميل ولا CORS للموقع الحي. لذلك لا تعمل مزامنة المبيعات الحية بين المالك وطارق بعد.
+- **ليست حية:** endpoint الإنتاج لا يُقبل إلا كأصل HTTPS مضبوط ومطابق تماماً لإعداد build، مع علم الواجهة صريح؛ الرابط في `.env.example` فارغ والعلم `false`. Worker لا يسمح بـOrigin إلا إذا طابق `CORS_ALLOWED_ORIGIN` حرفياً، وقيمة Pages الحالية أصل مؤكد للقراءة فقط. لا يوجد Worker حي أو سر أو تفعيل إنتاجي؛ لذلك لا تعمل مزامنة المبيعات الحية بين المالك وطارق بعد. كما أن عميل bootstrap التاريخي للمالك لا يزال مقيداً بالمحاكي، ما يمنع تهيئة counter حي بأمان.
 - لا توجد مبيعات جديدة دون اتصال. إذا انقطع الاتصال بعد quote، تُحفظ النية في outbox `localStorage` على هذا المتصفح فقط، وتُعاد المحاولة بنفس معرف الفاتورة بعد عودة الاتصال. هذا يمنع فقدها/تكرارها على الجهاز ضمن شروط المتصفح، لكنه لا يزامن أجهزة متعددة، والتخزين غير مشفر وقد لا يمنع سباق التبويبات في fallback؛ نقلها إلى IndexedDB يحسن المتانة المحلية فقط.
 - غير مدعوم في مسار طارق الآمن: الخلطات/الميكس في الواجهة الحالية، عروض مخصصة، عملاء وCRM، استبدال/كسب نقاط الولاء، بيانات التغليف، تعديل الفاتورة، حذفها، وإحصاءات إعادة شراء الخلطات. لا يجوز تحويل هذه المسارات إلى كتابة عميل مباشرة. عكس الفاتورة للمالك فقط، كتسجيل تدقيق.
-- يلزم كذلك نشر/التحقق من Firebase Google Sign-In، قواعد القاعدة المسماة، منحة بريد طارق، CORS للنطاق الصحيح، وربط التطبيق بعميل Worker إنتاجي؛ لم يُختبر أي منها على الخدمة الحية.
+- يلزم نشر/التحقق من Firebase Google Sign-In، قواعد القاعدة المسماة، منحة بريد طارق، IAM وبيانات الاعتماد، Worker URL، bootstrap المالك، وCORS؛ لم يُختبر أي منها على خدمة حية. إعداد CORS في الكود لا يعني نشره أو تفعيله.
 
 ## مخاطر الحصص المجانية
 
@@ -63,18 +69,18 @@ FIRESTORE_PRODUCTION_TRANSPORT_ENABLED=true
 
 ## نتائج التحقق المحلي الأخيرة
 
-- `npm run test:app-contract`: **26/26**.
-- `npm run test:prototype`: **15/15** تكامل Lamsa Emulator و**15/15** تكامل Worker العام. يتضمن bootstrap التاريخي، stale quote/generation، OAuth RS256/Firestore REST وquote/commit عبر محاكي محلي.
+- `npm run test:app-contract`: **31/31**، ويشمل سياسة origin الدقيقة، استجابة preflight الفعلية، والبوابة المغلقة.
+- `npm run test:prototype`: **31/31** اختبارات عقود Worker و**16/16** تكامل Lamsa Emulator. يتضمن bootstrap التاريخي، stale quote/generation، OAuth RS256/Firestore REST، وعميل Tarek quote/commit وإعادة المحاولة عبر محاكي محلي.
 - التطبيق: `npm run lint` و`npm run build` ناجحان؛ Vite أصدر تحذير حجم chunk أكبر من 500 KiB.
-- `npm run test:security`: **51/51**.
+- `npm run test:security`: **54/54**.
 - `npm run test:firestore`: **143/143** على Emulator، مع اختبار قاعدة التطبيق المسماة في مشروع تجريبي، وتحقق من owner counter update ورفض generation قديمة.
 
-كل النتائج محلية ومصطنعة؛ لا تثبت IAM أو CORS أو المصادقة أو الحصص الحية، ولا تعني أن الموقع يعمل بمزامنة طارق.
+كل النتائج محلية ومصطنعة؛ اختبارات CORS تختبر السياسة البرمجية فقط. لا تثبت IAM أو OAuth أو المصادقة أو الحصص الحية، ولا تعني أن الموقع يعمل بمزامنة طارق.
 
 ## ما يلزم قبل النشر
 
 1. مراجعة diff المحلي، خصوصاً `src/index.mjs`, `src/googleServiceAccountAuth.mjs`, `src/productionConfig.mjs`, `src/lamsaSaleWorker.mjs`, `components/TarekSafePOS.tsx`, `services/workerSaleClient.ts`، وتغييرات اختبارات Emulator.
 2. مراجعة موانع العداد: تصميم bootstrap إنتاجي بعد الموافقة، وسقف الـ5,000 سجل، وتعريف يوم العمل UTC مقابل القاهرة، مع خطة احتفاظ بوثائق quote وقياس CPU/requests/reads/writes دون تشغيل إنتاجي.
 3. حسم تعارض الوضوح في الوثائق حول قاعدة Firestore المسماة؛ صفحة pricing تقول إنها غير مؤهلة للحصة المجانية. إذا كان شرط عدم تفعيل billing ثابتاً، يلزم قرار مستقل بشأن قاعدة `(default)` ومدى توافقها مع البيانات الفعلية قبل أي تغيير.
-4. مراجعة خيار الاعتماد على المفتاح الخاص؛ لم يُنشأ. ثم إقرار صريح مستقل قبل إضافة Cloudflare secret أو فتح routes أو تغيير CORS أو الربط والنشر.
+4. إكمال مسار bootstrap إنتاجي للمالك وفحصه على محاكي قبل اعتباره جاهزاً؛ النسخة الحالية تقصر bootstrap على المحاكي. لا يُنشأ مفتاح أو secret قبل مراجعة البديل والموافقة.
 5. بعد مراجعة المخرجات والحمولة الدقيقة، طلب موافقة منفصلة على أي تغيير حي. لا نشر أو تغيير حي حدث هنا.

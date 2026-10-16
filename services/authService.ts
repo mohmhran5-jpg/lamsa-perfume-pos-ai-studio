@@ -77,7 +77,7 @@ export function canViewCosts(user: AppUser | null): boolean {
   return canAccessSeparatedCostData(user, auth.currentUser);
 }
 
-/** Tarek may read only explicitly separated purchase/operating-cost projections. */
+/** Cost documents are owner-only; Tarek receives sale results without cost fields. */
 export function canViewOperationalCosts(user: AppUser | null): boolean {
   return canAccessSeparatedOperationalCostData(user, auth.currentUser)
     && (isAuthorizedOwnerProfile(user, auth.currentUser)

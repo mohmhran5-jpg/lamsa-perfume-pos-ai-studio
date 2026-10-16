@@ -5,7 +5,7 @@
   "scripts": {
     "emulator": "firebase emulators:start --project demo-worker-sale --only firestore --config firebase.json --non-interactive",
     "worker": "wrangler dev --local --ip 127.0.0.1 --port 8787",
-    "test:app-contract": "node --experimental-strip-types --test tests/lamsa-contract.test.mjs tests/firestore-path.test.mjs tests/production-firestore-auth.test.mjs tests/pricing-parity.test.mjs",
+    "test:app-contract": "node --experimental-strip-types --test tests/lamsa-contract.test.mjs tests/firestore-path.test.mjs tests/production-firestore-auth.test.mjs tests/worker-runtime-policy.test.mjs tests/pricing-parity.test.mjs",
     "test:prototype": "npm run test:app-contract && node scripts/run-local-tests.mjs"
   },
   "dependencies": {

@@ -27,7 +27,15 @@ import {
   projectOperationalStoreSettings,
   projectFinancialAdminSettings,
   projectTarekSaleProduct,
+  projectTarekProductCostDTO,
 } from '../services/separatedDataModel.ts';
+import {
+  OwnerPrivateSessionGate,
+  OWNER_PRIVATE_CACHE_KEYS,
+  cancelPendingOwnerPrivateCacheWrites,
+  persistOwnerPrivateCache,
+  readOwnerPrivateCache,
+} from '../services/ownerPrivateSession.ts';
 
 const readProjectFile = (relativePath) =>
   readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -45,6 +53,70 @@ const verifiedTarek = {
   isAnonymous: false,
   signInProvider: 'google.com',
 };
+
+test('shared browser owner logout then Tarek login clears private memory, blocks private cache reads, and preserves the legacy sale queue', () => {
+  const legacyQueue = [{ id: 'legacy-sale-1', entityType: 'sale', payload: { id: 'legacy-sale-1' } }];
+  const storage = new Map([
+    ['lamsa_vaults_v1', JSON.stringify([{ id: 'vault-secret', balance: 25000 }])],
+    ['lamsa_sales', JSON.stringify([{ id: 'sale-private', totalProfit: 999 }])],
+    ['lamsa_offline_queue_v1', JSON.stringify(legacyQueue)],
+  ]);
+  let reads = 0;
+  let writes = 0;
+  const reader = (key, fallback) => {
+    reads += 1;
+    const raw = storage.get(key);
+    return raw === undefined ? fallback : JSON.parse(raw);
+  };
+  const writer = (key, value) => {
+    writes += 1;
+    storage.set(key, JSON.stringify(value));
+  };
+  const gate = new OwnerPrivateSessionGate();
+  let privateMemory = { vaults: [], sales: [] };
+
+  const ownerGeneration = gate.beginIdentityTransition();
+  assert.equal(gate.authorizeVerifiedOwner('owner-uid', ownerGeneration), true);
+  privateMemory = {
+    vaults: readOwnerPrivateCache(gate, ownerGeneration, 'lamsa_vaults_v1', [], reader),
+    sales: readOwnerPrivateCache(gate, ownerGeneration, 'lamsa_sales', [], reader),
+  };
+  assert.equal(privateMemory.vaults[0].balance, 25000);
+  assert.equal(privateMemory.sales[0].totalProfit, 999);
+  assert.equal(persistOwnerPrivateCache(gate, ownerGeneration, 'lamsa_vaults_v1', [], writer), true);
+  assert.equal(writes, 1);
+
+  const transitionGeneration = gate.beginIdentityTransition();
+  privateMemory = { vaults: [], sales: [] };
+  const readsBeforeTarek = reads;
+  assert.deepEqual(readOwnerPrivateCache(gate, transitionGeneration, 'lamsa_vaults_v1', [], reader), []);
+  assert.equal(reads, readsBeforeTarek, 'private storage reader must not run for Tarek');
+  assert.equal(persistOwnerPrivateCache(gate, transitionGeneration, 'lamsa_vaults_v1', ['forbidden'], writer), false);
+  assert.deepEqual(privateMemory, { vaults: [], sales: [] });
+
+  const tarekGeneration = gate.beginIdentityTransition();
+  assert.equal(gate.isAuthorized(tarekGeneration), false);
+  assert.deepEqual(readOwnerPrivateCache(gate, tarekGeneration, 'lamsa_sales', [], reader), []);
+  const cancelledKeys = [];
+  cancelPendingOwnerPrivateCacheWrites((key) => cancelledKeys.push(key));
+  assert.ok(OWNER_PRIVATE_CACHE_KEYS.includes('lamsa_vaults_v1'));
+  assert.equal(cancelledKeys.includes('lamsa_offline_queue_v1'), false);
+  assert.equal(storage.get('lamsa_offline_queue_v1'), JSON.stringify(legacyQueue));
+  assert.equal(writes, 1, 'no private write is scheduled after revocation');
+});
+
+test('App defers owner-private cache hydration until verified owner and clears it before auth account transitions', async () => {
+  const app = await readProjectFile('App.tsx');
+  const authorizeIndex = app.indexOf('authorizeVerifiedOwner(firebaseUser.uid, sessionGeneration)');
+  const hydrateIndex = app.indexOf('hydrateOwnerPrivateTransientState(firebaseUser.uid, sessionGeneration)');
+  assert.ok(authorizeIndex >= 0 && hydrateIndex > authorizeIndex);
+  assert.match(app, /const clearOwnerPrivateTransientState = \(\) => \{[\s\S]*?cancelPendingOwnerPrivateCacheWrites\(\);[\s\S]*?setExpenses\(\[\]\);[\s\S]*?setVaults\(\[\]\);/);
+  assert.match(app, /const validateFirebaseUser = async \(firebaseUser: User \| null\) => \{[\s\S]*?beginIdentityTransition\(\);[\s\S]*?clearOwnerPrivateTransientState\(\);/);
+  assert.match(app, /const handleLogout = async \(\) => \{[\s\S]*?beginIdentityTransition\(\);[\s\S]*?clearOwnerPrivateTransientState\(\);[\s\S]*?await signOutFirebase\(\)/);
+  assert.match(app, /const \[sales, setSales\] = useState<Sale\[]>\(\[\]\)/);
+  assert.match(app, /const \[vaults, setVaults\] = useState<FinancialVault\[]>\(\[\]\)/);
+  assert.doesNotMatch(app, /useState<(?:Sale|Expense|FinancialVault)\[\]>\(\(\) => loadDataSync/);
+});
 
 test('verified Firebase owner identity is accepted case-insensitively', () => {
   assert.equal(isVerifiedOwnerIdentity(verifiedOwner), true);
@@ -104,13 +176,36 @@ test('a locally changed OWNER role cannot create access without verified owner i
   assert.equal(isAuthorizedTarekProfile({ role: 'OWNER', isActive: true }, verifiedTarek), false);
 });
 
-test('Tarek may access operational cost projections, but raw financial cost access remains owner-only', () => {
+test('Tarek may read only operational product cost while broad financial cost data remains owner-only', async () => {
   const tarekProfile = { role: 'STORE_MANAGER', isActive: true };
   assert.equal(canAccessSeparatedOperationalCostData(tarekProfile, verifiedTarek), true);
   assert.equal(canAccessSeparatedCostData(tarekProfile, verifiedTarek), false);
+  const typesSource = await readProjectFile('types.ts');
+  const tarekBlockStart = typesSource.indexOf('export const TAREK_OPERATIONAL_PERMISSIONS');
+  assert.notEqual(tarekBlockStart, -1);
+  const tarekBlockEnd = typesSource.indexOf('\n};', tarekBlockStart);
+  const tarekPermissions = typesSource.slice(tarekBlockStart, tarekBlockEnd === -1 ? undefined : tarekBlockEnd);
+  assert.match(tarekPermissions, /canViewOperationalCosts:\s*true/);
   assert.equal(canAccessSeparatedOperationalCostData({ role: 'STORE_MANAGER', isActive: true }, verifiedOwner), false);
   assert.equal(canAccessSeparatedOperationalCostData({ role: 'OWNER', isActive: true }, verifiedTarek), false);
+  assert.equal(canAccessSeparatedOperationalCostData(tarekProfile, { ...verifiedTarek, email: 'someone-else@example.com' }, {
+    email: 'someone-else@example.com', role: 'INVENTORY_VIEWER', active: true,
+  }), false);
+  assert.equal(canAccessSeparatedOperationalCostData(tarekProfile, { ...verifiedTarek, email: 'manager@example.com' }, {
+    email: 'manager@example.com', role: 'STORE_MANAGER', active: true,
+  }), true);
   assert.equal(canAccessSeparatedCostData({ role: 'OWNER', isActive: true }, verifiedOwner), true);
+});
+
+test('Tarek workspace subscribes only to an allowlisted product cost DTO, not broad financial collections', async () => {
+  const workspaceSource = await readProjectFile('services/tarekWorkspaceService.ts');
+  assert.match(workspaceSource, /collection\(db, 'tarek_operational_costs'\)/);
+  assert.match(workspaceSource, /projectTarekProductCostDTO/);
+  assert.doesNotMatch(workspaceSource, /cost_catalog|mix_costs|sale_costs|sale_financials|financial_admin|totalProfit|commissionAmount/);
+  const componentSource = await readProjectFile('components/TarekReadOnlyWorkspace.tsx');
+  assert.match(componentSource, /data\.permissions\.canViewOperationalCosts/);
+  assert.match(componentSource, /تكلفة الجرام التشغيلية/);
+  assert.doesNotMatch(componentSource, /cost_catalog|sale_costs|financial_admin|officialCostEgp|bottleCostEgp|commissionAmount|totalProfit/);
 });
 
 test('explicit projections keep operational product and sale documents free of cost and profit fields', () => {
@@ -136,9 +231,17 @@ test('explicit projections keep operational product and sale documents free of c
     }],
   };
   const operationalProduct = projectOperationalProduct(product);
+  const tarekStockProduct = projectTarekProduct(product);
+  const tarekSaleProduct = projectTarekSaleProduct(product);
+  const keysDeep = (value) => value && typeof value === 'object'
+    ? Object.entries(value).flatMap(([key, nested]) => [key, ...keysDeep(nested)])
+    : [];
+  const forbiddenEmployeeFields = /(cost|profit|margin|commission|budget|financial|vault|expense|withdrawal|salary|payroll|capital|balance|settings)/i;
   const productCosts = projectProductCost(product);
   assert.equal(operationalProduct.id, '17');
   assert.equal(operationalProduct.customSellingPriceOverride, 125);
+  assert.deepEqual(keysDeep(tarekStockProduct).filter((key) => forbiddenEmployeeFields.test(key)), []);
+  assert.deepEqual(keysDeep(tarekSaleProduct).filter((key) => forbiddenEmployeeFields.test(key)), []);
   assert.equal(productCosts.customGramCostEgp, 12);
 
   const sale = {
@@ -173,13 +276,10 @@ test('explicit projections keep operational product and sale documents free of c
   const operationalSale = projectOperationalSale(sale);
   const saleCosts = projectSaleCosts(sale);
   const saleFinancials = projectSaleFinancials(sale);
-  const keysDeep = (value) => value && typeof value === 'object'
-    ? Object.entries(value).flatMap(([key, nested]) => [key, ...keysDeep(nested)])
-    : [];
   assert.equal(operationalSale.totalPrice, 125);
   assert.equal(operationalSale.items[0].sellingPrice, 125);
-  assert.deepEqual(keysDeep(operationalProduct).filter((key) => /(cost|profit|margin|commission)/i.test(key)), []);
-  assert.deepEqual(keysDeep(operationalSale).filter((key) => /(cost|profit|margin|commission)/i.test(key)), []);
+  assert.deepEqual(keysDeep(operationalProduct).filter((key) => forbiddenEmployeeFields.test(key)), []);
+  assert.deepEqual(keysDeep(operationalSale).filter((key) => forbiddenEmployeeFields.test(key)), []);
   assert.equal(saleCosts.totalCostEgp, 45);
   assert.equal(saleCosts.items[0].components[0].componentOilCostEgp, 40);
   assert.deepEqual(keysDeep(saleCosts).filter((key) => /(profit|margin|commission)/i.test(key)), []);
@@ -323,6 +423,47 @@ test('Tarek product projection contains no selling price, custom cost, margin, o
   assert.equal('commissionRate' in projection, false);
 });
 
+test('operational product-cost DTO exposes only the allowed gram cost and metadata', () => {
+  const cost = projectProductCost({
+    id: 17,
+    customGramCostEgp: 12,
+    updatedAt: '2026-10-16T00:00:00.000Z',
+    normalPrice: 125,
+    customSellingPriceOverride: 130,
+    totalCostEgp: 900,
+    profit: 999,
+    profitMarginPercent: 80,
+    commissionRate: 0.07,
+    monthlyFixedBudget: 15000,
+  });
+  assert.deepEqual(Object.keys(cost).sort(), ['customGramCostEgp', 'productId', 'schemaVersion', 'updatedAt']);
+  assert.equal(cost.productId, '17');
+  assert.equal(cost.customGramCostEgp, 12);
+  assert.deepEqual(Object.keys(cost).filter((key) => /(price|profit|margin|commission|budget|totalCost)/i.test(key)), []);
+});
+
+test('Tarek API DTO strips any extra raw fields and returns only per-gram cost', () => {
+  const dto = projectTarekProductCostDTO({
+    schemaVersion: 1,
+    productId: 'oil-17',
+    customGramCostEgp: 12,
+    updatedAt: '2026-10-16T00:00:00.000Z',
+    sellingPrice: 125,
+    profit: 999,
+    marginPercent: 88,
+    commissionAmount: 44,
+    monthlyBudget: 15000,
+    employeeSalary: 1000,
+  }, 'fallback-id');
+  assert.deepEqual(dto, {
+    schemaVersion: 1,
+    productId: 'oil-17',
+    customGramCostEgp: 12,
+    updatedAt: '2026-10-16T00:00:00.000Z',
+  });
+  assert.deepEqual(Object.keys(dto).filter((key) => /(profit|margin|commission|budget|salary|price)/i.test(key)), []);
+});
+
 test('Tarek sale catalogue carries only identity and active state, never owner price overrides or costs', () => {
   const product = projectTarekSaleProduct({
     id: 'safe-product', name: 'عطر', brand: 'اختبار', origin: 'محلي',
@@ -336,25 +477,35 @@ test('Tarek sale catalogue carries only identity and active state, never owner p
   }
 });
 
-test('Tarek workspace isolates the legacy POS and only exposes the local no-finance v3 sale path to STORE_MANAGER', async () => {
+test('Tarek workspace isolates the legacy POS and exposes only the configured no-finance v3 sale path to STORE_MANAGER', async () => {
   const app = await readProjectFile('App.tsx');
   const view = await readProjectFile('components/TarekReadOnlyWorkspace.tsx');
   const service = await readProjectFile('services/tarekWorkspaceService.ts');
   const safePos = await readProjectFile('components/TarekSafePOS.tsx');
+  const workerClient = await readProjectFile('services/workerSaleClient.ts');
   assert.match(app, /currentUser\.role === 'STORE_MANAGER'[\s\S]*?return <TarekReadOnlyWorkspace/);
   assert.match(view, /data\.permissions\.canCreateSales && <TarekSafePOS/);
   assert.match(service, /assignment\.role === 'STORE_MANAGER'/);
   assert.match(service, /canCreateSales/);
-  assert.match(service, /if \(canViewOperationalCosts\) \{/);
-  assert.match(view, /data\.permissions\.canViewOperationalCosts &&/);
-  assert.match(safePos, /quoteTarekSaleToLocalEmulatorWorker/);
+  assert.match(service, /collection\(db, 'tarek_operational_costs'\)/);
+  assert.match(service, /canViewOperationalCosts/);
+  assert.match(service, /productCosts/);
+  assert.doesNotMatch(service, /cost_catalog|mix_costs|sale_costs|sale_financials|financial_admin|totalProfit|commissionAmount/);
+  assert.match(view, /data\.permissions\.canViewOperationalCosts/);
+  assert.match(view, /تكلفة الجرام التشغيلية/);
+  assert.doesNotMatch(view, /cost_catalog|mix_costs|sale_costs|financial_admin|officialCostEgp|bottleCostEgp|commissionAmount|totalProfit/);
+  assert.match(view, /استنتاج هامش تقريبي/);
+  assert.match(safePos, /getConfiguredTarekSaleWorkerEndpoint/);
+  assert.match(safePos, /quoteTarekSaleToWorker/);
+  assert.match(safePos, /submitTarekSaleIntentToWorker/);
   assert.match(safePos, /enqueueTarekSale/);
-  assert.match(safePos, /LOCAL_LAMSA_SALE_ENDPOINT/);
   assert.match(safePos, /VITE_PREVIEW_SAFE_MODE/);
   assert.match(safePos, /addEventListener\('offline', updateOnlineState\)/);
-  assert.match(safePos, /if \(localWorkerUsable && getTarekSaleOutbox\(\)\.length > 0\) flush\(\)/);
+  assert.match(safePos, /if \(saleWorkerUsable && getTarekSaleOutbox\(\)\.length > 0\) flush\(\)/);
   assert.match(safePos, /typeof navigator === 'undefined' \|\| !navigator\.onLine/);
-  assert.match(safePos, /هذا مسار تطوير محلي فقط/);
+  assert.match(workerClient, /VITE_LAMSA_SALE_WORKER_ENABLED/);
+  assert.match(workerClient, /VITE_LAMSA_SALE_WORKER_URL/);
+  assert.doesNotMatch(safePos, /LOCAL_LAMSA_SALE_ENDPOINT/);
   assert.doesNotMatch(view, /<POS|onCompleteSale|onSaleComplete/);
   assert.doesNotMatch(safePos, /requestedUnitPriceEgp|previewUnitCostEgp|totalProfit|commissionAmount/);
   assert.doesNotMatch(service, /setDoc|updateDoc|writeBatch|runTransaction|httpsCallable/);
@@ -373,7 +524,7 @@ test('owner product, bottle, and settings saves refresh the Worker projections t
   );
   assert.match(productWriter, /await runTransaction\(db/);
   assert.match(productWriter, /stockDeltas\.get\(id\)/);
-  for (const projection of ['productOperations', 'productCosts', 'tarekProducts', 'tarekSaleProducts']) {
+  for (const projection of ['productOperations', 'productCosts', 'tarekOperationalCosts', 'tarekProducts', 'tarekSaleProducts']) {
     assert.match(productWriter, new RegExp(`SEPARATED_COLLECTIONS\\.${projection}`));
   }
   for (const projection of ['operationalSettings', 'costCatalog', 'financialAdmin', 'tarekSaleBottleSizes']) {
@@ -385,6 +536,22 @@ test('owner product, bottle, and settings saves refresh the Worker projections t
   assert.match(app, /seedProductsCloud\(next, stockDeltas\)/);
 });
 
+test('employee-safe cost backfill is owner-gated, marker-backed, and runs only for live product snapshots', async () => {
+  const firebase = await readProjectFile('services/firebase.ts');
+  const bootstrap = firebase.slice(
+    firebase.indexOf('export async function ensureTarekOperationalCostProjections'),
+    firebase.indexOf('export const subscribeToProducts'),
+  );
+  assert.match(bootstrap, /await requireOwnerAuth\(\)/);
+  assert.match(bootstrap, /getDocFromServer\(markerRef\)/);
+  assert.match(bootstrap, /marker\.data\(\)\.status === 'ready'/);
+  assert.match(bootstrap, /const chunkSize = 450/);
+  assert.match(bootstrap, /projectProductCost\(product\)/);
+  assert.match(bootstrap, /SEPARATED_COLLECTIONS\.tarekOperationalCosts/);
+  assert.match(firebase, /productFreshness === 'live'[\s\S]*?ensureTarekOperationalCostProjections\(baseProducts\)/);
+  assert.match(firebase, /markTarekOperationalCostsBootstrapReady\(products\.length\)/);
+});
+
 test('Firestore rules require verified Google identity and default-deny every unlisted path', async () => {
   const rules = await readProjectFile('firestore.rules');
   assert.match(rules, /isVerifiedGoogleEmail\('moh\.mhran@gmail\.com'\)/);
@@ -394,6 +561,8 @@ test('Firestore rules require verified Google identity and default-deny every un
   assert.match(rules, /match \/\{document=\*\*\}[\s\S]*allow read, write: if false;/);
   assert.doesNotMatch(rules, /allow\s+(?:read|write|read\s*,\s*write)\s*:\s*true/);
   assert.match(rules, /match \/sale_costs\/\{documentId\}[\s\S]*allow read, write: if isVerifiedOwner\(\);/);
+  assert.match(rules, /match \/product_costs\/\{documentId\}[\s\S]*allow read: if isVerifiedOwner\(\);/);
+  assert.match(rules, /match \/tarek_operational_costs\/\{documentId\}[\s\S]*allow read: if canReadOperationalCosts\(\);[\s\S]*validTarekProductCost\(request\.resource\.data\)/);
 });
 
 test('Tarek has a small safe-view allowlist and no legacy reports or commission/budget pages', async () => {

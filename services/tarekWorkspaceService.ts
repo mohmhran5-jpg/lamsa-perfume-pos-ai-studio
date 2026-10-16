@@ -12,9 +12,8 @@ import {
   getCurrentFirebaseRoleAssignment,
   TAREK_AUTH_EMAIL,
 } from './authPolicy';
+import { projectTarekProductCostDTO } from './separatedDataModel';
 import type {
-  BottleSizeCostRecord,
-  CostPolicySettings,
   OperationalSaleRecord,
   ProductCostRecord,
   TarekOperationalProduct,
@@ -22,16 +21,9 @@ import type {
   TarekSaleProduct,
 } from './separatedDataModel';
 
-export interface TarekCostCatalog {
-  schemaVersion?: number;
-  costPolicy?: Partial<CostPolicySettings>;
-  bottleSizes?: BottleSizeCostRecord[];
-}
-
 export interface TarekWorkspaceData {
   products: TarekOperationalProduct[];
   productCosts: ProductCostRecord[];
-  costCatalog: TarekCostCatalog | null;
   sales: OperationalSaleRecord[];
   saleProducts: TarekSaleProduct[];
   saleBottleSizes: TarekSaleBottleSize[];
@@ -47,7 +39,6 @@ export interface TarekWorkspaceData {
 const emptyData: TarekWorkspaceData = {
   products: [],
   productCosts: [],
-  costCatalog: null,
   sales: [],
   saleProducts: [],
   saleBottleSizes: [],
@@ -67,9 +58,9 @@ export async function subscribeToTarekWorkspace(
   const canViewStock = Boolean(isLegacyTarek
     || (assignment?.active === true
       && (assignment.role === 'INVENTORY_VIEWER' || assignment.role === 'STORE_MANAGER')));
-  const canViewOperationalCosts = Boolean(isLegacyTarek
-    || (assignment?.active === true && assignment.role === 'STORE_MANAGER'));
   const canViewOperationalSales = Boolean(isLegacyTarek
+    || (assignment?.active === true && assignment.role === 'STORE_MANAGER'));
+  const canViewOperationalCosts = Boolean(isLegacyTarek
     || (assignment?.active === true && assignment.role === 'STORE_MANAGER'));
   const canCreateSales = Boolean(assignment?.active === true && assignment.role === 'STORE_MANAGER');
 
@@ -77,7 +68,6 @@ export async function subscribeToTarekWorkspace(
 
   let products = emptyData.products;
   let productCosts = emptyData.productCosts;
-  let costCatalog = emptyData.costCatalog;
   let sales = emptyData.sales;
   let saleProducts = emptyData.saleProducts;
   let saleBottleSizes = emptyData.saleBottleSizes;
@@ -86,7 +76,6 @@ export async function subscribeToTarekWorkspace(
   const publish = () => onUpdate({
     products,
     productCosts,
-    costCatalog,
     sales,
     saleProducts,
     saleBottleSizes,
@@ -107,6 +96,20 @@ export async function subscribeToTarekWorkspace(
     },
     reportError,
   ));
+
+  if (canViewOperationalCosts) {
+    subscriptions.push(onSnapshot(
+      query(collection(db, 'tarek_operational_costs'), limit(500)),
+      (snapshot) => {
+        productCosts = snapshot.docs.flatMap((item) => {
+          const cost = projectTarekProductCostDTO(item.data(), item.id);
+          return cost ? [cost] : [];
+        });
+        publish();
+      },
+      reportError,
+    ));
+  }
 
   if (canViewOperationalSales) {
     subscriptions.push(onSnapshot(
@@ -143,28 +146,6 @@ export async function subscribeToTarekWorkspace(
           id: item.id,
         }) as TarekSaleBottleSize);
         saleBottleSnapshotReady = true;
-        publish();
-      },
-      reportError,
-    ));
-  }
-
-  if (canViewOperationalCosts) {
-    subscriptions.push(onSnapshot(
-      query(collection(db, 'product_costs'), limit(500)),
-      (snapshot) => {
-        productCosts = snapshot.docs.map((item) => ({
-          ...item.data(),
-          productId: item.id,
-        }) as ProductCostRecord);
-        publish();
-      },
-      reportError,
-    ));
-    subscriptions.push(onSnapshot(
-      doc(db, 'cost_catalog', 'store-cost-inputs'),
-      (snapshot) => {
-        costCatalog = snapshot.exists() ? snapshot.data() as TarekCostCatalog : null;
         publish();
       },
       reportError,

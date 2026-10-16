@@ -65,6 +65,7 @@ export async function saveSeparatedProductCloud(product: Product): Promise<void>
     transaction.set(operationRef, cleanForFirestore(projectOperationalProduct(currentProduct)));
     transaction.set(tarekRef, cleanForFirestore(projectTarekProduct(currentProduct)));
     transaction.set(doc(db, SEPARATED_COLLECTIONS.productCosts, id), cleanForFirestore(projectProductCost(product)));
+    transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekOperationalCosts, id), cleanForFirestore(projectProductCost(product)));
     transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekSaleProducts, id), cleanForFirestore(projectTarekSaleProduct(product)));
   });
 }
@@ -202,6 +203,7 @@ export async function prepareTarekReadOnlyCatalogCloud(): Promise<{
         transaction.set(tarekRef, cleanForFirestore(projectTarekProduct(projectedProduct)));
         transaction.set(operationRef, cleanForFirestore(projectOperationalProduct(projectedProduct)));
         transaction.set(doc(db, SEPARATED_COLLECTIONS.productCosts, id), cleanForFirestore(projectProductCost(product)));
+        transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekOperationalCosts, id), cleanForFirestore(projectProductCost(product)));
         transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekSaleProducts, id), cleanForFirestore(projectTarekSaleProduct(product)));
       }
     });

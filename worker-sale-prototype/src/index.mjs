@@ -16,6 +16,11 @@ import {
   PRODUCTION_FIRESTORE_PROJECT_ID,
   PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
 } from './productionConfig.mjs';
+import {
+  isAllowedLamsaRequestOrigin,
+  isProductionLamsaRouteEnabled,
+  resolveLamsaCorsOrigin,
+} from './workerRuntimePolicy.mjs';
 
 const MAX_SALE_ITEMS = 100;
 const MAX_MIX_COMPONENTS_PER_LINE = 20;
@@ -23,7 +28,6 @@ const MAX_COMPONENT_USES = 400;
 const MAX_STOCK_DOCS = 400;
 const enc = new TextEncoder();
 const verifyFirebaseIdToken = createFirebaseIdTokenVerifier();
-const LOCAL_CORS_ORIGINS = new Set(['http://127.0.0.1:3000', 'http://localhost:3000']);
 const googleServiceAccountAccessToken = createGoogleServiceAccountTokenProvider({
   expectedServiceAccountEmail: PRODUCTION_FIRESTORE_SERVICE_ACCOUNT,
 });
@@ -43,9 +47,9 @@ function json(data, status = 200) {
   });
 }
 
-function withLocalCors(response, request) {
-  const origin = request.headers.get('origin');
-  if (!origin || !LOCAL_CORS_ORIGINS.has(origin)) return response;
+function withWorkerCors(response, request, env) {
+  const origin = resolveLamsaCorsOrigin(env, request.headers.get('origin'));
+  if (!origin) return response;
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', origin);
   headers.set('access-control-allow-methods', 'POST, OPTIONS');
@@ -94,6 +98,23 @@ export function assertProductionFirestoreConfig(env) {
     throw new ApiError(503, 'prototype/production-transport-not-approved');
   }
   return firestoreDocumentsPath(PRODUCTION_FIRESTORE_PROJECT_ID, PRODUCTION_FIRESTORE_DATABASE_ID);
+}
+
+function assertLamsaRequestAllowed(request, env) {
+  if (env?.ENVIRONMENT === 'local-emulator') {
+    assertEmulatorOnly(env);
+    if (!isAllowedLamsaRequestOrigin(env, request.headers.get('origin'))) {
+      throw new ApiError(403, 'worker/origin-not-allowed');
+    }
+    return;
+  }
+  if (!isProductionLamsaRouteEnabled(env)) {
+    throw new ApiError(503, 'prototype/production-routes-disabled');
+  }
+  assertProductionFirestoreConfig(env);
+  if (!isAllowedLamsaRequestOrigin(env, request.headers.get('origin'))) {
+    throw new ApiError(403, 'worker/origin-not-allowed');
+  }
 }
 
 export function firestoreRoot(env) {
@@ -683,9 +704,15 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/lamsa/sales')
         || url.pathname.startsWith('/api/lamsa/commission-counter'))) {
-      const origin = request.headers.get('origin');
-      if (!origin || !LOCAL_CORS_ORIGINS.has(origin)) return json({ ok: false, error: 'prototype/local-origin-only' }, 403);
-      return withLocalCors(new Response(null, { status: 204 }), request);
+      try {
+        if (!request.headers.get('origin')) throw new ApiError(403, 'worker/origin-not-allowed');
+        assertLamsaRequestAllowed(request, env);
+        return withWorkerCors(new Response(null, { status: 204 }), request, env);
+      } catch (error) {
+        const status = error instanceof ApiError ? error.status : 503;
+        const code = error instanceof ApiError ? error.code : 'worker/request-disabled';
+        return withWorkerCors(json({ ok: false, error: code }, status), request, env);
+      }
     }
     if (request.method === 'GET' && url.pathname === '/health') {
       try { assertEmulatorOnly(env); return json({ ok: true, environment: env.ENVIRONMENT, project: env.PROJECT_ID }); }
@@ -693,48 +720,48 @@ export default {
     }
     if (request.method === 'POST' && url.pathname === '/api/lamsa/commission-counter/bootstrap') {
       try {
-        assertEmulatorOnly(env);
-        return withLocalCors(await handleLamsaCommissionCounterBootstrap(request, env, {
+        assertLamsaRequestAllowed(request, env);
+        return withWorkerCors(await handleLamsaCommissionCounterBootstrap(request, env, {
           authenticate, ...firestoreTransport,
-        }), request);
+        }), request, env);
       } catch (error) {
         const status = error instanceof ApiError ? error.status : (Number.isInteger(error?.status) ? error.status : 502);
         const code = error instanceof ApiError ? error.code : (error?.code || 'sale/commission-counter-unexpected-error');
-        return withLocalCors(json({ ok: false, error: code }, status), request);
+        return withWorkerCors(json({ ok: false, error: code }, status), request, env);
       }
     }
     if (request.method === 'POST' && url.pathname === '/api/lamsa/sales/quote') {
       try {
-        assertEmulatorOnly(env);
+        assertLamsaRequestAllowed(request, env);
         const response = await handleLamsaSaleQuote(request, env, { authenticate, ...firestoreTransport });
-        return withLocalCors(response, request);
+        return withWorkerCors(response, request, env);
       } catch (error) {
         const status = error instanceof ApiError ? error.status : (Number.isInteger(error?.status) ? error.status : 502);
         const code = error instanceof ApiError ? error.code : (error?.code || 'sale/quote-unexpected-error');
-        return withLocalCors(json({ ok: false, error: code }, status), request);
+        return withWorkerCors(json({ ok: false, error: code }, status), request, env);
       }
     }
     if (request.method === 'POST' && url.pathname === '/api/lamsa/sales') {
       try {
-        assertEmulatorOnly(env);
-        return withLocalCors(await handleLamsaSale(request, env, { authenticate, ...firestoreTransport }), request);
+        assertLamsaRequestAllowed(request, env);
+        return withWorkerCors(await handleLamsaSale(request, env, { authenticate, ...firestoreTransport }), request, env);
       } catch (error) {
         const status = error instanceof ApiError ? error.status : (Number.isInteger(error?.status) ? error.status : 502);
         const code = error instanceof ApiError ? error.code : (error?.code || 'sale/unexpected-error');
-        return withLocalCors(json({ ok: false, error: code }, status), request);
+        return withWorkerCors(json({ ok: false, error: code }, status), request, env);
       }
     }
     const lamsaReversal = url.pathname.match(/^\/api\/lamsa\/sales\/([A-Za-z0-9_-]{4,120})\/reverse$/);
     if (request.method === 'POST' && lamsaReversal) {
       try {
-        assertEmulatorOnly(env);
-        return withLocalCors(await handleLamsaSaleReversal(request, lamsaReversal[1], env, {
+        assertLamsaRequestAllowed(request, env);
+        return withWorkerCors(await handleLamsaSaleReversal(request, lamsaReversal[1], env, {
           authenticate, ...firestoreTransport,
-        }), request);
+        }), request, env);
       } catch (error) {
         const status = error instanceof ApiError ? error.status : (Number.isInteger(error?.status) ? error.status : 502);
         const code = error instanceof ApiError ? error.code : (error?.code || 'sale/reversal-unexpected-error');
-        return withLocalCors(json({ ok: false, error: code }, status), request);
+        return withWorkerCors(json({ ok: false, error: code }, status), request, env);
       }
     }
     if (request.method !== 'POST' || url.pathname !== '/api/sales') return json({ error: 'not-found' }, 404);

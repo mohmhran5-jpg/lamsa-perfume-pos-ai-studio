@@ -53,6 +53,8 @@ const ALLOWED_COLLECTIONS = [
   'test',
   'product_operations',
   'product_costs',
+  'tarek_operational_costs',
+  'tarek_operational_costs_meta',
   'mix_operations',
   'mix_costs',
   'sale_operations',
@@ -84,6 +86,17 @@ function validWritePayload(collection, id) {
   if (collection === 'bottleSizes') return { id, sizeMl: 10, essenceGrams: 3, normalPrice: 30, specialPrice: 40 };
   if (collection === 'expenses') return { id, title: 'Test expense', amount: 1, category: 'أخرى', date: '2026-10-15' };
   if (collection === 'settings') return { storeName: 'لمسة عطر', currency: 'ج.م' };
+  if (collection === 'tarek_operational_costs') return {
+    schemaVersion: 1,
+    productId: id,
+    customGramCostEgp: 12,
+  };
+  if (collection === 'tarek_operational_costs_meta') return {
+    schemaVersion: 1,
+    status: 'ready',
+    productCount: 1,
+    updatedAt: '2026-10-17T00:00:00.000Z',
+  };
   return { written: true };
 }
 
@@ -234,6 +247,8 @@ beforeEach(async () => {
     const seededDocuments = ALLOWED_COLLECTIONS.map((collectionName) =>
       setDoc(doc(adminDb, collectionName, 'seed-document'), collectionName === 'sale_operations'
         ? { seeded: true, id: 'seed-document', date: '2026-10-15T10:00:00.000Z', items: [], totalPrice: 0 }
+        : collectionName === 'tarek_operational_costs'
+        ? { schemaVersion: 1, productId: 'seed-product', customGramCostEgp: 12 }
         : { seeded: true }),
     );
     seededDocuments.push(
@@ -366,7 +381,7 @@ test('users with an active operational grant cannot create a redundant access re
   }));
 });
 
-for (const collection of ['sales', 'sale_quotes', 'vaults', 'settings', 'expenses', 'app_users', 'commission_policies', 'commission_day_counters', 'sale_costs', 'sale_financials', 'financial_admin', 'product_operations', 'mix_operations', 'mix_costs', 'operational_settings']) {
+for (const collection of ['sales', 'sale_quotes', 'vaults', 'settings', 'expenses', 'app_users', 'commission_policies', 'commission_day_counters', 'sale_costs', 'sale_financials', 'financial_admin', 'product_operations', 'mix_operations', 'mix_costs', 'operational_settings', 'product_costs', 'cost_catalog', 'tarek_operational_costs_meta']) {
   test(`verified Tarek cannot read sensitive ${collection} records`, async () => {
     await assertFails(getDoc(doc(tarekDb, collection, 'seed-document')));
   });
@@ -381,8 +396,6 @@ const TAREK_OPERATIONAL_READS = [
   'tarek_products',
   'tarek_sale_products',
   'tarek_sale_bottle_sizes',
-  'product_costs',
-  'cost_catalog',
   'sale_operations',
 ];
 
@@ -393,6 +406,43 @@ for (const collection of TAREK_OPERATIONAL_READS) {
     await assertFails(setDoc(doc(tarekDb, collection, 'tarek-write-attempt'), { forgedRole: 'OWNER' }));
   });
 }
+
+test('verified Tarek can list only the separate narrow operational product-cost collection', async () => {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await deleteDoc(doc(context.firestore(), 'tarek_operational_costs', 'seed-document'));
+  });
+  const allowedCost = {
+    schemaVersion: 1,
+    productId: 'oil-safe-cost',
+    customGramCostEgp: 12,
+    updatedAt: '2026-10-16T00:00:00.000Z',
+  };
+  await assertSucceeds(setDoc(doc(ownerDb, 'tarek_operational_costs', 'oil-safe-cost'), allowedCost));
+  const costSnapshot = await assertSucceeds(getDoc(doc(tarekDb, 'tarek_operational_costs', 'oil-safe-cost')));
+  assert.deepEqual(costSnapshot.data(), allowedCost);
+  const safeCostQuery = await assertSucceeds(getDocs(query(collection(tarekDb, 'tarek_operational_costs'), limit(500))));
+  assert.equal(safeCostQuery.size, 1);
+  await assertFails(setDoc(doc(tarekDb, 'tarek_operational_costs', 'tarek-write-attempt'), allowedCost));
+  await assertFails(setDoc(doc(ownerDb, 'tarek_operational_costs', 'unsafe-cost'), {
+    ...allowedCost,
+    totalProfitEgp: 999,
+  }));
+  await assertFails(getDoc(doc(tarekDb, 'product_costs', 'seed-document')));
+  await assertFails(getDoc(doc(tarekDb, 'cost_catalog', 'seed-document')));
+  await assertFails(getDoc(doc(tarekDb, 'mix_costs', 'seed-document')));
+  await assertFails(getDoc(doc(tarekDb, 'sale_costs', 'seed-document')));
+});
+
+test('only legacy Tarek or an active STORE_MANAGER grant receives operational product costs', async () => {
+  const cost = { schemaVersion: 1, productId: 'oil-role-test', customGramCostEgp: 8 };
+  await assertSucceeds(setDoc(doc(ownerDb, 'tarek_operational_costs', 'oil-role-test'), cost));
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'role_assignments', INVENTORY_VIEWER_EMAIL), roleAssignment(INVENTORY_VIEWER_EMAIL, true, 'INVENTORY_VIEWER'));
+    await setDoc(doc(context.firestore(), 'role_assignments', DYNAMIC_MANAGER_EMAIL), roleAssignment(DYNAMIC_MANAGER_EMAIL));
+  });
+  await assertFails(getDoc(doc(inventoryViewerDb, 'tarek_operational_costs', 'oil-role-test')));
+  await assertSucceeds(getDoc(doc(dynamicManagerDb, 'tarek_operational_costs', 'oil-role-test')));
+});
 
 test('verified Tarek can query the ordered operational sale stream used by the workspace', async () => {
   const snapshot = await assertSucceeds(getDocs(query(
@@ -435,11 +485,22 @@ test('the app named-database ID connects to the Emulator and preserves owner-onl
     await assertSucceeds(setDoc(doc(owner.db, 'sale_operations', saleId), operationalSale));
     await assertSucceeds(setDoc(doc(owner.db, 'sale_costs', saleId), { schemaVersion: 1, saleId, totalCostEgp: 10 }));
     await assertSucceeds(setDoc(doc(owner.db, 'sale_financials', saleId), { schemaVersion: 1, saleId, totalProfitEgp: 20 }));
+    await assertSucceeds(setDoc(doc(owner.db, 'product_costs', saleId), { schemaVersion: 1, productId: saleId, customGramCostEgp: 12 }));
+    await assertSucceeds(setDoc(doc(owner.db, 'tarek_operational_costs', saleId), { schemaVersion: 1, productId: saleId, customGramCostEgp: 12 }));
+    await assertSucceeds(setDoc(doc(owner.db, 'cost_catalog', saleId), { schemaVersion: 1, costPolicy: { commissionRate: 0.05 } }));
     const employeeRead = await assertSucceeds(getDoc(doc(tarek.db, 'sale_operations', saleId)));
     assert.equal(employeeRead.data().totalPrice, 30);
     assert.equal('totalCostEgp' in employeeRead.data(), false);
     await assertFails(getDoc(doc(tarek.db, 'sale_costs', saleId)));
     await assertFails(getDoc(doc(tarek.db, 'sale_financials', saleId)));
+    await assertFails(getDoc(doc(tarek.db, 'product_costs', saleId)));
+    const tarekCostRead = await assertSucceeds(getDoc(doc(tarek.db, 'tarek_operational_costs', saleId)));
+    assert.equal(tarekCostRead.data().customGramCostEgp, 12);
+    assert.equal('totalProfitEgp' in tarekCostRead.data(), false);
+    await assertFails(getDoc(doc(tarek.db, 'cost_catalog', saleId)));
+    await assertFails(getDoc(doc(tarek.db, 'commission_day_counters', '2026-10-16')));
+    await assertFails(getDoc(doc(tarek.db, 'financial_admin', 'store')));
+    await assertFails(getDoc(doc(tarek.db, 'operational_settings', 'store')));
     await assertFails(setDoc(doc(tarek.db, 'sale_operations', `forged-${suffix}`), operationalSale));
     await assertFails(getDoc(doc(stranger.db, 'sale_operations', saleId)));
     await assertFails(getDoc(doc(unauthenticated.db, 'sale_operations', saleId)));
@@ -471,7 +532,7 @@ function roleAssignment(email, active = true, role = 'STORE_MANAGER') {
   };
 }
 
-test('any email needs an owner-created grant before it can read operational projections', async () => {
+test('any email needs an owner grant for safe projections; financial collections remain owner-only', async () => {
   await assertFails(getDoc(doc(dynamicManagerDb, 'tarek_products', 'seed-document')));
   await assertFails(getDoc(doc(dynamicManagerDb, 'product_costs', 'seed-document')));
   await assertSucceeds(setDoc(
@@ -480,11 +541,16 @@ test('any email needs an owner-created grant before it can read operational proj
   ));
   assert.equal((await assertSucceeds(getDoc(doc(dynamicManagerDb, 'role_assignments', DYNAMIC_MANAGER_EMAIL)))).data().active, true);
   await assertSucceeds(getDoc(doc(dynamicManagerDb, 'tarek_products', 'seed-document')));
-  await assertSucceeds(getDoc(doc(dynamicManagerDb, 'product_costs', 'seed-document')));
-  await assertSucceeds(getDoc(doc(dynamicManagerDb, 'cost_catalog', 'seed-document')));
   await assertSucceeds(getDoc(doc(dynamicManagerDb, 'sale_operations', 'seed-document')));
   await assertSucceeds(getDoc(doc(dynamicManagerDb, 'tarek_sale_products', 'seed-document')));
   await assertSucceeds(getDoc(doc(dynamicManagerDb, 'tarek_sale_bottle_sizes', 'seed-document')));
+  for (const collectionName of [
+    'product_costs', 'cost_catalog', 'mix_costs', 'sale_costs', 'sale_financials',
+    'commission_day_counters', 'commission_policies', 'financial_admin',
+    'operational_settings', 'vaults', 'expenses', 'settings', 'daily_closures',
+  ]) {
+    await assertFails(getDoc(doc(dynamicManagerDb, collectionName, 'seed-document')));
+  }
   await assertFails(getDoc(doc(dynamicManagerDb, 'products', 'legacy-mixed-product')));
   await assertFails(getDoc(doc(dynamicManagerDb, 'sales', 'legacy-mixed-sale')));
   await assertFails(setDoc(doc(dynamicManagerDb, 'role_assignments', 'victim@example.com'), roleAssignment('victim@example.com')));
@@ -806,6 +872,8 @@ for (const collection of ALLOWED_COLLECTIONS) {
     assert.equal(snapshot.exists(), true);
     const expected = collection === 'sale_operations'
       ? { seeded: true, id: 'seed-document', date: '2026-10-15T10:00:00.000Z', items: [], totalPrice: 0 }
+      : collection === 'tarek_operational_costs'
+      ? { schemaVersion: 1, productId: 'seed-product', customGramCostEgp: 12 }
       : { seeded: true };
     assert.deepEqual(snapshot.data(), expected);
   });

@@ -72,14 +72,19 @@ import {
   LEGACY_SEEDED_BUDGET_EXPENSE_IDS
 } from './types';
 import {
-  persistDataDurable,
-  loadDataSync,
   hydrateFromIndexedDBIfNeeded,
   mergeCollectionRecords,
   addDeletedTombstone,
   removeDeletedTombstone,
   getDeletedTombstones
 } from './services/persistenceService';
+import {
+  OwnerPrivateSessionGate,
+  OWNER_PRIVATE_CACHE_KEYS,
+  cancelPendingOwnerPrivateCacheWrites,
+  persistOwnerPrivateCache,
+  readOwnerPrivateCache,
+} from './services/ownerPrivateSession';
 import {
   enqueueOfflineAction,
   flushPendingSaleQueue,
@@ -380,139 +385,31 @@ const getBrowserLocalDateKey = (date = new Date()): string => {
 };
 
 const App: React.FC = () => {
+  const ownerPrivateSessionRef = useRef(new OwnerPrivateSessionGate());
+  const ownerSessionGeneration = ownerPrivateSessionRef.current.generation;
   const [currentView, setCurrentView] = useState<View>(View.DASHBOARD);
   const [formulationProduct, setFormulationProduct] = useState<Product | null>(null);
 
-  // Bulletproof Persistent State initialization with fallback
-  const [products, setProducts] = useState<Product[]>(() => {
-    return loadDataSync<Product[]>('lamsa_products', INITIAL_PRODUCTS);
-  });
+  // Owner-only caches start empty. They are not read until verified Google-owner auth completes.
+  const [products, setProducts] = useState<Product[]>([]);
 
-  // Sales (preserving all historical records; classifying any legacy system test records as TEST without deleting)
-  const [sales, setSales] = useState<Sale[]>(() => {
-    const parsed = loadDataSync<Sale[]>('lamsa_sales', []);
-    if (Array.isArray(parsed)) {
-      return parsed.map((s) => {
-        const isSystemTest = s.id.startsWith('sale-10') || isTestOrExampleRecord(s);
-        return isSystemTest
-          ? {
-              ...s,
-              dataClassification: 'TEST',
-              isTestData: true,
-              testClassificationNote: s.testClassificationNote || 'TEST / بيانات اختبار',
-            }
-          : {
-              ...s,
-              dataClassification: s.dataClassification || 'PRODUCTION',
-              isTestData: false,
-            };
-      });
-    }
-    return [];
-  });
+  const [sales, setSales] = useState<Sale[]>([]);
 
-  // Expenses (preserving all historical records; classifying legacy seeded budget items as TEST without deleting)
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const parsed = loadDataSync<Expense[]>('lamsa_expenses_v2', INITIAL_EXPENSES);
-    if (Array.isArray(parsed)) {
-      return parsed.map((e) => {
-        const isSeededOrTest = LEGACY_SEEDED_BUDGET_EXPENSE_IDS.has(e.id) || isTestOrExampleRecord(e);
-        return isSeededOrTest
-          ? {
-              ...e,
-              dataClassification: 'TEST',
-              isTestData: true,
-              testClassificationNote: e.testClassificationNote || 'TEST / بيانات اختبار',
-            }
-          : {
-              ...e,
-              dataClassification: e.dataClassification || 'PRODUCTION',
-              isTestData: false,
-            };
-      });
-    }
-    return INITIAL_EXPENSES;
-  });
+  const [expenses, setExpenses] = useState<Expense[]>([]);
 
-  // Store Settings
-  const [settings, setSettings] = useState<StoreSettings>(() => {
-    const parsed = loadDataSync<Partial<StoreSettings>>('lamsa_settings_v2', DEFAULT_SETTINGS);
-    const savedQuickTheme = typeof window !== 'undefined' ? localStorage.getItem('lamsa_active_theme_v1') : null;
+  const [settings, setSettings] = useState<StoreSettings>(DEFAULT_SETTINGS);
 
-    // Explicit Salary Migration Check:
-    // If older salary values were stored (e.g. employee 1500 and owner 10000), update to 1000 and 10500
-    let employeeBaseSalary = parsed.employeeBaseSalary ?? DEFAULT_SETTINGS.employeeBaseSalary;
-    let ownerSalary = parsed.ownerSalary ?? DEFAULT_SETTINGS.ownerSalary;
-    if (employeeBaseSalary === 1500 && (ownerSalary === 10000 || !ownerSalary)) {
-      employeeBaseSalary = 1000;
-      ownerSalary = 10500;
-    } else if (employeeBaseSalary === 1500) {
-      employeeBaseSalary = 1000;
-      ownerSalary = (ownerSalary || 10000) + 500;
-    }
+  const [bottleSizes, setBottleSizes] = useState<BottleSize[]>([]);
 
-    return {
-      ...DEFAULT_SETTINGS,
-      ...parsed,
-      employeeBaseSalary,
-      ownerSalary,
-      customBudgetItems: parsed.customBudgetItems && parsed.customBudgetItems.length > 0 
-        ? parsed.customBudgetItems.map(item => {
-            if (item.id === 'salary_owner' && item.monthlyAmount === 10000) return { ...item, monthlyAmount: 10500, dailyRate: 420 };
-            if (item.id === 'salary_tarek' && item.monthlyAmount === 1500) return { ...item, monthlyAmount: 1000, dailyRate: 40 };
-            return item;
-          })
-        : undefined,
-      activeThemeId: parsed.activeThemeId || savedQuickTheme || DEFAULT_SETTINGS.activeThemeId,
-      themeContrastLevel: parsed.themeContrastLevel || 'ultra_crisp',
-      themeSurfaceStyle: parsed.themeSurfaceStyle || 'neo_precision_2027_glass',
-      siteFontWeight: parsed.siteFontWeight || 'medium',
-      siteFontStrokeWidth: parsed.siteFontStrokeWidth || 'crisp',
-      logoUrl: parsed.logoUrl && parsed.logoUrl.trim() !== '' ? parsed.logoUrl : DEFAULT_SETTINGS.logoUrl,
-      storeSlogan: parsed.storeSlogan && parsed.storeSlogan.trim() !== '' ? parsed.storeSlogan : DEFAULT_SETTINGS.storeSlogan,
-    };
-  });
+  const [vaults, setVaults] = useState<FinancialVault[]>([]);
 
-  // Bottle Sizes
-  const [bottleSizes, setBottleSizes] = useState<BottleSize[]>(() => {
-    const parsed = loadDataSync<BottleSize[]>('lamsa_bottle_sizes_v2', DEFAULT_BOTTLE_SIZES);
-    const has100ml = parsed.some((b: BottleSize) => b.sizeMl === 100);
-    const hasOfficialCost = parsed.some((b: BottleSize) => b.officialCost !== undefined);
-    if (has100ml && hasOfficialCost) {
-      return parsed
-        .filter((b: BottleSize) => b.sizeMl !== 12)
-        .map((b: BottleSize) => {
-          const def = DEFAULT_BOTTLE_SIZES.find(d => d.sizeMl === b.sizeMl && Boolean(d.isRollOn) === Boolean(b.isRollOn));
-          return {
-            ...b,
-            coloredNormalPrice: b.coloredNormalPrice ?? def?.coloredNormalPrice,
-          };
-        });
-    }
-    return DEFAULT_BOTTLE_SIZES;
-  });
+  const [withdrawals, setWithdrawals] = useState<WithdrawalTransaction[]>([]);
 
-  // Financial Vaults
-  const [vaults, setVaults] = useState<FinancialVault[]>(() => {
-    return loadDataSync<FinancialVault[]>('lamsa_vaults_v1', DEFAULT_VAULTS);
-  });
+  const [attendanceRecords, setAttendanceRecords] = useState<StaffAttendanceRecord[]>([]);
 
-  // Withdrawal Transactions
-  const [withdrawals, setWithdrawals] = useState<WithdrawalTransaction[]>(() => {
-    return loadDataSync<WithdrawalTransaction[]>('lamsa_withdrawals_v1', []);
-  });
+  const [batches, setBatches] = useState<ProductionBatch[]>([]);
 
-  const [attendanceRecords, setAttendanceRecords] = useState<StaffAttendanceRecord[]>(() => {
-    return loadDataSync<StaffAttendanceRecord[]>('lamsa_attendance_v1', []);
-  });
-
-  const [batches, setBatches] = useState<ProductionBatch[]>(() => {
-    return loadDataSync<ProductionBatch[]>('lamsa_batches_v1', []);
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>(() => {
-    return loadDataSync<AuditLogRecord[]>('lamsa_audit_logs_v1', []);
-  });
+  const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
   const auditArchiveCursorRef = useRef<AuditLogPageCursor | null>(null);
   const auditArchiveLoadingRef = useRef(false);
   const auditArchiveHasMoreRef = useRef(true);
@@ -521,11 +418,14 @@ const App: React.FC = () => {
   const [isLoadingAllAuditLogs, setIsLoadingAllAuditLogs] = useState(false);
 
   const loadMoreAuditLogs = useCallback(async () => {
+    const generation = ownerPrivateSessionRef.current.generation;
+    if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
     if (auditArchiveLoadingRef.current || !auditArchiveHasMoreRef.current) return;
     auditArchiveLoadingRef.current = true;
     setIsLoadingAuditLogs(true);
     try {
       const page = await loadAuditLogsPage(auditArchiveCursorRef.current);
+      if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
       auditArchiveCursorRef.current = page.nextCursor;
       auditArchiveHasMoreRef.current = page.hasMore;
       setHasMoreAuditLogs(page.hasMore);
@@ -541,6 +441,8 @@ const App: React.FC = () => {
   }, []);
 
   const loadAllAuditLogs = useCallback(async () => {
+    const generation = ownerPrivateSessionRef.current.generation;
+    if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
     if (auditArchiveLoadingRef.current || !auditArchiveHasMoreRef.current) return;
     auditArchiveLoadingRef.current = true;
     setIsLoadingAuditLogs(true);
@@ -548,7 +450,9 @@ const App: React.FC = () => {
     try {
       let hasMore = auditArchiveHasMoreRef.current;
       while (hasMore) {
+        if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
         const page = await loadAuditLogsPage(auditArchiveCursorRef.current);
+        if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
         auditArchiveCursorRef.current = page.nextCursor;
         hasMore = page.hasMore && page.records.length > 0;
         auditArchiveHasMoreRef.current = hasMore;
@@ -577,16 +481,21 @@ const App: React.FC = () => {
   const [tarekCatalogPrepStatus, setTarekCatalogPrepStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    if (authStatus !== 'ready' || authEmail?.trim().toLowerCase() !== 'moh.mhran@gmail.com') return;
+    const generation = ownerPrivateSessionRef.current.generation;
+    if (authStatus !== 'ready' || authEmail?.trim().toLowerCase() !== 'moh.mhran@gmail.com'
+      || !ownerPrivateSessionRef.current.isAuthorized(generation)) return;
     return subscribeToTodaysAuditLogs((cloudAudit) => {
+      if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
       setAuditLogs((existing) => mergeAuditLogRecords(existing, cloudAudit));
     });
-  }, [authStatus, authEmail]);
+  }, [authStatus, authEmail, ownerSessionGeneration]);
 
   useEffect(() => {
-    if (authStatus !== 'ready' || authEmail?.trim().toLowerCase() !== 'moh.mhran@gmail.com') return;
+    const generation = ownerPrivateSessionRef.current.generation;
+    if (authStatus !== 'ready' || authEmail?.trim().toLowerCase() !== 'moh.mhran@gmail.com'
+      || !ownerPrivateSessionRef.current.isAuthorized(generation)) return;
     if (currentView === View.AUDIT_LOGS) void loadMoreAuditLogs();
-  }, [authStatus, authEmail, currentView, loadMoreAuditLogs]);
+  }, [authStatus, authEmail, currentView, loadMoreAuditLogs, ownerSessionGeneration]);
 
   // User profiles are local/application data only; Firebase Auth is the sole identity source.
   const sanitizeUserAccount = (u: AppUser): AppUser => {
@@ -671,20 +580,12 @@ const App: React.FC = () => {
     ];
   };
 
-  const [users, setUsers] = useState<AppUser[]>(() => {
-    try {
-      const saved = localStorage.getItem('lamsa_users_v1');
-      if (saved) {
-        const parsed: AppUser[] = JSON.parse(saved);
-        return ensureCoreUsersList(parsed);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return ensureCoreUsersList(DEFAULT_USERS);
-  });
+  const [users, setUsers] = useState<AppUser[]>([]);
 
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const hasVerifiedOwnerPrivateAccess = ownerPrivateSessionRef.current.isAuthorized(ownerSessionGeneration);
+  const persistOwnerPrivateData = <T,>(storageKey: string, data: T, expectedGeneration = ownerSessionGeneration): boolean =>
+    persistOwnerPrivateCache(ownerPrivateSessionRef.current, expectedGeneration, storageKey, data);
 
   const [dashboardFeedHealth, setDashboardFeedHealth] = useState<DashboardDataSourceHealthMap>(
     createInitialDashboardFeedHealth
@@ -697,6 +598,7 @@ const App: React.FC = () => {
     freshness: SnapshotFreshness | 'restricted',
     data?: DashboardServerData[DashboardDataSourceKey]
   ) => {
+    if (!ownerPrivateSessionRef.current.isAuthorized(ownerSessionGeneration)) return;
     const state = freshness as DashboardDataSourceState;
     setDashboardFeedHealth((previous) => ({
       ...previous,
@@ -708,7 +610,7 @@ const App: React.FC = () => {
     if (state === 'live' && data !== undefined) {
       setDashboardServerData((previous) => ({ ...previous, [key]: data } as DashboardServerData));
     }
-  }, []);
+  }, [ownerSessionGeneration]);
 
   // User roles are derived from verified Firebase Google identity; no local staff impersonation is permitted.
   const [rejectedAttemptsCount, setRejectedAttemptsCount] = useState<number>(0);
@@ -981,27 +883,15 @@ const App: React.FC = () => {
   ]);
 
   // Customers & Loyalty CRM Records (Strictly real customers only — zero virtual/mock customers)
-  const [customCustomers, setCustomCustomers] = useState<CustomCustomerRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('lamsa_custom_customers_v1');
-      if (saved) {
-        const parsed: CustomCustomerRecord[] = JSON.parse(saved);
-        const realOnly = parsed.filter(c => !isVirtualDemoCustomer(c));
-        if (realOnly.length !== parsed.length) {
-          localStorage.setItem('lamsa_custom_customers_v1', JSON.stringify(realOnly));
-        }
-        return realOnly;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return [];
-  });
+  const [customCustomers, setCustomCustomers] = useState<CustomCustomerRecord[]>([]);
   const [preselectedPosCustomer, setPreselectedPosCustomer] = useState<{ name: string; phone: string; autoRedeemLoyalty?: boolean } | null>(null);
 
   const handleSaveCustomCustomer = (record: CustomCustomerRecord) => {
+    const generation = ownerSessionGeneration;
+    if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
     if (isVirtualDemoCustomer(record)) return;
     setCustomCustomers(prev => {
+      if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return prev;
       const idx = prev.findIndex(
         c => (record.phone && c.phone === record.phone) || c.name === record.name
       );
@@ -1013,17 +903,24 @@ const App: React.FC = () => {
         next = [record, ...prev];
       }
       try {
-        localStorage.setItem('lamsa_custom_customers_v1', JSON.stringify(next));
+        if (ownerPrivateSessionRef.current.isAuthorized(generation)) {
+          localStorage.setItem('lamsa_custom_customers_v1', JSON.stringify(next));
+        }
       } catch (e) {
         console.error(e);
       }
       return next;
     });
-    saveCustomCustomerCloud(record).catch(err => console.error('Error saving customer to cloud:', err));
+    if (ownerPrivateSessionRef.current.isAuthorized(generation)) {
+      saveCustomCustomerCloud(record).catch(err => console.error('Error saving customer to cloud:', err));
+    }
   };
 
   const handleDeleteCustomCustomer = (record: Partial<CustomCustomerRecord>) => {
+    const generation = ownerSessionGeneration;
+    if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return;
     setCustomCustomers(prev => {
+      if (!ownerPrivateSessionRef.current.isAuthorized(generation)) return prev;
       const next = prev.filter(
         c =>
           !(
@@ -1032,24 +929,24 @@ const App: React.FC = () => {
           )
       );
       try {
-        localStorage.setItem('lamsa_custom_customers_v1', JSON.stringify(next));
+        if (ownerPrivateSessionRef.current.isAuthorized(generation)) {
+          localStorage.setItem('lamsa_custom_customers_v1', JSON.stringify(next));
+        }
       } catch (e) {
         console.error(e);
       }
       return next;
     });
-    deleteCustomCustomerCloud(record).catch(err => console.error('Error deleting customer from cloud:', err));
+    if (ownerPrivateSessionRef.current.isAuthorized(generation)) {
+      deleteCustomCustomerCloud(record).catch(err => console.error('Error deleting customer from cloud:', err));
+    }
   };
 
   // Saved Perfume Mix Formulas (وصفات الميكسات المحفوظة)
-  const [savedMixes, setSavedMixes] = useState<SavedMixFormula[]>(() => {
-    return loadDataSync<SavedMixFormula[]>('lamsa_saved_mixes_v1', []);
-  });
+  const [savedMixes, setSavedMixes] = useState<SavedMixFormula[]>([]);
 
   // Daily Closures & Day Operations State
-  const [dailyClosures, setDailyClosures] = useState<DailyClosure[]>(() => {
-    return loadDataSync<DailyClosure[]>('lamsa_closures_v1', []);
-  });
+  const [dailyClosures, setDailyClosures] = useState<DailyClosure[]>([]);
   const [isDayOpsModalOpen, setIsDayOpsModalOpen] = useState(false);
   const [isDailyReportAutomationModalOpen, setIsDailyReportAutomationModalOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<
@@ -1057,38 +954,22 @@ const App: React.FC = () => {
   >('pricing');
 
   // Inventory Intelligence: Purchase Requests, Customer Requests, Stock Checks
-  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => {
-    return loadDataSync<PurchaseRequest[]>('lamsa_purchase_requests_v1', []);
-  });
+  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>([]);
 
-  const [customerRequests, setCustomerRequests] = useState<CustomerRequest[]>(() => {
-    return loadDataSync<CustomerRequest[]>('lamsa_customer_requests_v1', []);
-  });
+  const [customerRequests, setCustomerRequests] = useState<CustomerRequest[]>([]);
 
-  const [stockChecks, setStockChecks] = useState<StockCheckRecord[]>(() => {
-    return loadDataSync<StockCheckRecord[]>('lamsa_stock_checks_v1', []);
-  });
+  const [stockChecks, setStockChecks] = useState<StockCheckRecord[]>([]);
 
   // Fragrance Database & Strategic Replenishment Orders State
-  const [fragranceDatabase, setFragranceDatabase] = useState<FragranceDatabaseEntry[]>(() => {
-    return getLocalFragranceDatabase();
-  });
+  const [fragranceDatabase, setFragranceDatabase] = useState<FragranceDatabaseEntry[]>([]);
 
-  const [strategicOrders, setStrategicOrders] = useState<StrategicReplenishmentOrder[]>(() => {
-    return getLocalStrategicOrders();
-  });
+  const [strategicOrders, setStrategicOrders] = useState<StrategicReplenishmentOrder[]>([]);
 
   const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
   const [cloudMessage, setCloudMessage] = useState<string>('المزامنة السحابية غير مؤكدة.');
-  const [queuedSaleCount, setQueuedSaleCount] = useState(() =>
-    getOfflineQueue().filter((item) => item.entityType === 'sale').length
-  );
+  const [queuedSaleCount, setQueuedSaleCount] = useState(0);
   const [saleQueueSyncing, setSaleQueueSyncing] = useState(false);
-  const [saleQueueNotice, setSaleQueueNotice] = useState(() =>
-    getOfflineQueue().some((item) => item.entityType === 'sale')
-      ? 'توجد فواتير محلية بانتظار تأكيد Firestore.'
-      : ''
-  );
+  const [saleQueueNotice, setSaleQueueNotice] = useState('');
   const saleQueueRetryRef = useRef<(() => Promise<SaleFlushResult | null>) | null>(null);
   const [isOwnerLiveRadarOpen, setIsOwnerLiveRadarOpen] = useState<boolean>(false);
   const [isPWAInstallModalOpen, setIsPWAInstallModalOpen] = useState<boolean>(false);
@@ -1096,14 +977,187 @@ const App: React.FC = () => {
   const [deviceFeedStatus, setDeviceFeedStatus] = useState<'connecting' | 'live' | 'cached' | 'error'>('connecting');
   const [deviceFeedLastServerUpdate, setDeviceFeedLastServerUpdate] = useState<number | null>(null);
   const [isConnectedDevicesModalOpen, setIsConnectedDevicesModalOpen] = useState<boolean>(false);
-  const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>(() => {
-    return loadDataSync<OwnerStaffBroadcast[]>('lamsa_owner_broadcasts', []);
-  });
-  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(() => {
-    const cached = loadDataSync<string[]>('lamsa_dismissed_broadcasts_v2', []);
-    return new Set(cached);
-  });
+  const [ownerBroadcasts, setOwnerBroadcasts] = useState<OwnerStaffBroadcast[]>([]);
+  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<Set<string>>(new Set());
   const prevDeviceIdsRef = useRef<Set<string> | null>(null);
+
+  const hydrateOwnerPrivateTransientState = (uid: string, generation: number) => {
+    const gate = ownerPrivateSessionRef.current;
+    if (!gate.isAuthorized(generation, uid)) return;
+    const load = <T,>(storageKey: string, fallback: T): T =>
+      readOwnerPrivateCache(gate, generation, storageKey, fallback);
+
+    const cachedProducts = load<Product[]>('lamsa_products', INITIAL_PRODUCTS);
+    setProducts(Array.isArray(cachedProducts) ? cachedProducts : []);
+
+    const cachedSales = load<Sale[]>('lamsa_sales', []);
+    setSales(Array.isArray(cachedSales) ? cachedSales.map((sale) => {
+      const isSystemTest = sale.id.startsWith('sale-10') || isTestOrExampleRecord(sale);
+      return isSystemTest
+        ? {
+            ...sale,
+            dataClassification: 'TEST',
+            isTestData: true,
+            testClassificationNote: sale.testClassificationNote || 'TEST / بيانات اختبار',
+          }
+        : {
+            ...sale,
+            dataClassification: sale.dataClassification || 'PRODUCTION',
+            isTestData: false,
+          };
+    }) : []);
+
+    const cachedExpenses = load<Expense[]>('lamsa_expenses_v2', INITIAL_EXPENSES);
+    setExpenses(Array.isArray(cachedExpenses) ? cachedExpenses.map((expense) => {
+      const isSeededOrTest = LEGACY_SEEDED_BUDGET_EXPENSE_IDS.has(expense.id) || isTestOrExampleRecord(expense);
+      return isSeededOrTest
+        ? {
+            ...expense,
+            dataClassification: 'TEST',
+            isTestData: true,
+            testClassificationNote: expense.testClassificationNote || 'TEST / بيانات اختبار',
+          }
+        : {
+            ...expense,
+            dataClassification: expense.dataClassification || 'PRODUCTION',
+            isTestData: false,
+          };
+    }) : INITIAL_EXPENSES);
+
+    const parsedSettings = load<Partial<StoreSettings>>('lamsa_settings_v2', DEFAULT_SETTINGS) || DEFAULT_SETTINGS;
+    const savedQuickTheme = load<string | null>('lamsa_active_theme_v1', null);
+    let employeeBaseSalary = parsedSettings.employeeBaseSalary ?? DEFAULT_SETTINGS.employeeBaseSalary;
+    let ownerSalary = parsedSettings.ownerSalary ?? DEFAULT_SETTINGS.ownerSalary;
+    if (employeeBaseSalary === 1500 && (ownerSalary === 10000 || !ownerSalary)) {
+      employeeBaseSalary = 1000;
+      ownerSalary = 10500;
+    } else if (employeeBaseSalary === 1500) {
+      employeeBaseSalary = 1000;
+      ownerSalary = (ownerSalary || 10000) + 500;
+    }
+    setSettings({
+      ...DEFAULT_SETTINGS,
+      ...parsedSettings,
+      employeeBaseSalary,
+      ownerSalary,
+      customBudgetItems: parsedSettings.customBudgetItems && parsedSettings.customBudgetItems.length > 0
+        ? parsedSettings.customBudgetItems.map((item) => {
+            if (item.id === 'salary_owner' && item.monthlyAmount === 10000) return { ...item, monthlyAmount: 10500, dailyRate: 420 };
+            if (item.id === 'salary_tarek' && item.monthlyAmount === 1500) return { ...item, monthlyAmount: 1000, dailyRate: 40 };
+            return item;
+          })
+        : undefined,
+      activeThemeId: parsedSettings.activeThemeId || savedQuickTheme || DEFAULT_SETTINGS.activeThemeId,
+      themeContrastLevel: parsedSettings.themeContrastLevel || 'ultra_crisp',
+      themeSurfaceStyle: parsedSettings.themeSurfaceStyle || 'neo_precision_2027_glass',
+      siteFontWeight: parsedSettings.siteFontWeight || 'medium',
+      siteFontStrokeWidth: parsedSettings.siteFontStrokeWidth || 'crisp',
+      logoUrl: parsedSettings.logoUrl && parsedSettings.logoUrl.trim() !== '' ? parsedSettings.logoUrl : DEFAULT_SETTINGS.logoUrl,
+      storeSlogan: parsedSettings.storeSlogan && parsedSettings.storeSlogan.trim() !== '' ? parsedSettings.storeSlogan : DEFAULT_SETTINGS.storeSlogan,
+    });
+
+    const cachedBottleSizes = load<BottleSize[]>('lamsa_bottle_sizes_v2', DEFAULT_BOTTLE_SIZES);
+    const safeBottleSizes = Array.isArray(cachedBottleSizes) ? cachedBottleSizes : DEFAULT_BOTTLE_SIZES;
+    if (safeBottleSizes.some((size) => size.sizeMl === 100) && safeBottleSizes.some((size) => size.officialCost !== undefined)) {
+      setBottleSizes(safeBottleSizes
+        .filter((size) => size.sizeMl !== 12)
+        .map((size) => {
+          const definition = DEFAULT_BOTTLE_SIZES.find((item) => item.sizeMl === size.sizeMl && Boolean(item.isRollOn) === Boolean(size.isRollOn));
+          return { ...size, coloredNormalPrice: size.coloredNormalPrice ?? definition?.coloredNormalPrice };
+        }));
+    } else {
+      setBottleSizes(DEFAULT_BOTTLE_SIZES);
+    }
+
+    setVaults(load<FinancialVault[]>('lamsa_vaults_v1', DEFAULT_VAULTS));
+    setWithdrawals(load<WithdrawalTransaction[]>('lamsa_withdrawals_v1', []));
+    setAttendanceRecords(load<StaffAttendanceRecord[]>('lamsa_attendance_v1', []));
+    setBatches(load<ProductionBatch[]>('lamsa_batches_v1', []));
+    setAuditLogs(load<AuditLogRecord[]>('lamsa_audit_logs_v1', []));
+    setUsers(ensureCoreUsersList(load<AppUser[]>('lamsa_users_v1', DEFAULT_USERS)));
+
+    const cachedCustomers = load<CustomCustomerRecord[]>('lamsa_custom_customers_v1', []);
+    const realCustomers = Array.isArray(cachedCustomers) ? cachedCustomers.filter((customer) => !isVirtualDemoCustomer(customer)) : [];
+    setCustomCustomers(realCustomers);
+    if (Array.isArray(cachedCustomers) && realCustomers.length !== cachedCustomers.length) {
+      persistOwnerPrivateData('lamsa_custom_customers_v1', realCustomers, generation);
+    }
+
+    setSavedMixes(load<SavedMixFormula[]>('lamsa_saved_mixes_v1', []));
+    setDailyClosures(load<DailyClosure[]>('lamsa_closures_v1', []));
+    setPurchaseRequests(load<PurchaseRequest[]>('lamsa_purchase_requests_v1', []));
+    setCustomerRequests(load<CustomerRequest[]>('lamsa_customer_requests_v1', []));
+    setStockChecks(load<StockCheckRecord[]>('lamsa_stock_checks_v1', []));
+    try { setFragranceDatabase(getLocalFragranceDatabase()); } catch { setFragranceDatabase([]); }
+    try { setStrategicOrders(getLocalStrategicOrders()); } catch { setStrategicOrders([]); }
+    setOwnerBroadcasts(load<OwnerStaffBroadcast[]>('lamsa_owner_broadcasts', []));
+    setDismissedBroadcastIds(new Set(load<string[]>('lamsa_dismissed_broadcasts_v2', [])));
+
+    // The legacy sale outbox is only inspected in the verified owner session; never clear or rewrite it here.
+    const queuedSales = getOfflineQueue().filter((item) => item.entityType === 'sale');
+    setQueuedSaleCount(queuedSales.length);
+    setSaleQueueNotice(queuedSales.length > 0 ? 'توجد فواتير محلية بانتظار تأكيد Firestore.' : '');
+  };
+
+  const clearOwnerPrivateTransientState = () => {
+    cancelPendingOwnerPrivateCacheWrites();
+    setProducts([]);
+    setSales([]);
+    setExpenses([]);
+    setSettings(DEFAULT_SETTINGS);
+    setBottleSizes([]);
+    setVaults([]);
+    setWithdrawals([]);
+    setAttendanceRecords([]);
+    setBatches([]);
+    setAuditLogs([]);
+    setUsers([]);
+    setDashboardFeedHealth(createInitialDashboardFeedHealth());
+    setDashboardServerData(createInitialDashboardServerData());
+    setCustomCustomers([]);
+    setSavedMixes([]);
+    setDailyClosures([]);
+    setPurchaseRequests([]);
+    setCustomerRequests([]);
+    setStockChecks([]);
+    setFragranceDatabase([]);
+    setStrategicOrders([]);
+    setOwnerBroadcasts([]);
+    setDismissedBroadcastIds(new Set());
+    setConnectedDevices([]);
+    setDeviceFeedStatus('connecting');
+    setDeviceFeedLastServerUpdate(null);
+    setQueuedSaleCount(0);
+    setSaleQueueSyncing(false);
+    setSaleQueueNotice('');
+    setTopNotifications([]);
+    setFormulationProduct(null);
+    setPreselectedPosCustomer(null);
+    setPasswordChangeUser(null);
+    setIsOwnerLiveRadarOpen(false);
+    setIsConnectedDevicesModalOpen(false);
+    setIsDayOpsModalOpen(false);
+    setIsDailyReportAutomationModalOpen(false);
+    setIsThemeStudioModalOpen(false);
+    setCurrentView(View.DASHBOARD);
+    setIsScreenLocked(true);
+    auditArchiveCursorRef.current = null;
+    auditArchiveLoadingRef.current = false;
+    auditArchiveHasMoreRef.current = true;
+    isInitialSalesLoadedRef.current = false;
+    knownSaleIdsRef.current.clear();
+    isInitialExpensesLoadedRef.current = false;
+    knownExpenseIdsRef.current.clear();
+    isInitialAttendanceLoadedRef.current = false;
+    knownAttendanceIdsRef.current.clear();
+    isInitialClosuresLoadedRef.current = false;
+    knownClosureIdsRef.current.clear();
+    isInitialWithdrawalsLoadedRef.current = false;
+    knownWithdrawalIdsRef.current.clear();
+    setHasMoreAuditLogs(true);
+    setIsLoadingAuditLogs(false);
+    setIsLoadingAllAuditLogs(false);
+  };
 
   const applyAuthorizedIdentity = (authorized: Awaited<ReturnType<typeof validateAuthorizedAuthUser>>) => {
     setCurrentFirebaseRoleAssignment(authorized.roleAssignment);
@@ -1140,6 +1194,8 @@ const App: React.FC = () => {
 
     const validateFirebaseUser = async (firebaseUser: User | null) => {
       const checkId = ++latestCheck;
+      const sessionGeneration = ownerPrivateSessionRef.current.beginIdentityTransition();
+      clearOwnerPrivateTransientState();
       lastFirebaseUser = firebaseUser;
       if (!firebaseUser) {
         transientAuthFailure = false;
@@ -1159,8 +1215,12 @@ const App: React.FC = () => {
       clearCurrentFirebaseRoleAssignment();
       try {
         const authorized = await validateAuthorizedAuthUser(firebaseUser);
-        if (!active || checkId !== latestCheck) return;
+        if (!active || checkId !== latestCheck || sessionGeneration !== ownerPrivateSessionRef.current.generation) return;
         transientAuthFailure = false;
+        if (authorized.role === 'OWNER') {
+          if (!ownerPrivateSessionRef.current.authorizeVerifiedOwner(firebaseUser.uid, sessionGeneration)) return;
+          hydrateOwnerPrivateTransientState(firebaseUser.uid, sessionGeneration);
+        }
         applyAuthorizedIdentity(authorized);
         setAuthError(null);
         setAuthStatus('ready');
@@ -1195,6 +1255,8 @@ const App: React.FC = () => {
 
     const unsubscribe = onAuthStateChanged(auth, validateFirebaseUser, (error) => {
       if (!active) return;
+      ownerPrivateSessionRef.current.beginIdentityTransition();
+      clearOwnerPrivateTransientState();
       setCurrentUser(null);
       setAuthStatus('error');
       setAuthError(getFirebaseAuthErrorMessage(error));
@@ -1219,6 +1281,8 @@ const App: React.FC = () => {
       window.removeEventListener('focus', retryAuthAfterConnectivityReturns);
       window.removeEventListener('pageshow', retryAuthAfterConnectivityReturns);
       document.removeEventListener('visibilitychange', retryAuthAfterConnectivityReturns);
+      ownerPrivateSessionRef.current.beginIdentityTransition();
+      cancelPendingOwnerPrivateCacheWrites();
       clearCurrentFirebaseRoleAssignment();
     };
   }, []);
@@ -1257,7 +1321,9 @@ const App: React.FC = () => {
 
   // Real-time synchronization across all devices via Firestore onSnapshot
   useEffect(() => {
-    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') {
+    const gate = ownerPrivateSessionRef.current;
+    const generation = ownerSessionGeneration;
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER' || !gate.isAuthorized(generation)) {
       if (authStatus === 'ready') {
         const restricted = createInitialDashboardFeedHealth();
         (Object.keys(restricted) as DashboardDataSourceKey[]).forEach((key) => {
@@ -1274,10 +1340,11 @@ const App: React.FC = () => {
     setDashboardFeedHealth(createInitialDashboardFeedHealth());
     setDashboardServerData(createInitialDashboardServerData());
     let active = true;
+    const isCurrentOwnerSession = () => active && gate.isAuthorized(generation);
     setIsCloudConnected(false);
     setCloudMessage('جارٍ التحقق من اتصال Firestore…');
     void testFirestoreConnection().then((connected) => {
-      if (!active) return;
+      if (!isCurrentOwnerSession()) return;
       setIsCloudConnected(connected);
       setCloudMessage(connected
         ? 'اتصال Firestore مؤكد الآن.'
@@ -1286,24 +1353,25 @@ const App: React.FC = () => {
 
     // Hydrate from IndexedDB on startup if localStorage was reset or cleared
     hydrateFromIndexedDBIfNeeded<Product[]>('lamsa_products', (restored) => {
-      if (restored && restored.length > 0) setProducts(restored);
-    }, 'products');
+      if (isCurrentOwnerSession() && restored && restored.length > 0) setProducts(restored);
+    }, 'products', isCurrentOwnerSession);
     hydrateFromIndexedDBIfNeeded<Sale[]>('lamsa_sales', (restored) => {
-      if (restored && restored.length > 0) setSales(restored);
-    }, 'sales');
+      if (isCurrentOwnerSession() && restored && restored.length > 0) setSales(restored);
+    }, 'sales', isCurrentOwnerSession);
     hydrateFromIndexedDBIfNeeded<Expense[]>('lamsa_expenses_v2', (restored) => {
-      if (restored && restored.length > 0) setExpenses(restored);
-    }, 'expenses');
+      if (isCurrentOwnerSession() && restored && restored.length > 0) setExpenses(restored);
+    }, 'expenses', isCurrentOwnerSession);
     hydrateFromIndexedDBIfNeeded<SavedMixFormula[]>('lamsa_saved_mixes_v1', (restored) => {
-      if (restored && restored.length > 0) setSavedMixes(restored);
-    }, 'savedMixes');
+      if (isCurrentOwnerSession() && restored && restored.length > 0) setSavedMixes(restored);
+    }, 'savedMixes', isCurrentOwnerSession);
     hydrateFromIndexedDBIfNeeded<CustomCustomerRecord[]>('lamsa_custom_customers_v1', (restored) => {
-      if (restored && restored.length > 0) setCustomCustomers(restored);
-    });
+      if (isCurrentOwnerSession() && restored && restored.length > 0) setCustomCustomers(restored);
+    }, undefined, isCurrentOwnerSession);
 
     // Listen to real-time sales on all open terminals/devices (never delete historical records)
     const unsubSales = subscribeToSales(
       (cloudSales, freshness) => {
+        if (!isCurrentOwnerSession()) return;
         reportDashboardSource('sales', freshness || 'cached', cloudSales);
         const incomingSales = cloudSales || [];
         const classified = incomingSales.map((s) => {
@@ -1323,11 +1391,12 @@ const App: React.FC = () => {
         setSales(prevLocal => {
           // Keep local-only sales pending until their sale + stock can be retried atomically.
           const { merged } = mergeCollectionRecords(prevLocal, classified, 'sales');
-          persistDataDurable('lamsa_sales', merged);
+          persistOwnerPrivateData('lamsa_sales', merged);
           return merged;
         });
-          },
+      },
       (liveSale, isRemote) => {
+        if (!isCurrentOwnerSession()) return;
         // Triggered ONLY for sales actually happening in real time right now!
         soundAlertService.playSaleChime();
         const currency = settings.currency || 'ج.م';
@@ -1356,6 +1425,7 @@ const App: React.FC = () => {
 
     // Listen to real-time perfume inventory catalogue
     const unsubProducts = subscribeToProducts((cloudProducts, freshness) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource('products', freshness || 'cached', cloudProducts);
       if (cloudProducts && cloudProducts.length > 0) {
         setProducts(prevLocal => {
@@ -1364,7 +1434,7 @@ const App: React.FC = () => {
           if (localUserProducts.length > 0) {
             localUserProducts.forEach((product) => saveProductCloud(product).catch(console.error));
           }
-          persistDataDurable('lamsa_products', merged);
+          persistOwnerPrivateData('lamsa_products', merged);
           return merged;
         });
           }
@@ -1372,6 +1442,7 @@ const App: React.FC = () => {
 
     // Listen to real-time expenses
     const unsubExpenses = subscribeToExpenses((cloudExpenses, freshness) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource('expenses', freshness || 'cached', cloudExpenses);
       const incomingExpenses = cloudExpenses || [];
 
@@ -1420,7 +1491,7 @@ const App: React.FC = () => {
           if (unsyncedLocalItems.length > 0) {
             unsyncedLocalItems.forEach(e => saveExpenseCloud(e).catch(console.error));
           }
-          persistDataDurable('lamsa_expenses_v2', merged);
+          persistOwnerPrivateData('lamsa_expenses_v2', merged);
           return merged;
         });
           }
@@ -1431,6 +1502,7 @@ const App: React.FC = () => {
 
     // Listen to real-time settings and branding (instant color and letter sync)
     const unsubSettings = subscribeToSettings((cloudSettings, freshness, rawSettings) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource(
         'settings',
         freshness || 'cached',
@@ -1466,12 +1538,13 @@ const App: React.FC = () => {
         prevSyncedSettings = cloudSettings;
 
         setSettings(cloudSettings);
-        persistDataDurable('lamsa_settings_v2', cloudSettings);
+        persistOwnerPrivateData('lamsa_settings_v2', cloudSettings);
           }
     }, DEFAULT_SETTINGS, (freshness) => reportDashboardSource('settings', freshness));
 
     // Listen to real-time bottle sizes and pricing
     const unsubBottleSizes = subscribeToBottleSizes((cloudSizes) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudSizes && cloudSizes.length > 0) {
         const enriched = cloudSizes.map((b: BottleSize) => {
           const def = DEFAULT_BOTTLE_SIZES.find(d => d.sizeMl === b.sizeMl && Boolean(d.isRollOn) === Boolean(b.isRollOn));
@@ -1481,21 +1554,23 @@ const App: React.FC = () => {
           };
         });
         setBottleSizes(enriched);
-        persistDataDurable('lamsa_bottle_sizes_v2', enriched);
+        persistOwnerPrivateData('lamsa_bottle_sizes_v2', enriched);
           }
     }, DEFAULT_BOTTLE_SIZES);
 
     // Listen to real-time financial vaults
     const unsubVaults = subscribeToVaults((cloudVaults, freshness) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource('vaults', freshness || 'cached', cloudVaults);
       if (cloudVaults && cloudVaults.length > 0) {
         setVaults(cloudVaults);
-        persistDataDurable('lamsa_vaults_v1', cloudVaults);
+        persistOwnerPrivateData('lamsa_vaults_v1', cloudVaults);
           }
     }, undefined, (freshness) => reportDashboardSource('vaults', freshness));
 
     // Listen to real-time audited withdrawal transactions
     const unsubWithdrawals = subscribeToWithdrawals((cloudWithdrawals, freshness) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource('withdrawals', freshness || 'cached', cloudWithdrawals);
       const incomingWithdrawals = cloudWithdrawals || [];
       if (isInitialWithdrawalsLoadedRef.current && incomingWithdrawals.length > 0) {
@@ -1524,12 +1599,13 @@ const App: React.FC = () => {
 
       if (cloudWithdrawals) {
         setWithdrawals(cloudWithdrawals);
-        persistDataDurable('lamsa_withdrawals_v1', cloudWithdrawals);
+        persistOwnerPrivateData('lamsa_withdrawals_v1', cloudWithdrawals);
           }
     }, (freshness) => reportDashboardSource('withdrawals', freshness));
 
     // Listen to real-time staff attendance records (حضور وفتح المتجر لطاقم العمل)
     const unsubAttendance = subscribeToStaffAttendance((cloudAttendance) => {
+      if (!isCurrentOwnerSession()) return;
       const incomingAttendance = cloudAttendance || [];
       if (isInitialAttendanceLoadedRef.current && incomingAttendance.length > 0) {
         const remoteNewAttendance = incomingAttendance.filter(a => !knownAttendanceIdsRef.current.has(a.id));
@@ -1556,29 +1632,32 @@ const App: React.FC = () => {
 
       if (cloudAttendance) {
         setAttendanceRecords(cloudAttendance);
-        persistDataDurable('lamsa_attendance_v1', cloudAttendance);
+        persistOwnerPrivateData('lamsa_attendance_v1', cloudAttendance);
           }
     });
 
     // Listen to real-time production batches
     const unsubBatches = subscribeToProductionBatches((cloudBatches) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudBatches) {
         setBatches(cloudBatches);
-        persistDataDurable('lamsa_batches_v1', cloudBatches);
+        persistOwnerPrivateData('lamsa_batches_v1', cloudBatches);
           }
     });
 
     // Listen to real-time app users
     const unsubUsers = subscribeToAppUsers((cloudUsers) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudUsers && cloudUsers.length > 0) {
         const completeUsers = ensureCoreUsersList(cloudUsers);
         setUsers(completeUsers);
-        persistDataDurable('lamsa_users_v1', completeUsers);
+        persistOwnerPrivateData('lamsa_users_v1', completeUsers);
       }
     });
 
     // Listen to real-time daily closures
     const unsubClosures = subscribeToDailyClosures((cloudClosures, freshness) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource('closures', freshness || 'cached', cloudClosures);
       const incomingClosures = cloudClosures || [];
       if (isInitialClosuresLoadedRef.current && incomingClosures.length > 0) {
@@ -1608,36 +1687,40 @@ const App: React.FC = () => {
 
       if (cloudClosures) {
         setDailyClosures(cloudClosures);
-        persistDataDurable('lamsa_closures_v1', cloudClosures);
+        persistOwnerPrivateData('lamsa_closures_v1', cloudClosures);
           }
     }, (freshness) => reportDashboardSource('closures', freshness));
 
     // Listen to real-time purchase requests
     const unsubPurchases = subscribeToPurchaseRequests((cloudPurchases) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudPurchases) {
         setPurchaseRequests(cloudPurchases);
-        persistDataDurable('lamsa_purchase_requests_v1', cloudPurchases);
+        persistOwnerPrivateData('lamsa_purchase_requests_v1', cloudPurchases);
           }
     });
 
     // Listen to real-time customer requests
     const unsubCustomerReqs = subscribeToCustomerRequests((cloudReqs) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudReqs) {
         setCustomerRequests(cloudReqs);
-        persistDataDurable('lamsa_customer_requests_v1', cloudReqs);
+        persistOwnerPrivateData('lamsa_customer_requests_v1', cloudReqs);
           }
     });
 
     // Listen to real-time stock checks
     const unsubStockChecks = subscribeToStockChecks((cloudChecks) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudChecks) {
         setStockChecks(cloudChecks);
-        persistDataDurable('lamsa_stock_checks_v1', cloudChecks);
+        persistOwnerPrivateData('lamsa_stock_checks_v1', cloudChecks);
           }
     });
 
     // Listen to real-time fragrance database
     const unsubFragranceDb = subscribeToFragranceDatabase((entries) => {
+      if (!isCurrentOwnerSession()) return;
       if (entries && entries.length > 0) {
         setFragranceDatabase(entries);
         saveLocalFragranceDatabase(entries);
@@ -1646,6 +1729,7 @@ const App: React.FC = () => {
 
     // Listen to real-time strategic replenishment orders
     const unsubStrategicOrders = subscribeToStrategicOrders((orders) => {
+      if (!isCurrentOwnerSession()) return;
       if (orders) {
         setStrategicOrders(orders);
         saveLocalStrategicOrders(orders);
@@ -1654,23 +1738,25 @@ const App: React.FC = () => {
 
     // Listen to real-time custom customers & loyalty profiles
     const unsubCustomers = subscribeToCustomCustomers((cloudCustomers, freshness) => {
+      if (!isCurrentOwnerSession()) return;
       reportDashboardSource('customers', freshness || 'cached', cloudCustomers);
       if (cloudCustomers) {
         const cleanReal = cloudCustomers.filter(c => !isVirtualDemoCustomer(c));
         setCustomCustomers(cleanReal);
-        persistDataDurable('lamsa_custom_customers_v1', cleanReal);
+        persistOwnerPrivateData('lamsa_custom_customers_v1', cleanReal);
           }
     }, (freshness) => reportDashboardSource('customers', freshness));
 
     // Listen to real-time saved perfume mix formulas
     const unsubSavedMixes = subscribeToSavedMixes((cloudMixes) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudMixes) {
         setSavedMixes(prevLocal => {
           const { merged, unsyncedLocalItems } = mergeCollectionRecords(prevLocal, cloudMixes, 'savedMixes');
           if (unsyncedLocalItems.length > 0) {
             unsyncedLocalItems.forEach(m => saveSavedMixCloud(m).catch(console.error));
           }
-          persistDataDurable('lamsa_saved_mixes_v1', merged);
+          persistOwnerPrivateData('lamsa_saved_mixes_v1', merged);
           return merged;
         });
           }
@@ -1679,8 +1765,9 @@ const App: React.FC = () => {
     // Real-Time Connected Devices Presence Listener
     setDeviceFeedStatus('connecting');
     const unsubDevices = subscribeToConnectedDevices(
-      (activeList) => setConnectedDevices(activeList),
+      (activeList) => { if (isCurrentOwnerSession()) setConnectedDevices(activeList); },
       (status) => {
+        if (!isCurrentOwnerSession()) return;
         setDeviceFeedStatus(status);
         if (status === 'live') setDeviceFeedLastServerUpdate(Date.now());
       }
@@ -1688,14 +1775,15 @@ const App: React.FC = () => {
 
     // Real-Time Owner Staff Directives & Broadcasts Listener
     const unsubBroadcasts = subscribeToOwnerBroadcasts((cloudBroadcasts) => {
+      if (!isCurrentOwnerSession()) return;
       if (cloudBroadcasts) {
         setOwnerBroadcasts(cloudBroadcasts);
-        persistDataDurable('lamsa_owner_broadcasts', cloudBroadcasts);
+        persistOwnerPrivateData('lamsa_owner_broadcasts', cloudBroadcasts);
       }
     });
 
     const onRealtimeMessage = (e: MessageEvent) => {
-      if (!e.data || !e.data.type) return;
+      if (!isCurrentOwnerSession() || !e.data || !e.data.type) return;
 
       if (e.data.type === 'LIVE_SALE' && e.data.sale) {
         const liveSale = e.data.sale as Sale;
@@ -1711,34 +1799,34 @@ const App: React.FC = () => {
         );
       } else if (e.data.type === 'SETTINGS_UPDATE' && e.data.settings) {
         setSettings(e.data.settings);
-        persistDataDurable('lamsa_settings_v2', e.data.settings);
+        persistOwnerPrivateData('lamsa_settings_v2', e.data.settings);
       } else if (e.data.type === 'PRODUCT_UPDATE' && e.data.product) {
         setProducts(prev => {
           const idx = prev.findIndex(p => String(p.id) === String(e.data.product.id));
           const updated = idx >= 0 ? prev.map((p, i) => (i === idx ? e.data.product : p)) : [e.data.product, ...prev];
-          persistDataDurable('lamsa_products', updated);
+          persistOwnerPrivateData('lamsa_products', updated);
           return updated;
         });
       } else if (e.data.type === 'PRODUCT_DELETE' && e.data.productId) {
         setProducts(prev => {
           const filtered = prev.filter(p => String(p.id) !== String(e.data.productId));
-          persistDataDurable('lamsa_products', filtered);
+          persistOwnerPrivateData('lamsa_products', filtered);
           return filtered;
         });
       } else if (e.data.type === 'BOTTLE_SIZES_UPDATE' && e.data.sizes) {
         setBottleSizes(e.data.sizes);
-        persistDataDurable('lamsa_bottle_sizes_v2', e.data.sizes);
+        persistOwnerPrivateData('lamsa_bottle_sizes_v2', e.data.sizes);
       } else if (e.data.type === 'EXPENSE_UPDATE' && e.data.expense) {
         setExpenses(prev => {
           const idx = prev.findIndex(x => x.id === e.data.expense.id);
           const updated = idx >= 0 ? prev.map((x, i) => (i === idx ? e.data.expense : x)) : [e.data.expense, ...prev];
-          persistDataDurable('lamsa_expenses_v2', updated);
+          persistOwnerPrivateData('lamsa_expenses_v2', updated);
           return updated;
         });
       } else if (e.data.type === 'EXPENSE_DELETE' && e.data.expenseId) {
         setExpenses(prev => {
           const filtered = prev.filter(x => x.id !== e.data.expenseId);
-          persistDataDurable('lamsa_expenses_v2', filtered);
+          persistOwnerPrivateData('lamsa_expenses_v2', filtered);
           return filtered;
         });
       }
@@ -1775,30 +1863,40 @@ const App: React.FC = () => {
       unsubDevices();
       unsubBroadcasts();
     };
-  }, [authStatus, currentUser?.id, currentUser?.role, reportDashboardSource]);
+  }, [authStatus, currentUser?.id, currentUser?.role, ownerSessionGeneration, reportDashboardSource]);
 
   // Reflect synchronous outbox writes in this tab and other tabs on the same device.
   useEffect(() => {
+    const gate = ownerPrivateSessionRef.current;
+    const generation = ownerSessionGeneration;
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER' || !gate.isAuthorized(generation)) {
+      setQueuedSaleCount(0);
+      setSaleQueueNotice('');
+      return;
+    }
     const updateQueuedSales = (queue = getOfflineQueue()) => {
+      if (!gate.isAuthorized(generation)) return;
       setQueuedSaleCount(queue.filter((item) => item.entityType === 'sale').length);
     };
     updateQueuedSales();
     return subscribeToOfflineQueue(updateQueuedSales);
-  }, []);
+  }, [authStatus, currentUser?.id, currentUser?.role, ownerSessionGeneration]);
 
   // The legacy full-Sale outbox is owner-only. Employee sales must use the
   // separate minimal v3 Tarek outbox; never route them through addSaleCloud.
   useEffect(() => {
-    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER') return;
+    const gate = ownerPrivateSessionRef.current;
+    const generation = ownerSessionGeneration;
+    if (authStatus !== 'ready' || currentUser?.role !== 'OWNER' || !gate.isAuthorized(generation)) return;
     let active = true;
     const retry = startSaleQueueAutoRetry((sale) => addSaleCloud(sale), {
       onSyncStart: () => {
-        if (!active) return;
+        if (!active || !gate.isAuthorized(generation)) return;
         setSaleQueueSyncing(true);
         setSaleQueueNotice('جارٍ إرسال الفواتير المعلقة وانتظار تأكيد Firestore…');
       },
       onResult: (result) => {
-        if (!active || result.attempted === 0) return;
+        if (!active || !gate.isAuthorized(generation) || result.attempted === 0) return;
         setSaleQueueSyncing(false);
         const remaining = getOfflineQueue().filter((item) => item.entityType === 'sale');
         setQueuedSaleCount(remaining.length);
@@ -1817,7 +1915,7 @@ const App: React.FC = () => {
         }
       },
       onError: (error) => {
-        if (!active) return;
+        if (!active || !gate.isAuthorized(generation)) return;
         setSaleQueueSyncing(false);
         console.error('Queued sale retry failed:', error);
         setSaleQueueNotice('تعذر إكمال محاولة المزامنة؛ ما زالت الفواتير محفوظة في الطابور المحلي.');
@@ -1830,7 +1928,7 @@ const App: React.FC = () => {
       if (saleQueueRetryRef.current === retry.retryNow) saleQueueRetryRef.current = null;
       retry.stop();
     };
-  }, [authStatus, currentUser?.id, currentUser?.role]);
+  }, [authStatus, currentUser?.id, currentUser?.role, ownerSessionGeneration]);
 
   // Real-Time Multi-Device Presence Heartbeat & Auto-Sync
   useEffect(() => {
@@ -1882,67 +1980,67 @@ const App: React.FC = () => {
 
   // Sync state changes to durable storage (localStorage + IndexedDB)
   useEffect(() => {
-    persistDataDurable('lamsa_products', products);
+    persistOwnerPrivateData('lamsa_products', products);
   }, [products]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_sales', sales);
+    persistOwnerPrivateData('lamsa_sales', sales);
   }, [sales]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_expenses_v2', expenses);
+    persistOwnerPrivateData('lamsa_expenses_v2', expenses);
   }, [expenses]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_settings_v2', settings);
+    persistOwnerPrivateData('lamsa_settings_v2', settings);
   }, [settings]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_bottle_sizes_v2', bottleSizes);
+    persistOwnerPrivateData('lamsa_bottle_sizes_v2', bottleSizes);
   }, [bottleSizes]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_vaults_v1', vaults);
+    persistOwnerPrivateData('lamsa_vaults_v1', vaults);
   }, [vaults]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_withdrawals_v1', withdrawals);
+    persistOwnerPrivateData('lamsa_withdrawals_v1', withdrawals);
   }, [withdrawals]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_attendance_v1', attendanceRecords);
+    persistOwnerPrivateData('lamsa_attendance_v1', attendanceRecords);
   }, [attendanceRecords]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_batches_v1', batches);
+    persistOwnerPrivateData('lamsa_batches_v1', batches);
   }, [batches]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_audit_logs_v1', auditLogs);
+    persistOwnerPrivateData('lamsa_audit_logs_v1', auditLogs);
   }, [auditLogs]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_users_v1', users);
+    persistOwnerPrivateData('lamsa_users_v1', users);
   }, [users]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_closures_v1', dailyClosures);
+    persistOwnerPrivateData('lamsa_closures_v1', dailyClosures);
   }, [dailyClosures]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_purchase_requests_v1', purchaseRequests);
+    persistOwnerPrivateData('lamsa_purchase_requests_v1', purchaseRequests);
   }, [purchaseRequests]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_customer_requests_v1', customerRequests);
+    persistOwnerPrivateData('lamsa_customer_requests_v1', customerRequests);
   }, [customerRequests]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_stock_checks_v1', stockChecks);
+    persistOwnerPrivateData('lamsa_stock_checks_v1', stockChecks);
   }, [stockChecks]);
 
   useEffect(() => {
-    persistDataDurable('lamsa_saved_mixes_v1', savedMixes);
+    persistOwnerPrivateData('lamsa_saved_mixes_v1', savedMixes);
   }, [savedMixes]);
 
   // Sync Fragrance Encyclopedia to LocalStorage
@@ -2296,7 +2394,12 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
+    ownerPrivateSessionRef.current.beginIdentityTransition();
+    clearOwnerPrivateTransientState();
     clearSessionUser();
+    clearCurrentFirebaseRoleAssignment();
+    setCurrentUser(null);
+    setAuthStatus('checking');
     setIsAuthModalOpen(false);
     setAuthError(null);
     setAccessRequestStatus('none');
@@ -2312,7 +2415,6 @@ const App: React.FC = () => {
       setAuthStatus('error');
       setAuthError(getFirebaseAuthErrorMessage(error));
     }
-    setCurrentUser(null);
   };
 
   const handlePrepareTarekCatalog = async () => {
@@ -2333,7 +2435,7 @@ const App: React.FC = () => {
   // Real-time Administrative Directives & Staff Broadcast Handlers
   const handleSendOwnerBroadcast = async (broadcast: OwnerStaffBroadcast) => {
     setOwnerBroadcasts(prev => [broadcast, ...prev.filter(b => b.id !== broadcast.id)]);
-    persistDataDurable('lamsa_owner_broadcasts', [broadcast, ...ownerBroadcasts]);
+    persistOwnerPrivateData('lamsa_owner_broadcasts', [broadcast, ...ownerBroadcasts]);
     try {
       await sendOwnerBroadcastCloud(broadcast);
     } catch (e) {
@@ -2358,7 +2460,7 @@ const App: React.FC = () => {
       } else {
         next.add(broadcastId);
       }
-      persistDataDurable('lamsa_dismissed_broadcasts_v2', Array.from(next));
+      persistOwnerPrivateData('lamsa_dismissed_broadcasts_v2', Array.from(next));
       return next;
     });
   };
@@ -2378,7 +2480,7 @@ const App: React.FC = () => {
         }
         return b;
       });
-      persistDataDurable('lamsa_owner_broadcasts', updated);
+      persistOwnerPrivateData('lamsa_owner_broadcasts', updated);
       return updated;
     });
     try {
@@ -2544,10 +2646,10 @@ const App: React.FC = () => {
       return deduction === undefined ? product : { ...product, stock_grams: product.stock_grams - deduction };
     });
     setProducts(newProducts);
-    persistDataDurable('lamsa_products', newProducts);
+    persistOwnerPrivateData('lamsa_products', newProducts);
     setSales(prev => {
       const next = [sale, ...prev];
-      persistDataDurable('lamsa_sales', next);
+      persistOwnerPrivateData('lamsa_sales', next);
       return next;
     });
 
@@ -2591,7 +2693,7 @@ const App: React.FC = () => {
           return updatedFormula;
         });
         if (changed) {
-          persistDataDurable('lamsa_saved_mixes_v1', nextMixes);
+          persistOwnerPrivateData('lamsa_saved_mixes_v1', nextMixes);
         }
         return nextMixes;
       });
@@ -2674,7 +2776,7 @@ const App: React.FC = () => {
             setCloudMessage('تمت مزامنة الفاتورة، لكن تعذرت مزامنة سجل العميل.');
           });
         }
-        persistDataDurable('lamsa_custom_customers_v1', next);
+        persistOwnerPrivateData('lamsa_custom_customers_v1', next);
         return next;
       });
     }
@@ -2707,7 +2809,7 @@ const App: React.FC = () => {
           }
           return v;
         });
-        persistDataDurable('lamsa_vaults_v1', next);
+        persistOwnerPrivateData('lamsa_vaults_v1', next);
         return next;
       });
     }
@@ -2729,12 +2831,12 @@ const App: React.FC = () => {
   const handleAddWithdrawal = async (tx: WithdrawalTransaction, updatedVault: FinancialVault) => {
     setWithdrawals(prev => {
       const next = [tx, ...prev];
-      persistDataDurable('lamsa_withdrawals_v1', next);
+      persistOwnerPrivateData('lamsa_withdrawals_v1', next);
       return next;
     });
     setVaults(prev => {
       const next = prev.map(v => v.id === updatedVault.id ? updatedVault : v);
-      persistDataDurable('lamsa_vaults_v1', next);
+      persistOwnerPrivateData('lamsa_vaults_v1', next);
       return next;
     });
 
@@ -2819,7 +2921,7 @@ const App: React.FC = () => {
         return p;
       });
       setProducts(nextProducts);
-      persistDataDurable('lamsa_products', nextProducts);
+      persistOwnerPrivateData('lamsa_products', nextProducts);
       }
 
     // Reverse financial vaults impact if sale was not already reversed
@@ -2841,7 +2943,7 @@ const App: React.FC = () => {
         return v;
       });
       setVaults(updatedVaults);
-      persistDataDurable('lamsa_vaults_v1', updatedVaults);
+      persistOwnerPrivateData('lamsa_vaults_v1', updatedVaults);
     }
 
     const reversedSale: Sale = {
@@ -2854,7 +2956,7 @@ const App: React.FC = () => {
 
     setSales(prev => {
       const next = prev.map(s => (s.id === saleId ? reversedSale : s));
-      persistDataDurable('lamsa_sales', next);
+      persistOwnerPrivateData('lamsa_sales', next);
       return next;
     });
 
@@ -2888,7 +2990,7 @@ const App: React.FC = () => {
   const handleSaveSavedMix = async (formula: SavedMixFormula) => {
     setSavedMixes(prev => {
       const next = [formula, ...prev.filter(m => m.id !== formula.id)];
-      persistDataDurable('lamsa_saved_mixes_v1', next);
+      persistOwnerPrivateData('lamsa_saved_mixes_v1', next);
       return next;
     });
     try {
@@ -2902,7 +3004,7 @@ const App: React.FC = () => {
     addDeletedTombstone('savedMixes', mixId);
     setSavedMixes(prev => {
       const next = prev.filter(m => m.id !== mixId);
-      persistDataDurable('lamsa_saved_mixes_v1', next);
+      persistOwnerPrivateData('lamsa_saved_mixes_v1', next);
       return next;
     });
     try {
@@ -2916,7 +3018,7 @@ const App: React.FC = () => {
   const handleSetProducts: React.Dispatch<React.SetStateAction<Product[]>> = (action) => {
     setProducts(prev => {
       const next = typeof action === 'function' ? action(prev) : action;
-      persistDataDurable('lamsa_products', next);
+      persistOwnerPrivateData('lamsa_products', next);
 
       // 1. Delete removed products from cloud
       prev.forEach(oldP => {
@@ -2957,7 +3059,7 @@ const App: React.FC = () => {
   const handleSetExpenses: React.Dispatch<React.SetStateAction<Expense[]>> = (action) => {
     setExpenses(prev => {
       const next = typeof action === 'function' ? action(prev) : action;
-      persistDataDurable('lamsa_expenses_v2', next);
+      persistOwnerPrivateData('lamsa_expenses_v2', next);
 
       // 1. Delete removed expenses
       prev.forEach(oldExp => {
@@ -2987,7 +3089,7 @@ const App: React.FC = () => {
   const handleSetSettings: React.Dispatch<React.SetStateAction<StoreSettings>> = (action) => {
     setSettings(prev => {
       const next = typeof action === 'function' ? action(prev) : action;
-      persistDataDurable('lamsa_settings_v2', next);
+      persistOwnerPrivateData('lamsa_settings_v2', next);
       saveSettingsCloud(next).catch(err => console.error(err));
       return next;
     });
@@ -2996,7 +3098,7 @@ const App: React.FC = () => {
   const handleSetBottleSizes: React.Dispatch<React.SetStateAction<BottleSize[]>> = (action) => {
     setBottleSizes(prev => {
       const next = typeof action === 'function' ? action(prev) : action;
-      persistDataDurable('lamsa_bottle_sizes_v2', next);
+      persistOwnerPrivateData('lamsa_bottle_sizes_v2', next);
       saveBottleSizesCloud(next).catch(err => console.error(err));
       return next;
     });

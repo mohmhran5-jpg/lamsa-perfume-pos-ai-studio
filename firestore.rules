@@ -50,6 +50,17 @@ service cloud.firestore {
       return isVerifiedOwner() || isLegacyTarek() || hasActiveStoreManagerGrant();
     }
 
+    function validTarekProductCost(data) {
+      return data is map
+        && data.keys().hasAll(['schemaVersion', 'productId'])
+        && data.keys().hasOnly(['schemaVersion', 'productId', 'customGramCostEgp', 'updatedAt'])
+        && data.schemaVersion == 1
+        && data.productId is string
+        && (!('customGramCostEgp' in data)
+          || (data.customGramCostEgp is number && data.customGramCostEgp >= 0))
+        && (!('updatedAt' in data) || data.updatedAt is string);
+    }
+
     function canReadOperationalSales() {
       return isVerifiedOwner() || isLegacyTarek() || hasActiveStoreManagerGrant();
     }
@@ -362,15 +373,23 @@ service cloud.firestore {
     match /commission_audit_logs/{documentId} { allow read, write: if isVerifiedOwner(); }
     match /test/{documentId} { allow read, write: if isVerifiedOwner(); }
 
-    // Tarek reads only operational projections and purchase/operating cost inputs.
-    // Client-side employee writes remain denied; the un-deployed local Worker prototype is not a production authorization path.
+    // Tarek reads only explicitly separated operational projections; broad cost data remains owner-only.
+    // Client-side employee writes remain denied; the local Worker is not a production authorization path.
     match /product_operations/{documentId} {
       allow read: if isVerifiedOwner();
       allow create, update, delete: if isVerifiedOwner();
     }
     match /product_costs/{documentId} {
-      allow read: if canReadOperationalCosts();
+      allow read: if isVerifiedOwner();
       allow create, update, delete: if isVerifiedOwner();
+    }
+    match /tarek_operational_costs/{documentId} {
+      allow read: if canReadOperationalCosts();
+      allow create, update: if isVerifiedOwner() && validTarekProductCost(request.resource.data);
+      allow delete: if isVerifiedOwner();
+    }
+    match /tarek_operational_costs_meta/{documentId} {
+      allow read, write: if isVerifiedOwner();
     }
     match /mix_operations/{documentId} {
       allow read: if isVerifiedOwner();
@@ -391,7 +410,7 @@ service cloud.firestore {
       allow create, update, delete: if isVerifiedOwner();
     }
     match /cost_catalog/{documentId} {
-      allow read: if canReadOperationalCosts();
+      allow read: if isVerifiedOwner();
       allow create, update, delete: if isVerifiedOwner();
     }
     match /financial_admin/{documentId} { allow read, write: if isVerifiedOwner(); }

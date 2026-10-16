@@ -524,6 +524,57 @@ export const clearAllSalesCloud = async (sales: Sale[]) => {
 // REAL-TIME PRODUCTS SYNCHRONIZATION
 // ========================================================
 
+let tarekOperationalCostsReadyForSession = false;
+let tarekOperationalCostsBootstrapPromise: Promise<void> | null = null;
+
+async function markTarekOperationalCostsBootstrapReady(productCount: number): Promise<void> {
+  await setDoc(doc(db, SEPARATED_COLLECTIONS.tarekOperationalCostsMeta, 'v1'), {
+    schemaVersion: 1,
+    status: 'ready',
+    productCount,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/** Backfills the separate employee-safe cost projection once, after verified owner auth. */
+export async function ensureTarekOperationalCostProjections(products: Product[]): Promise<void> {
+  if (tarekOperationalCostsReadyForSession || products.length === 0) return;
+  if (tarekOperationalCostsBootstrapPromise) return tarekOperationalCostsBootstrapPromise;
+
+  const running = (async () => {
+    await requireOwnerAuth();
+    const markerRef = doc(db, SEPARATED_COLLECTIONS.tarekOperationalCostsMeta, 'v1');
+    const marker = await getDocFromServer(markerRef);
+    if (marker.exists() && marker.data().status === 'ready') {
+      tarekOperationalCostsReadyForSession = true;
+      return;
+    }
+
+    const chunkSize = 450;
+    for (let offset = 0; offset < products.length; offset += chunkSize) {
+      const batch = writeBatch(db);
+      for (const product of products.slice(offset, offset + chunkSize)) {
+        const id = String(product.id);
+        if (!id.trim() || id.includes('/')) throw new Error('tarek-cost/invalid-product-id');
+        batch.set(
+          doc(db, SEPARATED_COLLECTIONS.tarekOperationalCosts, id),
+          cleanForFirestore(projectProductCost(product)),
+        );
+      }
+      await batch.commit();
+    }
+    await markTarekOperationalCostsBootstrapReady(products.length);
+    tarekOperationalCostsReadyForSession = true;
+  })();
+
+  tarekOperationalCostsBootstrapPromise = running;
+  try {
+    await running;
+  } finally {
+    if (tarekOperationalCostsBootstrapPromise === running) tarekOperationalCostsBootstrapPromise = null;
+  }
+}
+
 export const subscribeToProducts = (
   onUpdate: (products: Product[], freshness?: SnapshotFreshness) => void,
   seedIfEmpty?: Product[],
@@ -573,6 +624,8 @@ export const subscribeToProducts = (
       // Seed initial perfume catalogue to cloud once if collection is empty
       try {
         await seedProductsCloud(seedIfEmpty);
+        await markTarekOperationalCostsBootstrapReady(seedIfEmpty.length);
+        tarekOperationalCostsReadyForSession = true;
       } catch (e) {
         console.error("Error seeding products:", e);
       }
@@ -586,6 +639,11 @@ export const subscribeToProducts = (
     });
     list.sort((a, b) => Number(a.id) - Number(b.id));
     baseProducts = list;
+    if (productFreshness === 'live' && baseProducts.length > 0) {
+      void ensureTarekOperationalCostProjections(baseProducts).catch((error) => {
+        console.error('Error preparing the employee-safe product-cost projection:', error);
+      });
+    }
     productsLoaded = true;
     emitMergedProducts();
   }, (err) => {
@@ -660,6 +718,7 @@ async function writeProductProjectionChunk(
       else transaction.set(legacyRef, productDocument);
       transaction.set(operationRef, cleanForFirestore(projectOperationalProduct(synchronizedProduct)));
       transaction.set(doc(db, SEPARATED_COLLECTIONS.productCosts, id), cleanForFirestore(projectProductCost(synchronizedProduct)));
+      transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekOperationalCosts, id), cleanForFirestore(projectProductCost(synchronizedProduct)));
       transaction.set(stockRef, cleanForFirestore(projectTarekProduct(synchronizedProduct)));
       transaction.set(doc(db, SEPARATED_COLLECTIONS.tarekSaleProducts, id), cleanForFirestore(projectTarekSaleProduct(synchronizedProduct)));
       nextSavedProducts.push(synchronizedProduct);
@@ -671,7 +730,7 @@ async function writeProductProjectionChunk(
 
 export const seedProductsCloud = async (products: Product[], stockDeltas: Map<string, number> = new Map()) => {
   await requireOwnerAuth();
-  // Five documents per product are written atomically; leave headroom under Firestore's 500-write cap.
+  // Six documents per product are written atomically; leave headroom under Firestore's 500-write cap.
   const chunkSize = 80;
   for (let i = 0; i < products.length; i += chunkSize) {
     await writeProductProjectionChunk(products.slice(i, i + chunkSize), false, stockDeltas);

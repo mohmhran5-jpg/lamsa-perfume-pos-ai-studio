@@ -7,9 +7,17 @@ import {
 } from '../services/workerSaleContract.ts';
 import {
   bootstrapCommissionCounterOnLocalEmulatorWorker,
+  getConfiguredTarekSaleWorkerEndpoint,
+  quoteTarekSaleToWorker,
   quoteTarekSaleToLocalEmulatorWorker,
+  resolveTarekSaleWorkerEndpoint,
+  submitTarekSaleToWorker,
   submitTarekSaleToLocalEmulatorWorker,
 } from '../services/workerSaleClient.ts';
+import {
+  assertFreshStartDateHasNoSales,
+  LAMSA_FRESH_START_DATE_KEY,
+} from '../worker-sale-prototype/src/lamsaSaleWorker.mjs';
 
 function sampleSale(overrides = {}) {
   return {
@@ -277,6 +285,16 @@ test('Tarek v3 client posts only to the local Worker and refuses financial field
       id: draft.saleId, totalPrice: 290, totalProfit: 200,
     } }), { status: 200 }),
   ), /unsafe-operator-response/);
+  for (const leakedKey of ['commissionCounterGeneration', 'budget', 'financialAdmin', 'costCatalog', 'vaultBalance']) {
+    await assert.rejects(submitTarekSaleToLocalEmulatorWorker(
+      draft,
+      'http://127.0.0.1:8787/api/lamsa/sales',
+      async () => 'emulator-id-token',
+      async () => new Response(JSON.stringify({ ok: true, status: 'committed', sale: {
+        id: draft.saleId, totalPrice: 290, metadata: { [leakedKey]: 1 },
+      } }), { status: 200 }),
+    ), /unsafe-operator-response/);
+  }
 });
 
 test('quote client posts only to local /quote and accepts selling price but rejects cost/profit fields', async () => {
@@ -331,21 +349,104 @@ test('daily counter bootstrap client is owner-driven and rejects every non-local
       return new Response(JSON.stringify({
         ok: true,
         status: 'ready',
-        dateKey: '2026-10-16',
-        sprayBottlesSold: 8,
+        dateKey: '2026-10-17',
+        sprayBottlesSold: 0,
         generation: 0,
         historyScanned: true,
-        historicalSaleIdsScanned: 2,
+        historicalSaleIdsScanned: 0,
       }), { status: 200 });
     },
   );
   assert.equal(sentUrl, 'http://127.0.0.1:8787/api/lamsa/commission-counter/bootstrap');
   assert.deepEqual(sentBody, {});
-  assert.equal(result.sprayBottlesSold, 8);
+  assert.equal(result.dateKey, '2026-10-17');
+  assert.equal(result.sprayBottlesSold, 0);
   assert.equal(result.historyScanned, true);
 
   await assert.rejects(bootstrapCommissionCounterOnLocalEmulatorWorker(
     'https://live-worker.example/api/lamsa/commission-counter/bootstrap',
     async () => { throw new Error('token must not be requested for remote endpoint'); },
   ), /local-emulator-only/);
+});
+
+test('the approved registration cutover is 2026-10-17 03:00 Cairo / 00:00 UTC', () => {
+  const cairoCutover = new Date('2026-10-17T03:00:00+03:00');
+  const utcCutover = new Date('2026-10-17T00:00:00.000Z');
+  assert.equal(cairoCutover.toISOString(), utcCutover.toISOString());
+  assert.equal(utcCutover.toISOString().slice(0, 10), '2026-10-17');
+  assert.equal(LAMSA_FRESH_START_DATE_KEY, '2026-10-17');
+  assert.doesNotThrow(() => assertFreshStartDateHasNoSales('2026-10-17', { uniqueSaleCount: 0, sprayBottlesSold: 0 }));
+  assert.throws(
+    () => assertFreshStartDateHasNoSales('2026-10-17', { uniqueSaleCount: 1, sprayBottlesSold: 0 }),
+    (error) => error.code === 'sale/fresh-start-date-not-empty',
+  );
+  assert.throws(
+    () => assertFreshStartDateHasNoSales('2026-10-17', { uniqueSaleCount: 0, sprayBottlesSold: 1 }),
+    (error) => error.code === 'sale/fresh-start-date-not-empty',
+  );
+  assert.doesNotThrow(() => assertFreshStartDateHasNoSales('2026-10-18', { uniqueSaleCount: 1 }));
+});
+
+test('Tarek Worker build URL is disabled by default, HTTPS-only in production, and local-only in development', () => {
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'production', enabled: false, workerUrl: 'https://sale-worker.example.workers.dev' }), null);
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'production', enabled: true }), null);
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'production', enabled: true, workerUrl: 'http://sale-worker.example.workers.dev' }), null);
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'production', enabled: true, workerUrl: 'https://sale-worker.example.workers.dev/path' }), null);
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'production', enabled: true, workerUrl: 'https://mohmhran5-jpg.github.io' }), null);
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'production', enabled: true, workerUrl: 'https://sale-worker.example.workers.dev' }), 'https://sale-worker.example.workers.dev/api/lamsa/sales');
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'development', enabled: true }), 'http://127.0.0.1:8787/api/lamsa/sales');
+  assert.equal(resolveTarekSaleWorkerEndpoint({ mode: 'development', enabled: true, workerUrl: 'https://sale-worker.example.workers.dev' }), null);
+  assert.equal(getConfiguredTarekSaleWorkerEndpoint(), null, 'outside a configured Vite build, the client is disabled');
+});
+
+test('configured Tarek quote and commit attach the Firebase ID token and reject any unconfigured destination before requesting a token', async () => {
+  const config = { mode: 'production', enabled: true, workerUrl: 'https://sale-worker.example.workers.dev' };
+  const endpoint = resolveTarekSaleWorkerEndpoint(config);
+  const draft = tarekDraft();
+  let tokenCalls = 0;
+  let quoteUrl;
+  const quote = await quoteTarekSaleToWorker(
+    draft,
+    endpoint,
+    async () => { tokenCalls += 1; return 'firebase-id-token-mock'; },
+    async (url, init) => {
+      quoteUrl = String(url);
+      assert.equal(new Headers(init.headers).get('authorization'), 'Bearer firebase-id-token-mock');
+      return new Response(JSON.stringify({
+        ok: true, status: 'quoted', quoteId: draft.quoteId, expiresAt: Date.now() + 60_000,
+        sale: { id: draft.saleId, totalPrice: 290, discount: 10, paymentMethod: 'نقدي', items: [] },
+      }), { status: 200 });
+    },
+    config,
+  );
+  assert.equal(quoteUrl, `${endpoint}/quote`);
+  assert.equal(quote.sale.id, draft.saleId);
+
+  let commitUrl;
+  const committed = await submitTarekSaleToWorker(
+    draft,
+    endpoint,
+    async () => { tokenCalls += 1; return 'firebase-id-token-mock'; },
+    async (url, init) => {
+      commitUrl = String(url);
+      assert.equal(new Headers(init.headers).get('authorization'), 'Bearer firebase-id-token-mock');
+      const intent = JSON.parse(String(init.body));
+      assert.equal(intent.schema, 'lamsa.sale-intent/v3');
+      assert.equal('totalProfit' in intent, false);
+      return new Response(JSON.stringify({ ok: true, status: 'committed', sale: { id: draft.saleId, totalPrice: 290 } }), { status: 200 });
+    },
+    config,
+  );
+  assert.equal(commitUrl, endpoint);
+  assert.equal(committed.status, 'committed');
+  assert.equal(tokenCalls, 2);
+
+  await assert.rejects(submitTarekSaleToWorker(
+    draft,
+    'https://other-worker.example/api/lamsa/sales',
+    async () => { tokenCalls += 1; return 'must-not-be-requested'; },
+    async () => { throw new Error('fetch must not run'); },
+    config,
+  ), /worker-sale\/unconfigured-endpoint/);
+  assert.equal(tokenCalls, 2, 'a mismatched destination is rejected before reading a Firebase ID token');
 });

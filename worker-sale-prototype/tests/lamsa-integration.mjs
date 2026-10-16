@@ -7,8 +7,9 @@ import { createFirestoreTransport } from '../src/index.mjs';
 import { handleLamsaSale, handleLamsaSaleQuote } from '../src/lamsaSaleWorker.mjs';
 import {
   LOCAL_LAMSA_SALE_ENDPOINT,
-  quoteTarekSaleToLocalEmulatorWorker,
-  submitTarekSaleIntentToLocalEmulatorWorker,
+  quoteTarekSaleToWorker,
+  resolveTarekSaleWorkerEndpoint,
+  submitTarekSaleIntentToWorker,
 } from '../../services/workerSaleClient.ts';
 import { enqueueTarekSale, flushTarekSaleOutbox, getTarekSaleOutbox } from '../../services/tarekSaleOutbox.ts';
 import {
@@ -139,18 +140,35 @@ function operatorV3(legacyIntent) {
   };
 }
 const quotedSaleIds = new Set();
+let tarekTestTokens = new Set();
 async function callOperator(token, body) {
   const intent = operatorV3(body);
   if (!quotedSaleIds.has(intent.saleId)) {
     const quote = await callQuote(token, intent);
     if (quote.status !== 200) return quote;
+    if (tarekTestTokens.has(token)) assertNoTarekFinancialFields(quote.body.sale);
     quotedSaleIds.add(intent.saleId);
   }
-  return call(token, intent);
+  const committed = await call(token, intent);
+  if (tarekTestTokens.has(token) && committed.status === 200) assertNoTarekFinancialFields(committed.body.sale);
+  return committed;
 }
 async function check(name, fn) {
   try { await fn(); passed += 1; console.log(`PASS LAMSA ${name}`); }
   catch (error) { failures.push({ name, error }); console.error(`FAIL LAMSA ${name}: ${error?.stack || error}`); }
+}
+
+const TAREK_FORBIDDEN_RESPONSE_KEY = /(cost|profit|margin|commission|budget|financial|vault|expense|withdrawal|payroll|salary|capital|balance|settings)/i;
+function assertNoTarekFinancialFields(value, path = 'sale') {
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoTarekFinancialFields(item, `${path}[${index}]`));
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    assert.equal(TAREK_FORBIDDEN_RESPONSE_KEY.test(key), false, `Tarek response leaked ${path}.${key}`);
+    assertNoTarekFinancialFields(nested, `${path}.${key}`);
+  }
 }
 
 async function runProductionTransportEmulatorTest() {
@@ -223,12 +241,14 @@ async function runProductionTransportEmulatorTest() {
   const quoteBody = await quoteResponse.json();
   assert.equal(quoteBody.status, 'quoted');
   assert.equal(quoteBody.sale.totalPrice, 300);
+  assertNoTarekFinancialFields(quoteBody.sale);
   assert.equal((await restDoc('tarek_products/lamsa-prodtransport')).stock_grams, stockBefore, 'quote must not change stock');
 
   const saleResponse = await handleLamsaSale(makeRequest('/api/lamsa/sales'), env, helpers);
   assert.equal(saleResponse.status, 200, await saleResponse.clone().text());
   const saleBody = await saleResponse.json();
   assert.equal(saleBody.sale.totalPrice, 300);
+  assertNoTarekFinancialFields(saleBody.sale);
   assert.equal((await restDoc('tarek_products/lamsa-prodtransport')).stock_grams, stockBefore - 15);
   assert.equal((await restDoc('sale_operations/lamsa-prodtransport-0001')).totalPrice, 300);
 
@@ -242,6 +262,8 @@ async function runProductionTransportEmulatorTest() {
 }
 
 export async function runLamsaIntegrationTests({ sellerToken, ownerToken, managerToken }) {
+  tarekTestTokens = new Set([sellerToken, managerToken].filter(Boolean));
+  quotedSaleIds.clear();
   await check('owner bootstrap scans legacy history once, de-duplicates projections, and excludes test data', async () => {
     const denied = await callCounterBootstrap(sellerToken);
     assert.equal(denied.status, 403, JSON.stringify(denied.body));
@@ -713,6 +735,9 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
     let idTokenCalls = 0;
     let workerRequests = 0;
     const tokenProvider = async () => { idTokenCalls += 1; return managerToken; };
+    const clientConfig = { mode: 'development', enabled: true };
+    const clientEndpoint = resolveTarekSaleWorkerEndpoint(clientConfig);
+    assert.equal(clientEndpoint, LOCAL_LAMSA_SALE_ENDPOINT);
     const localFetch = async (input, init) => {
       assert.equal(new URL(String(input)).origin, workerUrl);
       assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${managerToken}`);
@@ -729,11 +754,12 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
 
     try {
       const stockBefore = (await restDoc('tarek_products/lamsa-prodtransport')).stock_grams;
-      const quote = await quoteTarekSaleToLocalEmulatorWorker(
+      const quote = await quoteTarekSaleToWorker(
         draft,
-        LOCAL_LAMSA_SALE_ENDPOINT,
+        clientEndpoint,
         tokenProvider,
         localFetch,
+        clientConfig,
       );
       assert.equal(quote.quoteId, quoteId);
       assert.equal(quote.sale.id, saleId);
@@ -746,11 +772,12 @@ export async function runLamsaIntegrationTests({ sellerToken, ownerToken, manage
       await enqueueTarekSale(draft);
       let dropFirstAcknowledgement = true;
       const commit = async (intent) => {
-        const acknowledgement = await submitTarekSaleIntentToLocalEmulatorWorker(
+        const acknowledgement = await submitTarekSaleIntentToWorker(
           intent,
-          LOCAL_LAMSA_SALE_ENDPOINT,
+          clientEndpoint,
           tokenProvider,
           localFetch,
+          clientConfig,
         );
         if (dropFirstAcknowledgement) {
           dropFirstAcknowledgement = false;

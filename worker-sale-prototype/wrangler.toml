@@ -8,6 +8,8 @@ PROJECT_ID = "demo-worker-sale"
 FIRESTORE_DATABASE_ID = "demo-named-firestore-db"
 OWNER_EMAIL = "owner@example.test"
 FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"
+SALE_WORKER_PRODUCTION_ENABLED = "false"
+CORS_ALLOWED_ORIGIN = "https://mohmhran5-jpg.github.io"
 FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
 # Emulator-only admin bypass. This literal is not a production credential.
 FIRESTORE_EMULATOR_ADMIN_TOKEN = "owner"

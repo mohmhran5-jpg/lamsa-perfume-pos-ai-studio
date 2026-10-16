@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { LogOut, PackageSearch, ReceiptText, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { LogOut, PackageSearch, ReceiptText, TriangleAlert } from 'lucide-react';
 import {
   subscribeToTarekWorkspace,
   type TarekWorkspaceData,
@@ -14,7 +14,6 @@ type Props = {
 const INITIAL_DATA: TarekWorkspaceData = {
   products: [],
   productCosts: [],
-  costCatalog: null,
   sales: [],
   saleProducts: [],
   saleBottleSizes: [],
@@ -32,13 +31,10 @@ function formatSaleDate(value: string): string {
   return Number.isNaN(date.getTime()) ? 'تاريخ غير متاح' : date.toLocaleString('ar-EG');
 }
 
-function getTypeGramCost(product: TarekOperationalProduct, data: TarekWorkspaceData): number | undefined {
-  const explicit = data.productCosts.find((record) => record.productId === product.id)?.customGramCostEgp;
-  if (explicit !== undefined && Number.isFinite(explicit)) return explicit;
-  const policy = data.costCatalog?.costPolicy;
-  if (product.type === 'نيش') return policy?.priceEssenceNiche;
-  if (product.type === 'عود' || product.type === 'مسك') return policy?.priceEssenceSpecial;
-  return policy?.priceEssenceNormal;
+function stockLabel(product: TarekOperationalProduct): string {
+  const stock = product.stock_grams.toLocaleString('ar-EG');
+  const isLow = product.min_threshold_grams !== undefined && product.stock_grams <= product.min_threshold_grams;
+  return `${stock} جم${isLow ? ' · عند حدّ إعادة الطلب' : ''}`;
 }
 
 export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
@@ -76,13 +72,11 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
     };
   }, []);
 
-  const productCosts = useMemo(
-    () => new Map(data.productCosts.map((record) => [record.productId, record])),
-    [data.productCosts],
-  );
-  const bottleCosts = data.costCatalog?.bottleSizes ?? [];
-  const hasAnyProjection = data.products.length > 0 || data.costCatalog !== null || data.sales.length > 0
+  const hasAnyProjection = data.products.length > 0 || data.productCosts.length > 0 || data.sales.length > 0
     || data.saleProducts.length > 0 || data.saleBottleSizes.length > 0;
+  const productCostById = new Map<string, number | undefined>(
+    data.productCosts.map((cost) => [cost.productId, cost.customGramCostEgp] as const),
+  );
 
   return (
     <main dir="rtl" lang="ar" className="min-h-screen bg-[#F5F5F7] px-4 py-6 text-[#1D1D1F] sm:px-8">
@@ -93,8 +87,10 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
             <h1 className="mt-1 text-2xl font-black">مساحة التشغيل</h1>
             <p className="mt-1 text-sm text-[#6E6E73]">
               {data.permissions.canCreateSales
-                ? 'المخزون والتكلفة التشغيلية وصلاحية بيع محدودة'
-                : data.permissions.canViewOperationalCosts ? 'المخزون وتكاليف مدخلات التشغيل فقط' : 'المخزون فقط · قراءة فقط'}
+                ? 'البيع الآمن والمخزون وتكلفة الجرام التشغيلية المحدودة · لا أرباح أو هوامش أو عمولات أو ميزانيات'
+                : data.permissions.canViewOperationalSales
+                ? 'المخزون وسجل الفواتير وتكلفة الجرام التشغيلية المحدودة · دون أرباح أو عمولات أو ميزانيات'
+                : 'المخزون فقط · قراءة فقط'}
             </p>
           </div>
           <button
@@ -109,8 +105,8 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
         {!data.permissions.canCreateSales && <section className="flex gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" role="status">
           <TriangleAlert size={19} className="mt-0.5 shrink-0" />
           <p>
-            هذه الشاشة للقراءة فقط. لا تعرض أسعار البيع أو الأرباح أو العمولات، ولا تسمح بتسجيل عملية بيع أو خصم.
-            وفق القيود الحالية (واجهة عميل وقواعد Firestore فقط)، لا يمكن فرض حساب الخصم والمخزون متعدد الأصناف بأمان؛ لذلك يظل البيع محجوبًا بدل الاعتماد على تحقق الواجهة.
+            هذه الشاشة للقراءة فقط ولا تسمح بتسجيل عملية بيع أو خصم. لا تعرض أرباحاً أو هوامش أو عمولات أو ميزانيات.
+            وفق القيود الحالية، يظل البيع محجوباً ما لم يكن مسار العامل الآمن جاهزاً ومفعّلاً بعد المراجعة.
           </p>
         </section>}
 
@@ -132,24 +128,18 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
           <div className="flex items-center gap-3 border-b border-black/[0.06] p-5">
             <PackageSearch className="text-[#C49746]" size={21} />
             <div>
-              <h2 className="font-black">{data.permissions.canViewOperationalCosts ? 'كتالوج المخزون والتكلفة' : 'كتالوج المخزون'}</h2>
-              <p className="text-xs text-[#6E6E73]">
-                {data.permissions.canViewOperationalCosts
-                  ? 'لا يحتوي الإسقاط المقروء على سعر بيع أو هامش أو عمولة.'
-                  : 'لا يحتوي هذا الدور على بيانات التكلفة أو سعر البيع أو الهامش أو العمولة.'}
-              </p>
+              <h2 className="font-black">كتالوج المخزون</h2>
+              <p className="text-xs text-[#6E6E73]">يعرض الهوية والكمية وتكلفة الجرام التشغيلية المسموح بها فقط؛ لا يعرض الربح أو العمولة أو الميزانية.</p>
             </div>
           </div>
           {isLoading ? (
-            <p className="p-6 text-sm text-[#6E6E73]">جارٍ التحقق وتحميل الإسقاطات الآمنة…</p>
+            <p className="p-6 text-sm text-[#6E6E73]">جارٍ التحقق وتحميل الإسقاطات التشغيلية…</p>
           ) : data.products.length > 0 ? (
             <div className="divide-y divide-black/[0.05]">
               {data.products.map((product) => {
-                const costPerGram = getTypeGramCost(product, data);
-                const customCost = productCosts.get(product.id)?.customGramCostEgp;
                 const low = product.min_threshold_grams !== undefined && product.stock_grams <= product.min_threshold_grams;
                 return (
-                  <article key={product.id} className={`grid gap-3 p-4 sm:items-center sm:p-5 ${data.permissions.canViewOperationalCosts ? 'sm:grid-cols-[minmax(0,1fr)_auto_auto]' : 'sm:grid-cols-[minmax(0,1fr)_auto]'}`}>
+                  <article key={product.id} className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
                     <div className="min-w-0">
                       <h3 className="truncate font-bold">{product.name}</h3>
                       <p className="mt-1 text-xs text-[#6E6E73]">
@@ -158,15 +148,14 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
                     </div>
                     <div className="text-sm">
                       <span className="block text-xs text-[#6E6E73]">المخزون</span>
-                      <strong className={low ? 'text-amber-800' : ''}>
-                        {product.stock_grams.toLocaleString('ar-EG')} جم{low ? ' · عند حدّ إعادة الطلب' : ''}
-                      </strong>
+                      <strong className={low ? 'text-amber-800' : ''}>{stockLabel(product)}</strong>
                     </div>
-                    {data.permissions.canViewOperationalCosts && <div className="text-sm">
-                      <span className="block text-xs text-[#6E6E73]">تكلفة الزيت / جم</span>
-                      <strong>{formatEgp(costPerGram)}</strong>
-                      {customCost !== undefined && <span className="mr-2 text-[11px] text-[#6E6E73]">تكلفة مخصصة</span>}
-                    </div>}
+                    {data.permissions.canViewOperationalCosts && productCostById.get(product.id) !== undefined && (
+                      <div className="text-sm sm:text-left">
+                        <span className="block text-xs text-[#6E6E73]">تكلفة الجرام التشغيلية</span>
+                        <strong className="tabular-nums">{formatEgp(productCostById.get(product.id))} / جم</strong>
+                      </div>
+                    )}
                   </article>
                 );
               })}
@@ -174,30 +163,9 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
           ) : (
             <div className="p-6 text-sm text-[#6E6E73]">
               {hasAnyProjection
-                ? 'لا توجد منتجات في الإسقاط الآمن حالياً.'
-                : 'لم يُهيّئ المالك بعد إسقاطات الكتالوج التشغيلية. لا يتم فتح بيانات المنتجات المختلطة لهذا الدور.'}
+                ? 'لا توجد منتجات في الإسقاط التشغيلي حالياً.'
+                : 'لم يهيّئ المالك بعد إسقاطات الكتالوج التشغيلية. لا تُفتح بيانات المنتجات المختلطة لهذا الدور.'}
             </div>
-          )}
-        </section>}
-
-        {data.permissions.canViewOperationalCosts && <section className="rounded-3xl border border-black/[0.06] bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <ShieldCheck size={20} className="text-emerald-700" />
-            <h2 className="font-black">تكاليف العبوات ومدخلات التشغيل</h2>
-          </div>
-          {bottleCosts.length > 0 ? (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {bottleCosts.map((bottle) => (
-                <div key={bottle.id} className="rounded-2xl bg-[#F5F5F7] p-4 text-sm">
-                  <p className="font-bold">عبوة {bottle.sizeMl} مل</p>
-                  <p className="mt-2 text-[#6E6E73]">تكلفة الوحدة الأساسية: <strong className="text-[#1D1D1F]">{formatEgp(bottle.officialCostEgp)}</strong></p>
-                  {bottle.bottleCostEgp !== undefined && <p className="mt-1 text-[#6E6E73]">العبوة والبخاخ: <strong className="text-[#1D1D1F]">{formatEgp(bottle.bottleCostEgp)}</strong></p>}
-                  {bottle.alcoholCostEgp !== undefined && <p className="mt-1 text-[#6E6E73]">الكحول: <strong className="text-[#1D1D1F]">{formatEgp(bottle.alcoholCostEgp)}</strong></p>}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-[#6E6E73]">لم تُجهّز تكاليف العبوات بعد.</p>
           )}
         </section>}
 
@@ -206,7 +174,7 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
             <ReceiptText className="text-[#C49746]" size={21} />
             <div>
               <h2 className="font-black">سجل الفواتير التشغيلي</h2>
-              <p className="text-xs text-[#6E6E73]">آخر 50 فاتورة · مزامنة لحظية · لا يعرض التكلفة أو الربح أو العمولة</p>
+              <p className="text-xs text-[#6E6E73]">آخر 50 فاتورة · لا يعرض التكلفة الإجمالية أو الربح أو العمولة.</p>
             </div>
           </div>
           {isLoading ? (
@@ -249,10 +217,9 @@ export default function TarekReadOnlyWorkspace({ onLogout }: Props) {
 
         <p className="px-1 text-xs leading-6 text-[#6E6E73]">
           {data.permissions.canCreateSales
-            ? 'واجهة البيع المقيدة معروضة محلياً فقط؛ لم تُنشر خدمة خادمية ولم تُختبر مزامنة طارق الحية أو بين الأجهزة. الأسعار لا يحررها الموظف، والخصم يُقبل فقط بعد تحقق العامل.'
-            : data.permissions.canViewOperationalCosts
-            ? 'سجل الإيصالات منفصل عن سجلات التكلفة والأرباح والعمولات؛ ولا تمنح هذه المساحة صلاحية تسجيل بيع أو تعديل فاتورة.'
-            : 'هذا الدور يرى المخزون والإيصالات التشغيلية فقط؛ ولا يتلقى مستندات التكلفة أو الربح أو العمولة.'}
+            ? 'مسار البيع المقيد معروض محلياً فقط؛ لم تُنشر الخدمة الخادمية ولم تُختبر مزامنة طارق الحية أو بين الأجهزة. الأسعار لا يحررها الموظف، والخصم لا يعتمد إلا بعد تحقق العامل.'
+            : 'هذا الدور يقرأ إسقاطات المخزون والفواتير التشغيلية وتكلفة الجرام المسموح بها فقط، ولا يتلقى سجلات الأرباح أو العمولات أو الميزانيات أو الإعدادات المالية.'}
+          {data.permissions.canViewOperationalCosts && ' اجتماع سعر البيع مع تكلفة الجرام قد يتيح استنتاج هامش تقريبي؛ لا تعرض الشاشة رقم الربح أو العمولة.'}
         </p>
       </div>
     </main>

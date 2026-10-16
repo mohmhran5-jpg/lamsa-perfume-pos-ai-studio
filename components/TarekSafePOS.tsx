@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, CircleDollarSign, LoaderCircle, PackagePlus, RefreshCw, ShieldCheck, ShoppingBag, Trash2 } from 'lucide-react';
 import { auth } from '../services/firebase';
 import {
-  LOCAL_LAMSA_SALE_ENDPOINT,
-  quoteTarekSaleToLocalEmulatorWorker,
-  submitTarekSaleIntentToLocalEmulatorWorker,
+  getConfiguredTarekSaleWorkerEndpoint,
+  quoteTarekSaleToWorker,
+  submitTarekSaleIntentToWorker,
   type TarekSaleQuoteResult,
 } from '../services/workerSaleClient';
 import {
@@ -86,7 +86,9 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     quote: TarekSaleQuoteResult;
   } | null>(null);
 
+  const workerEndpoint = useMemo(() => getConfiguredTarekSaleWorkerEndpoint(), []);
   const localPreviewEnabled = import.meta.env.DEV && import.meta.env.VITE_PREVIEW_SAFE_MODE === 'true';
+  const saleWorkerEnabled = Boolean(workerEndpoint);
   const stockByProduct = useMemo(() => new Map(stockProducts.map((product) => [String(product.id), product.stock_grams])), [stockProducts]);
   const activeProducts = useMemo(
     () => products.filter((product) => product.isActive !== false).sort((a, b) => a.name.localeCompare(b.name, 'ar')),
@@ -106,7 +108,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     && cartOfferQuantity === selectedOffer.quantity);
   const discountAmount = amount(manualDiscountText);
   const cartHasQueuedSale = outbox.some((entry) => entry.saleId === saleId);
-  const localWorkerUsable = localPreviewEnabled && Boolean(auth.currentUser) && isOnline;
+  const saleWorkerUsable = saleWorkerEnabled && Boolean(auth.currentUser) && isOnline;
 
   useEffect(() => {
     const refresh = () => setOutbox(getTarekSaleOutbox());
@@ -132,10 +134,10 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
 
   useEffect(() => {
     const flush = () => {
-      if (!localWorkerUsable || getTarekSaleOutbox().length === 0) return;
-      void flushTarekSaleOutbox((intent) => submitTarekSaleIntentToLocalEmulatorWorker(
+      if (!saleWorkerUsable || !workerEndpoint || getTarekSaleOutbox().length === 0) return;
+      void flushTarekSaleOutbox((intent) => submitTarekSaleIntentToWorker(
         intent,
-        LOCAL_LAMSA_SALE_ENDPOINT,
+        workerEndpoint,
         async () => {
           const currentUser = auth.currentUser;
           if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
@@ -145,12 +147,12 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     };
     window.addEventListener('online', flush);
     const timer = window.setInterval(flush, 30_000);
-    if (localWorkerUsable && getTarekSaleOutbox().length > 0) flush();
+    if (saleWorkerUsable && getTarekSaleOutbox().length > 0) flush();
     return () => {
       window.removeEventListener('online', flush);
       window.clearInterval(timer);
     };
-  }, [localWorkerUsable]);
+  }, [saleWorkerUsable, workerEndpoint]);
 
   function invalidateQuote(nextCart?: CartLine[]) {
     if (cartHasQueuedSale) return;
@@ -223,8 +225,10 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
       setError('صلاحية البيع أو كتالوج الأسعار غير جاهز؛ لا يمكن المتابعة.');
       return;
     }
-    if (!localPreviewEnabled) {
-      setError('المبيعات غير متصلة بأي Worker إنتاجي. هذه النسخة تسمح فقط بمعاينة التطوير المحلية الآمنة.');
+    if (!workerEndpoint) {
+      setError(localPreviewEnabled
+        ? 'عنوان عامل المحاكي غير صالح أو المعاينة المحلية غير مفعّلة.'
+        : 'مسار بيع طارق غير مفعّل؛ لا يوجد عنوان Worker إنتاجي مضبوط في إعدادات البناء.');
       return;
     }
     if (!isOnline || typeof navigator === 'undefined' || !navigator.onLine) {
@@ -232,7 +236,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
       return;
     }
     if (!auth.currentUser) {
-      setError('لا توجد جلسة Firebase صالحة في بيئة المعاينة المحلية.');
+      setError('لا توجد جلسة Firebase صالحة للحصول على رمز دخول.');
       return;
     }
     if (cart.length === 0) {
@@ -249,9 +253,9 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
     catch (reason) { setError(reason instanceof Error ? reason.message : 'بيانات البيع غير صالحة.'); return; }
     setQuoteBusy(true);
     try {
-      const result = await quoteTarekSaleToLocalEmulatorWorker(
+      const result = await quoteTarekSaleToWorker(
         draft,
-        LOCAL_LAMSA_SALE_ENDPOINT,
+        workerEndpoint,
         async () => {
           const currentUser = auth.currentUser;
           if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
@@ -259,7 +263,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
         },
       );
       setQuote({ ...result, draft });
-      setNotice('تم جلب السعر المرجعي من العامل المحلي. راجع الإجمالي قبل اعتماد البيع.');
+      setNotice('تم جلب السعر المرجعي من عامل البيع. راجع الإجمالي قبل اعتماد البيع.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'تعذّر حساب السعر المرجعي.');
     } finally {
@@ -268,16 +272,16 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
   }
 
   async function flushOutboxNow(saleToWatch?: string, forceRetry = false) {
-    if (!localWorkerUsable || typeof navigator === 'undefined' || !navigator.onLine) {
-      setError('العامل المحلي أو جلسة الاختبار غير متاحين؛ بقيت الفاتورة في هذا المتصفح فقط.');
+    if (!saleWorkerUsable || !workerEndpoint || typeof navigator === 'undefined' || !navigator.onLine) {
+      setError('خدمة البيع أو جلسة Firebase غير متاحة؛ بقيت الفاتورة في هذا المتصفح فقط.');
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const result = await flushTarekSaleOutbox((intent) => submitTarekSaleIntentToLocalEmulatorWorker(
+      const result = await flushTarekSaleOutbox((intent) => submitTarekSaleIntentToWorker(
         intent,
-        LOCAL_LAMSA_SALE_ENDPOINT,
+        workerEndpoint,
         async () => {
           const currentUser = auth.currentUser;
           if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
@@ -291,7 +295,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
         setQuote(null);
         setManualDiscountText('0');
         setPromotionId('');
-        setNotice('أقرّ العامل المحلي اعتماد الفاتورة؛ سيصل سجلها للأجهزة المشتركة فقط عند وجود اتصال مشترك فعلي.');
+        setNotice('أكد عامل البيع اعتماد الفاتورة. تظهر على الأجهزة الأخرى عند اتصالها بقاعدة المتجر نفسها.');
       } else if (result.failed > 0) {
         setNotice('لم يؤكد العامل إتمام كل الفواتير؛ بقيت العناصر في الطابور للمراجعة أو إعادة المحاولة.');
       }
@@ -308,8 +312,8 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
       setQuote(null);
       return;
     }
-    if (!localWorkerUsable || typeof navigator === 'undefined' || !navigator.onLine) {
-      setError('العامل المحلي غير متاح؛ لن يُعلن البيع مكتملاً.');
+    if (!saleWorkerUsable || !workerEndpoint || typeof navigator === 'undefined' || !navigator.onLine) {
+      setError('خدمة البيع غير متاحة؛ لن يُعلن البيع مكتملاً.');
       return;
     }
     setBusy(true);
@@ -327,17 +331,17 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
   }
 
   async function requestRequote(entry: TarekSaleOutboxEntry) {
-    if (!localWorkerUsable) {
-      setError('لا يمكن تحديث السعر دون العامل المحلي وجلسة الاختبار.');
+    if (!saleWorkerUsable || !workerEndpoint) {
+      setError('لا يمكن تحديث السعر دون خدمة البيع وجلسة Firebase.');
       return;
     }
     setBusy(true);
     setError(null);
     try {
       const draft = draftFromEntry(entry, newId('quote'));
-      const result = await quoteTarekSaleToLocalEmulatorWorker(
+      const result = await quoteTarekSaleToWorker(
         draft,
-        LOCAL_LAMSA_SALE_ENDPOINT,
+        workerEndpoint,
         async () => {
           const currentUser = auth.currentUser;
           if (!currentUser) throw new Error('worker-sale/firebase-id-token-required');
@@ -383,8 +387,8 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
             </p>
           </div>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-bold ${localPreviewEnabled ? 'bg-amber-100 text-amber-900' : 'bg-rose-100 text-rose-900'}`}>
-          {localPreviewEnabled ? 'محاكي محلي فقط' : 'لا يوجد اتصال إنتاجي'}
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${saleWorkerEnabled ? 'bg-amber-100 text-amber-900' : 'bg-rose-100 text-rose-900'}`}>
+          {saleWorkerEnabled ? (localPreviewEnabled ? 'محاكي محلي فقط' : 'عنوان Worker مضبوط — التفعيل منفصل') : 'لا يوجد اتصال إنتاجي'}
         </span>
       </header>
 
@@ -392,7 +396,9 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
         <div role="note" className="flex gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs leading-5 text-amber-950">
           <ShieldCheck className="mt-0.5 shrink-0" size={18} />
           <p>
-            هذا مسار تطوير محلي فقط؛ لا يزامن بين الأجهزة ولا يتصل بـFirebase أو Worker إنتاجي. طابور المبيعات محفوظ على هذا المتصفح فقط، ولا يُحذف إلا بعد إقرار مطابق من العامل المحلي. إعادة محاولة الشبكة تستخدم معرّف الفاتورة نفسه لمنع التكرار.
+            {saleWorkerEnabled
+              ? 'يُرسل السعر والبيع إلى عنوان Worker المضمّن في إعداد البناء بعد الحصول على Firebase ID token. طابور إعادة المحاولة محلي لهذا المتصفح، ومعرّف الفاتورة ثابت لمنع التكرار.'
+              : 'بيع طارق معطّل حتى يُضبط عنوان Worker ويُفعّل صراحةً. طابور إعادة المحاولة محلي لهذا المتصفح ولا ينشئ بيعاً عند انقطاع الاتصال.'}
           </p>
         </div>
 
@@ -475,13 +481,13 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
         <p className="text-xs text-[#6E6E73]">سقف الخصم يحدده العامل بحسب التكلفة والعمولة والهامش المحمي؛ إدخال الخصم لا يضمن قبوله. العروض المخصصة، واستبدال نقاط الولاء، ودفتر CRM، والخلطات المحفوظة وإحصاءات إعادة شرائها غير مفعّلة في هذا المسار.</p>
 
         <div className="flex flex-wrap gap-3">
-          <button type="button" onClick={() => void requestQuote()} disabled={!canCreateSales || !catalogReady || !localPreviewEnabled || quoteBusy || busy || cart.length === 0 || cartHasQueuedSale || !offerMatches || !Number.isFinite(discountAmount)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-800 px-4 py-2 text-sm font-bold text-emerald-900 disabled:opacity-40">
+          <button type="button" onClick={() => void requestQuote()} disabled={!canCreateSales || !catalogReady || !saleWorkerEnabled || quoteBusy || busy || cart.length === 0 || cartHasQueuedSale || !offerMatches || !Number.isFinite(discountAmount)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-800 px-4 py-2 text-sm font-bold text-emerald-900 disabled:opacity-40">
             {quoteBusy ? <LoaderCircle className="animate-spin" size={16} /> : <CircleDollarSign size={16} />} حساب السعر المعتمد
           </button>
-          {quote && <button type="button" onClick={() => void approveQuotedSale()} disabled={busy || !localWorkerUsable || Date.now() >= quote.expiresAt || cartHasQueuedSale} className="inline-flex items-center gap-2 rounded-xl bg-emerald-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
+          {quote && <button type="button" onClick={() => void approveQuotedSale()} disabled={busy || !saleWorkerUsable || Date.now() >= quote.expiresAt || cartHasQueuedSale} className="inline-flex items-center gap-2 rounded-xl bg-emerald-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
             {busy ? <LoaderCircle className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} اعتماد البيع ({formatEgp(quote.sale.totalPrice)})
           </button>}
-          {outbox.some((entry) => entry.status === 'فشل' || entry.status === 'معلق' || entry.status === 'جاري المزامنة') && <button type="button" onClick={() => void flushOutboxNow(undefined, true)} disabled={busy || !localWorkerUsable} className="inline-flex items-center gap-2 rounded-xl border border-black/15 px-4 py-2 text-sm font-bold disabled:opacity-40"><RefreshCw size={15} /> مزامنة الآن</button>}
+          {outbox.some((entry) => entry.status === 'فشل' || entry.status === 'معلق' || entry.status === 'جاري المزامنة') && <button type="button" onClick={() => void flushOutboxNow(undefined, true)} disabled={busy || !saleWorkerUsable} className="inline-flex items-center gap-2 rounded-xl border border-black/15 px-4 py-2 text-sm font-bold disabled:opacity-40"><RefreshCw size={15} /> مزامنة الآن</button>}
         </div>
 
         {quote && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4" aria-live="polite">
@@ -504,7 +510,7 @@ export default function TarekSafePOS({ canCreateSales, catalogReady, products, b
                 <span className="text-xs text-[#6E6E73]">محاولات: {entry.retryCount}</span>
               </div>
               {entry.errorCode && <p className="mt-1 break-all text-xs text-rose-800">{entry.errorCode}</p>}
-              {entry.status === 'يحتاج تحديث السعر' && <button type="button" onClick={() => void requestRequote(entry)} disabled={busy || !localWorkerUsable} className="mt-2 rounded-lg border border-amber-700 px-3 py-1.5 text-xs font-bold text-amber-900 disabled:opacity-40">إعادة التسعير</button>}
+              {entry.status === 'يحتاج تحديث السعر' && <button type="button" onClick={() => void requestRequote(entry)} disabled={busy || !saleWorkerUsable} className="mt-2 rounded-lg border border-amber-700 px-3 py-1.5 text-xs font-bold text-amber-900 disabled:opacity-40">إعادة التسعير</button>}
             </article>)}
           </div>
         </section>}

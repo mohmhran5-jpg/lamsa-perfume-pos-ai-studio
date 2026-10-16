@@ -4483,7 +4483,7 @@ export const TAREK_OPERATIONAL_PERMISSIONS: UserPermissions = {
   canExportData: false, // STRICTLY FORBIDDEN (النسخ الاحتياطي الشامل وقاعدة البيانات)
   canViewProfits: false, // STRICTLY FORBIDDEN (أسرار الأرباح الصافية للمالك)
   canViewCosts: false, // STRICTLY FORBIDDEN (أسرار التكلفة وسعر الجملة)
-  canViewOperationalCosts: true, // تكاليف التشغيل اللازمة للبيع فقط عبر الإسقاطات المنفصلة
+  canViewOperationalCosts: true, // قراءة تكلفة الجرام التشغيلية فقط؛ لا أرباح أو هوامش أو عمولات أو ميزانيات
   canViewExpenses: false, // STRICTLY FORBIDDEN (رواتب الإدارة والمصاريف الحساسة)
   canViewReports: false, // تقارير المالك/البيانات القديمة قد تكشف التكلفة والعمولة؛ لا تكفي إخفاءات الواجهة
   canManageSettings: false, // STRICTLY FORBIDDEN (إعدادات النظام الحساسة)

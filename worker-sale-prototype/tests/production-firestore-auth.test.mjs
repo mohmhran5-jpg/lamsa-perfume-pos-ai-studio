@@ -164,10 +164,11 @@ test('production transport pins identity/resource and rejects URL escape attempt
   }), (error) => error.code === 'firestore/endpoint-not-allowed');
 });
 
-test('all public Worker routes remain emulator-only even when the internal production transport switch is enabled', async () => {
+test('public sale routes remain disabled by default even when only the internal REST switch is enabled', async () => {
   const env = productionEnv();
   const routes = [
     new Request('https://worker.test/health'),
+    new Request('https://worker.test/api/lamsa/commission-counter/bootstrap', { method: 'POST', headers: { origin: 'https://mohmhran5-jpg.github.io', 'content-type': 'application/json' }, body: '{}' }),
     new Request('https://worker.test/api/lamsa/sales/quote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
     new Request('https://worker.test/api/lamsa/sales', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
     new Request('https://worker.test/api/lamsa/sales/sale-test-001/reverse', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
@@ -176,9 +177,37 @@ test('all public Worker routes remain emulator-only even when the internal produ
   for (const [index, request] of routes.entries()) {
     const response = await Worker.fetch(request, env);
     assert.equal(response.status, 503, request.url);
-    const expected = index === 0 ? { ok: false } : { ok: false, error: 'prototype/emulator-only' };
+    const expected = index === 0 ? { ok: false }
+      : index === routes.length - 1 ? { ok: false, error: 'prototype/emulator-only' }
+        : { ok: false, error: 'prototype/production-routes-disabled' };
     assert.deepEqual(await response.json(), expected, request.url);
   }
+});
+
+test('actual Worker preflight returns exact local CORS headers and rejects non-local origins', async () => {
+  const env = {
+    ENVIRONMENT: 'local-emulator',
+    PROJECT_ID: 'demo-worker-sale',
+    FIRESTORE_DATABASE_ID: 'demo-named-firestore-db',
+    FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+    FIRESTORE_EMULATOR_ADMIN_TOKEN: 'emulator-only-test-token',
+    FIREBASE_TEST_CERTS_URL: 'http://127.0.0.1:9999/certs',
+  };
+  const makePreflight = (origin) => new Request('http://worker.test/api/lamsa/sales/quote', {
+    method: 'OPTIONS',
+    headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization, content-type' },
+  });
+  const allowed = await Worker.fetch(makePreflight('http://localhost:3000'), env);
+  assert.equal(allowed.status, 204);
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://localhost:3000');
+  assert.equal(allowed.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
+  assert.equal(allowed.headers.get('access-control-allow-headers'), 'authorization, content-type');
+  assert.equal(allowed.headers.get('access-control-max-age'), '300');
+
+  const denied = await Worker.fetch(makePreflight('https://mohmhran5-jpg.github.io'), env);
+  assert.equal(denied.status, 403);
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+  assert.deepEqual(await denied.json(), { ok: false, error: 'worker/origin-not-allowed' });
 });
 
 test('Wrangler remains local-only and stores no service-account credential', async () => {
@@ -186,6 +215,8 @@ test('Wrangler remains local-only and stores no service-account credential', asy
   assert.match(wrangler, /ENVIRONMENT = "local-emulator"/);
   assert.match(wrangler, /PROJECT_ID = "demo-worker-sale"/);
   assert.match(wrangler, /FIRESTORE_PRODUCTION_TRANSPORT_ENABLED = "false"/);
+  assert.match(wrangler, /SALE_WORKER_PRODUCTION_ENABLED = "false"/);
+  assert.match(wrangler, /CORS_ALLOWED_ORIGIN = "https:\/\/mohmhran5-jpg\.github\.io"/);
   assert.doesNotMatch(wrangler, /\[env\.production\]/);
   assert.doesNotMatch(wrangler, /GCP_SERVICE_ACCOUNT_PRIVATE_KEY|GCP_SERVICE_ACCOUNT_EMAIL/);
 });

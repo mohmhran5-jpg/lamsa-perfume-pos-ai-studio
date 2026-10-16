@@ -245,6 +245,16 @@ function readReadyCommissionCounter(docs, dateKey) {
   catch { throw new LamsaWorkerError(503, 'sale/commission-counter-not-ready'); }
 }
 
+export const LAMSA_FRESH_START_DATE_KEY = '2026-10-17';
+
+/** Keep the agreed zero-baseline cutover fail-closed if any same-day history exists. */
+export function assertFreshStartDateHasNoSales(dateKey, history) {
+  if (dateKey === LAMSA_FRESH_START_DATE_KEY
+      && (history?.uniqueSaleCount !== 0 || history?.sprayBottlesSold !== 0)) {
+    throw new LamsaWorkerError(409, 'sale/fresh-start-date-not-empty');
+  }
+}
+
 /** Owner-only, current-UTC-day bootstrap. Repeated calls read only the counter. */
 export async function handleLamsaCommissionCounterBootstrap(request, env, helpers) {
   const { authenticate, batchGet, fsRequest, firestoreRoot, makeWrite, commitWrites, rollback, decodeFields, json } = helpers;
@@ -280,6 +290,7 @@ export async function handleLamsaCommissionCounterBootstrap(request, env, helper
       const history = await queryHistoricalSalesForCounter(
         env, transactionId, dateKey, fsRequest, firestoreRoot, decodeFields,
       );
+      assertFreshStartDateHasNoSales(dateKey, history);
       const now = new Date().toISOString();
       const counter = {
         schemaVersion: 1,

@@ -116,7 +116,7 @@ export function isAuthorizedOperationalProfile(
   return isAuthorizedOwnerProfile(profile, identity) || isAuthorizedTarekProfile(profile, identity);
 }
 
-/** Full raw-cost access remains owner-only; employee access is limited to operational cost projections. */
+/** Broad cost datasets remain owner-only; an explicitly authorized store manager may read only the narrow operational cost projection. */
 export function canAccessSeparatedCostData(
   profile: AppProfileLike | null | undefined,
   identity: FirebaseIdentityLike | null | undefined,
@@ -127,6 +127,18 @@ export function canAccessSeparatedCostData(
 export function canAccessSeparatedOperationalCostData(
   profile: AppProfileLike | null | undefined,
   identity: FirebaseIdentityLike | null | undefined,
+  assignment: FirebaseRoleAssignmentLike | null | undefined = currentFirebaseRoleAssignment,
 ): boolean {
-  return isAuthorizedOperationalProfile(profile, identity);
+  if (isAuthorizedOwnerProfile(profile, identity)) return true;
+  const email = typeof identity?.email === 'string' ? identity.email.trim().toLowerCase() : '';
+  const isLegacyTarek = email === TAREK_AUTH_EMAIL && !assignment;
+  const hasStoreManagerGrant = Boolean(assignment
+    && typeof assignment.email === 'string'
+    && assignment.email.trim().toLowerCase() === email
+    && assignment.active === true
+    && assignment.role === 'STORE_MANAGER');
+  return profile?.role === 'STORE_MANAGER'
+    && profile.isActive === true
+    && isVerifiedTarekIdentity(identity, assignment)
+    && (isLegacyTarek || hasStoreManagerGrant);
 }
