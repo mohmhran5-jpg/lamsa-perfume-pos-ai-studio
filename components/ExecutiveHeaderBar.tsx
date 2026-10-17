@@ -1034,7 +1034,10 @@ export const ExecutiveHeaderBar: React.FC<ExecutiveHeaderBarProps> = React.memo(
           {/* ---------------------------------------------------- */}
           {/* ROW 2: STORE SHIFT CAPSULE + LIVE CLOCK & DATE + INVOICES LOG BUTTON */}
           {/* ---------------------------------------------------- */}
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-black/[0.04]">
+          <div 
+            className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-black/[0.04] rounded-2xl p-1.5"
+            style={{ backgroundColor: '#f7bfc5' }}
+          >
             {/* RIGHT SIDE: Store Branch & Shift Capsule */}
             <button
               type="button"

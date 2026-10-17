@@ -16,7 +16,9 @@
         "paymentMethod": { "type": "string" },
         "commissionAmount": { "type": "number" },
         "employeeName": { "type": "string" },
-        "source": { "type": "string" }
+        "source": { "type": "string" },
+        "isReversed": { "type": "boolean" },
+        "dataClassification": { "type": "string" }
       },
       "required": ["id", "date", "items", "totalPrice", "totalCost", "totalProfit", "paymentMethod"]
     },
@@ -25,14 +27,15 @@
       "description": "Perfume product and stock in grams",
       "type": "object",
       "properties": {
-        "id": { "type": "number" },
+        "id": { "type": "string" },
         "name": { "type": "string" },
         "brand": { "type": "string" },
         "origin": { "type": "string" },
         "gender": { "type": "string" },
         "season": { "type": "string" },
         "type": { "type": "string" },
-        "stock_grams": { "type": "number" }
+        "stock_grams": { "type": "number" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["id", "name", "brand", "type", "stock_grams"]
     },
@@ -47,7 +50,8 @@
         "category": { "type": "string" },
         "date": { "type": "string" },
         "isRecurringMonthly": { "type": "boolean" },
-        "notes": { "type": "string" }
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["id", "title", "amount", "category", "date"]
     },
@@ -59,9 +63,8 @@
         "storeName": { "type": "string" },
         "currency": { "type": "string" },
         "storeSlogan": { "type": "string" },
-        "storePhone": { "type": "string" },
-        "storeAddress": { "type": "string" },
-        "logoUrl": { "type": "string" }
+        "activeThemeId": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["storeName", "currency"]
     },
@@ -74,12 +77,11 @@
         "sizeMl": { "type": "number" },
         "essenceGrams": { "type": "number" },
         "bottleCost": { "type": "number" },
-        "suggestedMargin": { "type": "number" },
         "normalPrice": { "type": "number" },
         "specialPrice": { "type": "number" },
         "officialCost": { "type": "number" }
       },
-      "required": ["id", "sizeMl", "essenceGrams", "bottleCost", "suggestedMargin"]
+      "required": ["id", "sizeMl", "essenceGrams", "bottleCost"]
     },
     "FinancialVault": {
       "title": "FinancialVault",
@@ -88,14 +90,11 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "description": { "type": "string" },
         "currentBalance": { "type": "number" },
         "totalInflow": { "type": "number" },
-        "totalWithdrawn": { "type": "number" },
-        "targetMonthlyAllocation": { "type": "number" },
-        "withdrawalFrequency": { "type": "string" }
+        "totalWithdrawn": { "type": "number" }
       },
-      "required": ["id", "name", "currentBalance", "totalInflow", "totalWithdrawn"]
+      "required": ["id", "name", "currentBalance"]
     },
     "WithdrawalTransaction": {
       "title": "WithdrawalTransaction",
@@ -104,20 +103,12 @@
       "properties": {
         "id": { "type": "string" },
         "vaultId": { "type": "string" },
-        "vaultName": { "type": "string" },
-        "type": { "type": "string" },
         "amount": { "type": "number" },
         "date": { "type": "string" },
         "executedBy": { "type": "string" },
-        "recipientName": { "type": "string" },
-        "reason": { "type": "string" },
-        "status": { "type": "string" },
-        "balanceBefore": { "type": "number" },
-        "balanceAfter": { "type": "number" },
-        "notes": { "type": "string" },
-        "invoiceRef": { "type": "string" }
+        "reason": { "type": "string" }
       },
-      "required": ["id", "vaultId", "vaultName", "amount", "date", "executedBy", "reason", "balanceAfter"]
+      "required": ["id", "vaultId", "amount", "date", "executedBy", "reason"]
     },
     "StaffAttendanceRecord": {
       "title": "StaffAttendanceRecord",
@@ -128,10 +119,9 @@
         "date": { "type": "string" },
         "employeeName": { "type": "string" },
         "shiftOpenedAt": { "type": "string" },
-        "isCompleted": { "type": "boolean" },
-        "baseSalaryDue": { "type": "number" }
+        "isCompleted": { "type": "boolean" }
       },
-      "required": ["id", "date", "employeeName", "shiftOpenedAt", "baseSalaryDue"]
+      "required": ["id", "date", "employeeName", "shiftOpenedAt"]
     },
     "ProductionBatch": {
       "title": "ProductionBatch",
@@ -139,249 +129,118 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "batchNumber": { "type": "string" },
-        "productId": { "type": "number" },
         "productName": { "type": "string" },
         "creationDate": { "type": "string" },
-        "targetMacerationDays": { "type": "number" },
-        "oilGramsUsed": { "type": "number" },
-        "totalBatchVolumeMl": { "type": "number" },
         "status": { "type": "string" }
       },
-      "required": ["id", "batchNumber", "productId", "productName", "creationDate", "status"]
+      "required": ["id", "productName", "creationDate", "status"]
     },
     "AuditLogRecord": {
       "title": "AuditLogRecord",
-      "description": "Audit trail records for price, size, recipe, and system modifications",
+      "description": "Audit trail records for system modifications",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "timestamp": { "type": "string" },
-        "actionType": { "type": "string" },
-        "targetEntity": { "type": "string" },
-        "performedBy": { "type": "string" },
-        "reason": { "type": "string" },
-        "isOwnerApproved": { "type": "boolean" }
+        "user": { "type": "string" },
+        "action": { "type": "string" },
+        "entityType": { "type": "string" },
+        "reason": { "type": "string" }
       },
-      "required": ["id", "timestamp", "actionType", "targetEntity", "performedBy", "reason"]
+      "required": ["id", "timestamp", "user", "action"]
     },
-    "StrategicReplenishmentOrder": {
-      "title": "StrategicReplenishmentOrder",
-      "description": "Replenishment purchase order for strategic inventory shortages",
+    "AppUser": {
+      "title": "AppUser",
+      "description": "System user account and permissions",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "orderNumber": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "supplierName": { "type": "string" },
-        "items": { "type": "array" },
-        "totalGrams": { "type": "number" },
-        "totalEstimatedCost": { "type": "number" },
-        "status": { "type": "string" }
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "permissions": { "type": "object" }
       },
-      "required": ["id", "orderNumber", "createdAt", "supplierName", "items", "totalGrams", "totalEstimatedCost", "status"]
-    },
-    "FragranceDatabaseEntry": {
-      "title": "FragranceDatabaseEntry",
-      "description": "Persistent verified fragrance encyclopedia profile",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "brand": { "type": "string" },
-        "type": { "type": "string" },
-        "gender": { "type": "string" },
-        "classification": { "type": "string" },
-        "topNotes": { "type": "array" },
-        "heartNotes": { "type": "array" },
-        "baseNotes": { "type": "array" },
-        "mainAccords": { "type": "array" },
-        "longevity": { "type": "string" },
-        "sillage": { "type": "string" },
-        "confidenceDegree": { "type": "string" },
-        "approvalStatus": { "type": "string" }
-      },
-      "required": ["id", "name", "brand", "type", "gender", "classification", "approvalStatus"]
+      "required": ["id", "username", "role"]
     },
     "CustomCustomerRecord": {
       "title": "CustomCustomerRecord",
-      "description": "Real store customer profile, loyalty balance, preferences, offers, and follow-up logs",
+      "description": "Real store customer profile and loyalty balance",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "phone": { "type": "string" },
         "name": { "type": "string" },
-        "notes": { "type": "string" },
-        "favoriteStyle": { "type": "string" },
-        "preferredBottleSizeMl": { "type": "number" },
-        "concentrationPreference": { "type": "string" },
-        "packagingPreference": { "type": "string" },
-        "preferredChannel": { "type": "string" },
-        "specialOccasionDate": { "type": "string" },
-        "nextFollowUpDate": { "type": "string" },
-        "followUpStatus": { "type": "string" },
         "bonusPoints": { "type": "number" },
-        "redeemedPoints": { "type": "number" },
-        "loyaltyLogs": { "type": "array" },
-        "followUpLogs": { "type": "array" },
-        "customOffersSent": { "type": "array" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "redeemedPoints": { "type": "number" }
       },
       "required": ["name"]
     },
     "SavedMixFormula": {
       "title": "SavedMixFormula",
-      "description": "Saved custom perfume mix formula for one bottle unit",
+      "description": "Saved custom perfume mix formula",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
         "bottleSizeMl": { "type": "number" },
-        "isRollOn": { "type": "boolean" },
-        "isColoredBottle": { "type": "boolean" },
-        "components": { "type": "array" },
-        "totalEssenceGrams": { "type": "number" },
-        "totalCost": { "type": "number" },
-        "sellingPrice": { "type": "number" },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "components": { "type": "array" }
       },
-      "required": ["id", "name", "bottleSizeMl", "components", "totalEssenceGrams"]
+      "required": ["id", "name", "bottleSizeMl", "components"]
     },
     "ConnectedDevice": {
       "title": "ConnectedDevice",
-      "description": "Real-time presence and connectivity state of active store terminals and devices",
+      "description": "Real-time presence of active terminals",
       "type": "object",
       "properties": {
         "deviceId": { "type": "string" },
-        "userId": { "type": "string" },
         "userName": { "type": "string" },
-        "userRole": { "type": "string" },
-        "deviceName": { "type": "string" },
-        "deviceType": { "type": "string" },
-        "currentView": { "type": "string" },
-        "isOnline": { "type": "boolean" },
         "lastSeen": { "type": "string" },
-        "lastSeenMs": { "type": "number" },
-        "appVersion": { "type": "string" }
+        "isOnline": { "type": "boolean" }
       },
-      "required": ["deviceId", "userName", "lastSeenMs"]
+      "required": ["deviceId", "userName", "lastSeen"]
     },
     "OwnerStaffBroadcast": {
       "title": "OwnerStaffBroadcast",
-      "description": "Real-time owner direct broadcasts and staff directives",
+      "description": "Real-time owner broadcasts",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "title": { "type": "string" },
         "message": { "type": "string" },
-        "category": { "type": "string" },
-        "senderName": { "type": "string" },
-        "targetEmployee": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "expiresAt": { "type": "string" },
-        "durationHours": { "type": "number" },
-        "isImportant": { "type": "boolean" },
-        "importanceCategory": { "type": "string" },
-        "soundType": { "type": "string" },
-        "requiresAcknowledgement": { "type": "boolean" },
-        "acknowledgedBy": { "type": "array" },
-        "repeatMode": { "type": "string" },
-        "repeatDayOfWeek": { "type": "number" },
-        "repeatStartDate": { "type": "string" },
-        "repeatEndDate": { "type": "string" },
-        "repeatTime": { "type": "string" },
-        "repeatDurationWeeks": { "type": "number" }
+        "createdAt": { "type": "string" }
       },
-      "required": ["id", "title", "message", "category", "senderName", "createdAt"]
+      "required": ["id", "title", "message", "createdAt"]
+    },
+    "DailyClosure": {
+      "title": "DailyClosure",
+      "description": "Daily shift closure report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "openedBy": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "date", "status"]
     }
   },
   "firestore": {
-    "/owner_broadcasts/{broadcastId}": {
-      "schema": "OwnerStaffBroadcast",
-      "description": "Collection of owner directives and staff broadcasts"
-    },
-    "/connected_devices/{deviceId}": {
-      "schema": "ConnectedDevice",
-      "description": "Real-time presence and heartbeats of active terminals"
-    },
-    "/saved_mixes/{mixId}": {
-      "schema": "SavedMixFormula",
-      "description": "Collection of saved custom perfume mix formulas"
-    },
-    "/customers/{customerId}": {
-      "schema": "CustomCustomerRecord",
-      "description": "Collection of real customer loyalty profiles and follow-up records"
-    },
-    "/replenishment_orders/{orderId}": {
-      "schema": "StrategicReplenishmentOrder",
-      "description": "Collection of strategic replenishment purchase orders"
-    },
-    "/fragrance_database/{profileId}": {
-      "schema": "FragranceDatabaseEntry",
-      "description": "Collection of verified fragrance profiles"
-    },
-    "/sales/{saleId}": {
-      "schema": "Sale",
-      "description": "Collection of perfume sales recorded across all devices"
-    },
-    "/products/{productId}": {
-      "schema": "Product",
-      "description": "Collection of perfume catalogue items with live stock in grams"
-    },
-    "/expenses/{expenseId}": {
-      "schema": "Expense",
-      "description": "Collection of operational expenses"
-    },
-    "/settings/store": {
-      "schema": "StoreSettings",
-      "description": "Global store configuration document"
-    },
-    "/bottleSizes/{bottleId}": {
-      "schema": "BottleSize",
-      "description": "Collection of bottle size economics"
-    },
-    "/vaults/{vaultId}": {
-      "schema": "FinancialVault",
-      "description": "Collection of segregated financial vaults"
-    },
-    "/withdrawals/{withdrawalId}": {
-      "schema": "WithdrawalTransaction",
-      "description": "Collection of audited withdrawal transactions and vouchers"
-    },
-    "/staff_attendance/{attendanceId}": {
-      "schema": "StaffAttendanceRecord",
-      "description": "Collection of staff attendance logs"
-    },
-    "/production_batches/{batchId}": {
-      "schema": "ProductionBatch",
-      "description": "Collection of production batches"
-    },
-    "/audit_logs/{logId}": {
-      "schema": "AuditLogRecord",
-      "description": "Collection of audit records"
-    },
-    "/app_users/{userId}": {
-      "schema": "AuditLogRecord",
-      "description": "Collection of system users and permissions"
-    },
-    "/daily_closures/{closureId}": {
-      "schema": "AuditLogRecord",
-      "description": "Collection of daily shift closures"
-    },
-    "/purchase_requests/{requestId}": {
-      "schema": "AuditLogRecord",
-      "description": "Collection of purchase requests"
-    },
-    "/customer_requests/{requestId}": {
-      "schema": "AuditLogRecord",
-      "description": "Collection of out of stock customer requests"
-    },
-    "/stock_checks/{checkId}": {
-      "schema": "AuditLogRecord",
-      "description": "Collection of inventory checks"
-    }
+    "/sales/{saleId}": { "schema": "Sale", "description": "Sales records" },
+    "/products/{productId}": { "schema": "Product", "description": "Products" },
+    "/expenses/{expenseId}": { "schema": "Expense", "description": "Expenses" },
+    "/settings/store": { "schema": "StoreSettings", "description": "Settings" },
+    "/bottleSizes/{bottleId}": { "schema": "BottleSize", "description": "Bottle sizes" },
+    "/vaults/{vaultId}": { "schema": "FinancialVault", "description": "Vaults" },
+    "/withdrawals/{withdrawalId}": { "schema": "WithdrawalTransaction", "description": "Withdrawals" },
+    "/staff_attendance/{attendanceId}": { "schema": "StaffAttendanceRecord", "description": "Attendance" },
+    "/production_batches/{batchId}": { "schema": "ProductionBatch", "description": "Production" },
+    "/audit_logs/{logId}": { "schema": "AuditLogRecord", "description": "Audit trail" },
+    "/app_users/{userId}": { "schema": "AppUser", "description": "Users" },
+    "/customers/{customerId}": { "schema": "CustomCustomerRecord", "description": "Customers" },
+    "/saved_mixes/{mixId}": { "schema": "SavedMixFormula", "description": "Mixes" },
+    "/connected_devices/{deviceId}": { "schema": "ConnectedDevice", "description": "Devices" },
+    "/owner_broadcasts/{broadcastId}": { "schema": "OwnerStaffBroadcast", "description": "Broadcasts" },
+    "/daily_closures/{closureId}": { "schema": "DailyClosure", "description": "Closures" }
   }
 }

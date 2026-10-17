@@ -61,6 +61,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import ReceiptModal from './ReceiptModal';
+import ReportPdfPreviewModal from './ReportPdfPreviewModal';
 
 interface ReportsProps {
   sales: Sale[];
@@ -317,6 +318,7 @@ const Reports: React.FC<ReportsProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [hideProfits, setHideProfits] = useState(false);
   const [isReportsMenuOpen, setIsReportsMenuOpen] = useState(false);
+  const [isPdfPreviewModalOpen, setIsPdfPreviewModalOpen] = useState(false);
 
   // Modals state
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -856,7 +858,18 @@ ${itemsLines}
             </button>
           )}
 
-          {/* 2. Direct Export CSV */}
+          {/* 2. Primary PDF Report Export */}
+          <button
+            type="button"
+            onClick={() => setIsPdfPreviewModalOpen(true)}
+            className="apple-pill-btn flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-black bg-[#C49746] hover:bg-[#B38536] text-white shadow-apple-xs cursor-pointer transition-all"
+            title="تحميل وطباعة تقرير الأرباح والمبيعات بصيغة PDF A4 الرسمية"
+          >
+            <FileText size={14} className="text-white" />
+            <span>تقرير PDF 📄</span>
+          </button>
+
+          {/* 3. Direct Export CSV */}
           <button
             type="button"
             onClick={handleExportCSV}
@@ -867,7 +880,7 @@ ${itemsLines}
             <span className="hidden sm:inline">تصدير إكسل</span>
           </button>
 
-          {/* 3. Consolidated Options Menu (دمج العمليات الثانوية لمنع الزحام) */}
+          {/* 4. Consolidated Options Menu (دمج العمليات الثانوية لمنع الزحام) */}
           <div className="relative">
             <button
               type="button"
@@ -895,6 +908,23 @@ ${itemsLines}
                     <span className="text-[11px] font-black text-[#1D1D1F]">إجراءات السجل وخيارات العرض:</span>
                     <span className="text-[9.5px] font-bold text-[#86868B]">تحكم سريع</span>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsReportsMenuOpen(false);
+                      setIsPdfPreviewModalOpen(true);
+                    }}
+                    className="w-full px-3 py-2 rounded-2xl hover:bg-[#FFFDF9] text-[#000000] text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border border-[#C49746]/20"
+                  >
+                    <div className="w-7 h-7 rounded-xl bg-[#FBF8F2] text-[#C49746] flex items-center justify-center shrink-0">
+                      <FileText size={14} />
+                    </div>
+                    <div className="text-right">
+                      <span className="block font-black text-[#000000]">معاينة وتحميل تقرير الأرباح (PDF)</span>
+                      <span className="text-[9.5px] text-[#78350F]">تصميم رسمى معتمد A4 لمسة عطر</span>
+                    </div>
+                  </button>
 
                   {(canViewProfits(currentUser ?? null) || currentUser?.role === 'OWNER') && (
                     <button
@@ -2595,6 +2625,28 @@ ${itemsLines}
           </div>
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* REPORT PDF PREVIEW & EXPORT MODAL                        */}
+      {/* ======================================================== */}
+      <ReportPdfPreviewModal
+        isOpen={isPdfPreviewModalOpen}
+        onClose={() => setIsPdfPreviewModalOpen(false)}
+        initialReportType="profit"
+        sales={filteredSales}
+        products={products}
+        settings={settings}
+        currentUser={currentUser}
+        selectedPeriodLabel={
+          logPeriodMode === 'daily'
+            ? `يوم ${selectedDayDate}`
+            : logPeriodMode === 'weekly'
+            ? `الأسبوع المحدد (${currentWeekRange.startStr} إلى ${currentWeekRange.endStr})`
+            : logPeriodMode === 'monthly'
+            ? `شهر ${selectedMonthStr}`
+            : 'كافة المبيعات'
+        }
+      />
     </div>
   );
 };

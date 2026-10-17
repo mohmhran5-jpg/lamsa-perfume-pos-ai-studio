@@ -19,6 +19,7 @@ import {
   BulkPerfumeImporterModal,
   BulkImportExecutionResult,
 } from './BulkPerfumeImporterModal';
+import ReportPdfPreviewModal from './ReportPdfPreviewModal';
 import {
   analyzeClassifyAndEnrichBulkPerfumesWithAI,
   autoCorrectAndEnrichItemDeterministic,
@@ -41,6 +42,7 @@ import {
   Wand2,
   Database,
   Download,
+  FileText,
   CheckCircle2,
   RefreshCw,
   Eye,
@@ -111,6 +113,7 @@ const Inventory: React.FC<InventoryProps> = ({
   const [quickRestockProduct, setQuickRestockProduct] = useState<Product | null>(null);
   const [restockAmount, setRestockAmount] = useState<number>(500);
   const [selectedProfileProduct, setSelectedProfileProduct] = useState<Product | null>(null);
+  const [isPdfPreviewModalOpen, setIsPdfPreviewModalOpen] = useState<boolean>(false);
 
   // Global AI Audit & Auto-Enrich Existing Inventory State
   const [isRunningInventoryAudit, setIsRunningInventoryAudit] = useState(false);
@@ -977,7 +980,18 @@ const Inventory: React.FC<InventoryProps> = ({
 
         {canAdd && (
           <div className="flex items-center flex-wrap gap-2">
-            {/* Button 0: Export Inventory CSV for Fast Manual Audit */}
+            {/* Button 0: Export Inventory PDF Report */}
+            <button
+              type="button"
+              onClick={() => setIsPdfPreviewModalOpen(true)}
+              className="apple-btn flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-[#C49746] hover:bg-[#B38536] text-white text-xs font-black shadow-xs transition-all cursor-pointer"
+              title="تحميل وطباعة تقرير جرد المخزون وتقييم العطور بصيغة PDF الرسمية"
+            >
+              <FileText size={15} className="text-white" />
+              <span>تقرير المخزون والجرد (PDF) 📄</span>
+            </button>
+
+            {/* Button 0.5: Export Inventory CSV for Fast Manual Audit */}
             <button
               type="button"
               onClick={handleExportInventoryCsv}
@@ -985,7 +999,7 @@ const Inventory: React.FC<InventoryProps> = ({
               title="تصدير سجل المخزون الحالي بصيغة CSV للجرد اليدوي السريع"
             >
               <Download size={15} />
-              <span>تصدير سجل المخزون للجرد (CSV) 📄</span>
+              <span>تصدير إكسل (CSV)</span>
             </button>
 
             {/* Button 1: Direct CSV Upload */}
@@ -1578,6 +1592,17 @@ const Inventory: React.FC<InventoryProps> = ({
           >
             <AlertTriangle size={15} />
             <span>نواقص المخزون ({lowStockCount})</span>
+          </button>
+
+          {/* Export PDF Report */}
+          <button
+            type="button"
+            onClick={() => setIsPdfPreviewModalOpen(true)}
+            className="apple-btn flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black bg-[#C49746] hover:bg-[#B38536] text-white shadow-2xs cursor-pointer transition-all"
+            title="تحميل وطباعة تقرير جرد المخزون وتقييم العطور بصيغة PDF الرسمية"
+          >
+            <FileText size={14} className="text-white" />
+            <span>تقرير PDF 📄</span>
           </button>
 
           {/* Export CSV */}
@@ -2307,6 +2332,20 @@ const Inventory: React.FC<InventoryProps> = ({
           </div>
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* REPORT PDF PREVIEW & EXPORT MODAL                        */}
+      {/* ======================================================== */}
+      <ReportPdfPreviewModal
+        isOpen={isPdfPreviewModalOpen}
+        onClose={() => setIsPdfPreviewModalOpen(false)}
+        initialReportType="inventory"
+        sales={sales}
+        products={products}
+        settings={settings}
+        currentUser={currentUser}
+        selectedPeriodLabel="جرد المخزون الحالي"
+      />
     </div>
   );
 };

@@ -2842,26 +2842,29 @@ p, span, h1, h2, h3, h4, h5, h6, label, button, td, th {
 }
 
 /* ======================================================== */
-/* LUXURY DARK GLASSMORPHISM TOKENS & ACCENTS FOR POS       */
+/* LUXURY WHITE GLASSMORPHISM TOKENS & ACCENTS FOR POS       */
 /* ======================================================== */
-.pos-dark-card {
-  background: rgba(15, 23, 42, 0.88);
+.pos-dark-card,
+.pos-white-card {
+  background: #FFFFFF;
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  border: 1.5px solid rgba(196, 151, 70, 0.25);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.98);
+  color: #000000;
 }
 
 .pos-glass-panel {
-  background: rgba(30, 41, 59, 0.72);
+  background: #FFFFFF;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(196, 151, 70, 0.20);
+  box-shadow: 0 4px 20px 0 rgba(196, 151, 70, 0.08);
+  color: #000000;
 }
 
 .pos-neon-gold {
-  box-shadow: 0 0 20px -3px rgba(217, 119, 6, 0.35);
+  box-shadow: 0 0 20px -3px rgba(196, 151, 70, 0.35);
 }
 
 .pos-neon-emerald {
@@ -2869,7 +2872,7 @@ p, span, h1, h2, h3, h4, h5, h6, label, button, td, th {
 }
 
 .pos-neon-blue {
-  box-shadow: 0 0 20px -3px rgba(0, 113, 227, 0.4);
+  box-shadow: 0 0 20px -3px rgba(0, 102, 255, 0.35);
 }
 
 /* ======================================================== */
@@ -2941,11 +2944,58 @@ p, span, h1, h2, h3, h4, h5, h6, label, button, td, th {
     z-index: 99999999 !important;
   }
 
-  /* Inline thermal table borders */
+    /* Inline thermal table borders */
   #thermal-receipt table,
   #thermal-receipt-printable table {
     width: 100% !important;
     border-collapse: collapse !important;
+  }
+}
+
+/* ======================================================== */
+/* LUXURY LOGIN & LOCK SCREEN ANIMATIONS                    */
+/* ======================================================== */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.25; transform: scale(1.1); }
+  50% { opacity: 0.45; transform: scale(1.05); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-30px, 20px); }
+}
+
+@keyframes float-delayed {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(30px, -20px); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 15s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 25s ease-in-out infinite;
+}
+
+.animate-float-delayed {
+  animation: float-delayed 30s ease-in-out infinite;
+}
+
+.apple-signature-text-dark {
+  background: linear-gradient(to right, #ffffff 20%, #C49746 40%, #C49746 60%, #ffffff 80%);
+  background-size: 200% auto;
+  color: #000;
+  background-clip: text;
+  text-fill-color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shine 5s linear infinite;
+}
+
+@keyframes shine {
+  to {
+    background-position: 200% center;
   }
 }
 
